@@ -3,7 +3,7 @@ import os
 import sqlite3
 from typing import Dict, List, Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from ortools.sat.python import cp_model
@@ -180,25 +180,35 @@ def _get_connection() -> sqlite3.Connection:
     return conn
 
 
-def _load_state() -> AppState:
+def _load_state(user_id: str) -> AppState:
     conn = _get_connection()
-    cur = conn.execute("SELECT data FROM app_state WHERE id = ?", ("state",))
+    cur = conn.execute("SELECT data FROM app_state WHERE id = ?", (user_id,))
     row = cur.fetchone()
+    if not row and user_id == "jk":
+        legacy = conn.execute(
+            "SELECT data FROM app_state WHERE id = ?", ("state",)
+        ).fetchone()
+        if legacy:
+            data = json.loads(legacy[0])
+            state = AppState.model_validate(data)
+            _save_state(state, user_id)
+            conn.close()
+            return state
     conn.close()
     if not row:
         state = _default_state()
-        _save_state(state)
+        _save_state(state, user_id)
         return state
     data = json.loads(row[0])
     return AppState.model_validate(data)
 
 
-def _save_state(state: AppState) -> None:
+def _save_state(state: AppState, user_id: str) -> None:
     conn = _get_connection()
     payload = state.model_dump()
     conn.execute(
         "INSERT OR REPLACE INTO app_state (id, data) VALUES (?, ?)",
-        ("state", json.dumps(payload)),
+        (user_id, json.dumps(payload)),
     )
     conn.commit()
     conn.close()
@@ -221,29 +231,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-STATE: AppState = _load_state()
-
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+def _resolve_user_id(request: Request) -> str:
+    raw = (
+        request.headers.get("x-user-id")
+        or request.query_params.get("user_id")
+        or "jk"
+    )
+    return raw.strip().lower() or "jk"
+
 
 @app.get("/v1/state", response_model=AppState)
-def get_state():
-    return STATE
+def get_state(request: Request):
+    return _load_state(_resolve_user_id(request))
 
 
 @app.post("/v1/state", response_model=AppState)
-def set_state(payload: AppState):
-    global STATE
-    STATE = payload
-    _save_state(STATE)
-    return STATE
+def set_state(payload: AppState, request: Request):
+    user_id = _resolve_user_id(request)
+    _save_state(payload, user_id)
+    return payload
 
 
 @app.post("/v1/solve", response_model=SolveDayResponse)
-def solve_day(payload: SolveDayRequest):
+def solve_day(payload: SolveDayRequest, request: Request):
+    STATE = _load_state(_resolve_user_id(request))
     dateISO = payload.dateISO
 
     rows_by_id = {row.id: row for row in STATE.rows}

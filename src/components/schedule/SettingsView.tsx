@@ -40,6 +40,12 @@ export default function SettingsView({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [newClinicianName, setNewClinicianName] = useState("");
+  const poolNoteById: Record<string, string> = {
+    "pool-not-allocated": "Pool from which clinicians are distributed to workplaces.",
+    "pool-manual": "Pool of clinicians that will not be automatically distributed.",
+    "pool-vacation":
+      "Clinicians on vacations. Vacations must be changed in the clinician and clinicians cannot be dragged from here.",
+  };
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -207,7 +213,7 @@ export default function SettingsView({
                   )}
                 />
                 <span className="text-xs font-semibold text-slate-400">
-                  {row.id === "pool-vacation" ? "Vacation" : "Pool"}
+                  {poolNoteById[row.id] ?? "Pool"}
                 </span>
               </div>
             ))}

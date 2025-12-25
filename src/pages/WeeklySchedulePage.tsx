@@ -29,9 +29,17 @@ const CLASS_COLORS = [
   "bg-lime-500",
 ];
 const MANUAL_POOL_ID = "pool-manual";
+const USERS = [
+  { id: "jk", label: "JK" },
+  { id: "ml", label: "ML" },
+];
 
 export default function WeeklySchedulePage() {
   const [viewMode, setViewMode] = useState<"calendar" | "settings">("calendar");
+  const [activeUserId, setActiveUserId] = useState(() => {
+    if (typeof window === "undefined") return "jk";
+    return window.localStorage.getItem("activeUserId") ?? "jk";
+  });
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
   const [assignmentMap, setAssignmentMap] = useState<Map<string, Assignment[]>>(() =>
     buildAssignmentMap(assignments),
@@ -50,6 +58,7 @@ export default function WeeklySchedulePage() {
   );
   const [editingClinicianId, setEditingClinicianId] = useState<string>("");
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadedUserId, setLoadedUserId] = useState<string>("");
   const [solverNotice, setSolverNotice] = useState<string | null>(null);
 
   const weekStart = useMemo(() => startOfWeek(anchorDate, 1), [anchorDate]);
@@ -202,8 +211,16 @@ export default function WeeklySchedulePage() {
   );
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("activeUserId", activeUserId);
+    }
+  }, [activeUserId]);
+
+  useEffect(() => {
     let alive = true;
-    getState()
+    setHasLoaded(false);
+    setLoadedUserId("");
+    getState(activeUserId)
       .then((state) => {
         if (!alive) return;
         if (state.rows?.length) {
@@ -260,15 +277,18 @@ export default function WeeklySchedulePage() {
         /* Backend optional during local-only dev */
       })
       .finally(() => {
-        if (alive) setHasLoaded(true);
+        if (alive) {
+          setLoadedUserId(activeUserId);
+          setHasLoaded(true);
+        }
       });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [activeUserId]);
 
   useEffect(() => {
-    if (!hasLoaded) return;
+    if (!hasLoaded || loadedUserId !== activeUserId) return;
     const toAssignments = () => {
       const out: Assignment[] = [];
       for (const list of assignmentMap.values()) {
@@ -284,12 +304,20 @@ export default function WeeklySchedulePage() {
       slotOverridesByKey,
     };
     const handle = window.setTimeout(() => {
-      saveState(payload).catch(() => {
+      saveState(payload, activeUserId).catch(() => {
         /* Backend optional during local-only dev */
       });
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [rows, clinicians, assignmentMap, minSlotsByRowId, slotOverridesByKey, hasLoaded]);
+  }, [
+    rows,
+    clinicians,
+    assignmentMap,
+    minSlotsByRowId,
+    slotOverridesByKey,
+    hasLoaded,
+    activeUserId,
+  ]);
 
   const handleToggleQualification = (clinicianId: string, classId: string) => {
     setClinicians((prev) =>
@@ -387,6 +415,9 @@ export default function WeeklySchedulePage() {
         onToggleView={() =>
           setViewMode((prev) => (prev === "calendar" ? "settings" : "calendar"))
         }
+        activeUserId={activeUserId}
+        users={USERS}
+        onSelectUser={(userId) => setActiveUserId(userId)}
       />
 
       {viewMode === "calendar" ? (
@@ -422,7 +453,10 @@ export default function WeeklySchedulePage() {
               adjustSlotOverride(rowId, dateISO, -1);
             }}
             onAutoAllocateDay={(dateISO, options) => {
-              solveDay(dateISO, { onlyFillRequired: options?.onlyFillRequired })
+              solveDay(dateISO, {
+                onlyFillRequired: options?.onlyFillRequired,
+                userId: activeUserId,
+              })
                 .then((result) => {
                   if (result.notes.length > 0) {
                     setSolverNotice(result.notes[0]);
@@ -467,7 +501,10 @@ export default function WeeklySchedulePage() {
             onAutoAllocateWeek={(options) => {
               weekDays.forEach((day) => {
                 const dateISO = toISODate(day);
-                solveDay(dateISO, { onlyFillRequired: options?.onlyFillRequired })
+                solveDay(dateISO, {
+                  onlyFillRequired: options?.onlyFillRequired,
+                  userId: activeUserId,
+                })
                   .then((result) => {
                     if (result.notes.length > 0) {
                       setSolverNotice(result.notes[0]);

@@ -39,19 +39,29 @@ export type AppState = {
 };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const DEFAULT_USER_ID = "jk";
 
-export async function getState(): Promise<AppState> {
-  const res = await fetch(`${API_BASE}/v1/state`);
+function buildHeaders(userId?: string) {
+  return {
+    "Content-Type": "application/json",
+    "X-User-Id": userId ?? DEFAULT_USER_ID,
+  };
+}
+
+export async function getState(userId?: string): Promise<AppState> {
+  const res = await fetch(`${API_BASE}/v1/state`, {
+    headers: buildHeaders(userId),
+  });
   if (!res.ok) {
     throw new Error(`Failed to fetch state: ${res.status}`);
   }
   return res.json();
 }
 
-export async function saveState(state: AppState): Promise<AppState> {
+export async function saveState(state: AppState, userId?: string): Promise<AppState> {
   const res = await fetch(`${API_BASE}/v1/state`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders(userId),
     body: JSON.stringify(state),
   });
   if (!res.ok) {
@@ -62,7 +72,7 @@ export async function saveState(state: AppState): Promise<AppState> {
 
 export async function solveDay(
   dateISO: string,
-  options?: { onlyFillRequired?: boolean },
+  options?: { onlyFillRequired?: boolean; userId?: string },
 ): Promise<{
   dateISO: string;
   assignments: Assignment[];
@@ -70,7 +80,7 @@ export async function solveDay(
 }> {
   const res = await fetch(`${API_BASE}/v1/solve`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders(options?.userId),
     body: JSON.stringify({
       dateISO,
       only_fill_required: options?.onlyFillRequired ?? false,
