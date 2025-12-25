@@ -13,13 +13,14 @@ Frontend
 Backend
 - FastAPI + Uvicorn
 - OR-Tools CP-SAT
-- SQLite persistence (single JSON state row)
+- SQLite persistence (per-user JSON state rows)
+- Auth: python-jose (JWT), passlib (password hashing)
 
 ---
 
 ## 2) Core UI
 Top bar
-- Title, open slots badge, Settings button, avatar (top-right).
+- Title, open slots badge (turns green when all slots filled), Settings button, theme toggle, avatar (top-right).
 - Width aligned to the schedule card.
 
 Schedule card
@@ -31,7 +32,7 @@ Schedule card
 
 Rows
 - Class rows (editable, reorderable priority): MRI, CT, Sonography, Conventional, On Call, etc.
-- Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Vacation (id: pool-vacation).
+- Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Manual Pool (id: pool-manual), Vacation (id: pool-vacation).
 - Pool rows appear below a separator line.
 - Row labels are uppercase, no colored dots, truncate around 20 characters.
 
@@ -39,6 +40,7 @@ Cells
 - Multiple clinician pills per cell, sorted by surname.
 - Empty slots shown as red dashed pills based on min slots.
 - Drag and drop is same-day only; other days grey out while dragging.
+- Dragging into or out of Vacation updates the clinician vacation ranges.
 - Eligible target cells for a dragged clinician show a green border.
 - Ineligible manual assignment is allowed, with a yellow warning icon.
 - No eligible classes shows a red warning icon.
@@ -65,7 +67,7 @@ Clinicians
 
 Clinician Editor (modal)
 - Eligible classes list is ordered. Drag to set priority (this order is also the preference list).
-- Toggle to add/remove eligible classes.
+- Add eligible classes via dropdown + Add button; remove via per-row Remove button.
 - Vacation management with compact date inputs and a dash between start and end.
 - Past vacations collapsed in a <details>.
 - Modal body is scrollable for long vacation lists.
@@ -136,7 +138,7 @@ Behavior
 ---
 
 ## 7) Backend State + Persistence
-Backend stores one JSON blob in SQLite:
+Backend stores one JSON blob per user in SQLite:
 ```json
 {
   "rows": [...],
@@ -145,20 +147,40 @@ Backend stores one JSON blob in SQLite:
   "minSlotsByRowId": {...}
 }
 ```
-Table: `app_state` (single row id = "state").
+Table: `app_state` (id = username). Legacy row id `"state"` is migrated to `"jk"`.
 
 Endpoints
 - `GET /health`
+- `POST /auth/login`
+- `GET /auth/me`
+- `GET /auth/users` (admin only)
+- `POST /auth/users` (admin only, also seeds new user's state from creator)
+- `PATCH /auth/users/{username}` (admin only, supports password reset)
+- `DELETE /auth/users/{username}` (admin only)
 - `GET /v1/state`
 - `POST /v1/state`
 - `POST /v1/solve`
 
 ---
 
-## 8) Running Locally (Step-by-step)
+## 8) Auth Model (Backend + Frontend)
+- JWT auth; frontend stores token in `localStorage` key `authToken`.
+- Admin user is created on startup if `ADMIN_USERNAME`/`ADMIN_PASSWORD` are set and the user does not already exist.
+- Creating a user in the admin panel copies the creator's current state as the new user's initial state.
+
+---
+
+## 9) Running Locally (Step-by-step)
 Prereqs
 - Python 3.9+
 - Node 18+
+
+Auth env (required for login):
+```bash
+export ADMIN_USERNAME=admin
+export ADMIN_PASSWORD=change-me
+export JWT_SECRET=change-me-too
+```
 
 Step 1: install backend deps
 ```bash
@@ -208,7 +230,7 @@ Deployment note
 
 ---
 
-## 9) Key Files
+## 10) Key Files
 Frontend
 - `src/pages/WeeklySchedulePage.tsx` (main state + logic)
 - `src/components/schedule/ScheduleGrid.tsx`
@@ -226,9 +248,18 @@ Backend
 
 ---
 
-## 10) Notes for New Agents
+## 11) Notes for New Agents
 - The calendar is the source of truth for edits; Settings manages class priority + min slots + pool names + clinician list.
-- Pool ids: Distribution Pool = `pool-not-allocated`, Vacation = `pool-vacation`.
+- Pool ids: Distribution Pool = `pool-not-allocated`, Manual Pool = `pool-manual`, Vacation = `pool-vacation`.
 - Keep drag restricted to same day.
 - If you change the solver API, update `src/api/client.ts` and `WeeklySchedulePage.tsx`.
 - Legacy row id `pool-not-working` is filtered out on load.
+
+---
+
+## 12) Current Hetzner Deployment (IP-only)
+- Server IP: `46.224.114.183`
+- Path: `/opt/shiftschedule`
+- Stack: `docker compose -f docker-compose.ip.yml up -d --build`
+- Frontend: `http://46.224.114.183`
+- Backend: `http://46.224.114.183:8000`

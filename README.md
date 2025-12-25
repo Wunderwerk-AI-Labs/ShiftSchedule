@@ -25,6 +25,8 @@ export ADMIN_USERNAME=admin
 export ADMIN_PASSWORD=change-me
 export JWT_SECRET=change-me-too
 ```
+On first startup, the admin user is created if it doesn't already exist.
+If the admin already exists, the password is not overwritten.
 
 1) Install backend deps
 ```bash
