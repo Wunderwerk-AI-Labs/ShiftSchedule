@@ -197,6 +197,28 @@ export default function HelpView() {
             service is not responding”, the backend service is not reachable.
           </p>
         </Section>
+
+        <Section title="11. iCal Calendar Export">
+          <p>
+            You can download your schedule as an <span className="font-medium">iCal</span>{" "}
+            file (<span className="font-medium">.ics</span>) and import it into Google
+            Calendar, Apple Calendar, or Outlook.
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>
+              A single <span className="font-medium">.ics</span> file can contain{" "}
+              <span className="font-medium">multiple events across many dates</span>.
+            </li>
+            <li>
+              You can download either <span className="font-medium">one file for all clinicians</span>{" "}
+              or <span className="font-medium">individual files per clinician</span>.
+            </li>
+            <li>
+              Use the <span className="font-medium">time range</span> filter to limit what
+              gets exported (date format: <span className="font-medium">DD.MM.YYYY</span>).
+            </li>
+          </ul>
+        </Section>
       </div>
 
       <div
