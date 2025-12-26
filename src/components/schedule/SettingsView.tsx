@@ -156,7 +156,7 @@ export default function SettingsView({
   };
   const poolNoteById: Record<string, string> = {
     "pool-not-allocated": "Pool from which clinicians are distributed to workplaces.",
-    "pool-manual": "Pool of clinicians that will not be automatically distributed.",
+    "pool-manual": "Reserve pool of clinicians that will not be automatically distributed.",
     "pool-vacation":
       "Clinicians on vacations. Drag in or out of this row to update vacations.",
   };

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
+import HelpView from "../components/schedule/HelpView";
 import ScheduleGrid from "../components/schedule/ScheduleGrid";
 import SettingsView from "../components/schedule/SettingsView";
 import TopBar from "../components/schedule/TopBar";
@@ -120,7 +121,9 @@ export default function WeeklySchedulePage({
   onToggleTheme,
 }: WeeklySchedulePageProps) {
   const currentYear = new Date().getFullYear();
-  const [viewMode, setViewMode] = useState<"calendar" | "settings">("calendar");
+  const [viewMode, setViewMode] = useState<"calendar" | "settings" | "help">(
+    "calendar",
+  );
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
   const [assignmentMap, setAssignmentMap] = useState<Map<string, Assignment[]>>(() =>
     buildAssignmentMap(assignments),
@@ -682,9 +685,7 @@ export default function WeeklySchedulePage({
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       <TopBar
         viewMode={viewMode}
-        onToggleView={() =>
-          setViewMode((prev) => (prev === "calendar" ? "settings" : "calendar"))
-        }
+        onSetViewMode={setViewMode}
         username={currentUser.username}
         onLogout={onLogout}
         theme={theme}
@@ -958,7 +959,7 @@ export default function WeeklySchedulePage({
             }}
           />
         </>
-      ) : (
+      ) : viewMode === "settings" ? (
         <>
           <SettingsView
             classRows={classRows}
@@ -1097,6 +1098,8 @@ export default function WeeklySchedulePage({
             isAdmin={currentUser.role === "admin"}
           />
         </>
+      ) : (
+        <HelpView />
       )}
 
       <ClinicianEditModal

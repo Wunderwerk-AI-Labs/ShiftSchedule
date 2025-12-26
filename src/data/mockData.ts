@@ -37,7 +37,7 @@ export const workplaceRows: WorkplaceRow[] = [
   },
   {
     id: "pool-manual",
-    name: "Pool",
+    name: "Reserve Pool",
     kind: "pool",
     dotColorClass: "bg-slate-300",
   },

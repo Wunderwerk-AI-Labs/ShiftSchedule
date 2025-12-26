@@ -77,6 +77,7 @@ for (const dir of TARGET_DIRS) {
       const borderTokens = collectUnprefixedTokens(tokens, "border-", (token) => {
         if (IGNORE_BORDER_TOKENS.has(token)) return false;
         if (/^border-\d/.test(token)) return false;
+        if (/^border-(?:t|b|l|r|x|y)-\d+$/.test(token)) return false;
         return true;
       });
       const uniqueBg = new Set(bgTokens);

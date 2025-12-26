@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
 
 type TopBarProps = {
-  viewMode: "calendar" | "settings";
-  onToggleView: () => void;
+  viewMode: "calendar" | "settings" | "help";
+  onSetViewMode: (nextMode: "calendar" | "settings" | "help") => void;
   username: string;
   onLogout: () => void;
   theme: "light" | "dark";
@@ -12,7 +12,7 @@ type TopBarProps = {
 
 export default function TopBar({
   viewMode,
-  onToggleView,
+  onSetViewMode,
   username,
   onLogout,
   theme,
@@ -60,14 +60,32 @@ export default function TopBar({
           </button>
           <button
             type="button"
-            onClick={onToggleView}
-          className={cx(
-            "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
-            "hover:bg-slate-100 active:bg-slate-200/80",
-            "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
-          )}
+            onClick={() =>
+              onSetViewMode(viewMode === "settings" ? "calendar" : "settings")
+            }
+            aria-pressed={viewMode === "settings"}
+            className={cx(
+              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
+              "hover:bg-slate-100 active:bg-slate-200/80",
+              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
+              viewMode === "settings" &&
+                "bg-slate-100 dark:bg-slate-800/60",
+            )}
           >
-            {viewMode === "calendar" ? "Settings" : "Back to Schedule"}
+            {viewMode === "settings" ? "Back" : "Settings"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onSetViewMode(viewMode === "help" ? "calendar" : "help")}
+            aria-pressed={viewMode === "help"}
+            className={cx(
+              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
+              "hover:bg-slate-100 active:bg-slate-200/80",
+              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
+              viewMode === "help" && "bg-slate-100 dark:bg-slate-800/60",
+            )}
+          >
+            {viewMode === "help" ? "Back" : "Help"}
           </button>
           <div ref={menuRef} className="relative">
             <button
