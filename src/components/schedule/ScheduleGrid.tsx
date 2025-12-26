@@ -4,8 +4,8 @@ import { formatDayHeader, toISODate } from "../../lib/date";
 import AssignmentPill from "./AssignmentPill";
 import EmptySlotPill from "./EmptySlotPill";
 import RowLabel from "./RowLabel";
-import { useEffect, useRef, useState } from "react";
-import type { Dispatch, PointerEvent, SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 
 type ScheduleGridProps = {
   leftHeaderTitle: string;
@@ -74,6 +74,7 @@ export default function ScheduleGrid({
     dateISO: string;
   } | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const pointerPosRef = useRef<{ x: number; y: number } | null>(null);
   const hoveredClassCellRef = useRef<{ rowId: string; dateISO: string } | null>(
     null,
   );
@@ -93,32 +94,55 @@ export default function ScheduleGrid({
     setHoveredClassCell(null);
   };
 
-  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType && event.pointerType !== "mouse") return;
-    if (dragState.dragging) {
+  const updateHoveredCellFromPoint = useCallback(
+    (x: number, y: number) => {
+      if (typeof document === "undefined") return;
+      if (dragState.dragging) {
+        clearHoveredCell();
+        return;
+      }
+      const element = document.elementFromPoint(x, y) as HTMLElement | null;
+      const cell = element?.closest<HTMLElement>('[data-schedule-cell="true"]');
+      if (!cell || cell.dataset.rowKind !== "class") {
+        clearHoveredCell();
+        return;
+      }
+      const rowId = cell.dataset.rowId;
+      const dateISO = cell.dataset.dateIso;
+      if (!rowId || !dateISO) {
+        clearHoveredCell();
+        return;
+      }
+      const prev = hoveredClassCellRef.current;
+      if (prev && prev.rowId === rowId && prev.dateISO === dateISO) return;
+      setHoveredCell({ rowId, dateISO });
+    },
+    [dragState.dragging],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleMouseMove = (event: MouseEvent) => {
+      pointerPosRef.current = { x: event.clientX, y: event.clientY };
+      updateHoveredCellFromPoint(event.clientX, event.clientY);
+    };
+    const handleScroll = () => {
+      const pos = pointerPosRef.current;
+      if (!pos) return;
+      updateHoveredCellFromPoint(pos.x, pos.y);
+    };
+    const handleBlur = () => {
       clearHoveredCell();
-      return;
-    }
-    const target = event.target as HTMLElement | null;
-    const cell = target?.closest<HTMLElement>('[data-schedule-cell="true"]');
-    if (!cell) {
-      clearHoveredCell();
-      return;
-    }
-    if (cell.dataset.rowKind !== "class") {
-      clearHoveredCell();
-      return;
-    }
-    const rowId = cell.dataset.rowId;
-    const dateISO = cell.dataset.dateIso;
-    if (!rowId || !dateISO) {
-      clearHoveredCell();
-      return;
-    }
-    const prev = hoveredClassCellRef.current;
-    if (prev && prev.rowId === rowId && prev.dateISO === dateISO) return;
-    setHoveredCell({ rowId, dateISO });
-  };
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [updateHoveredCellFromPoint]);
 
   useEffect(() => {
     if (!dragState.dragging) return;
@@ -167,9 +191,6 @@ export default function ScheduleGrid({
                 ref={gridRef}
                 data-schedule-grid="true"
                 className="grid"
-                onPointerMove={handlePointerMove}
-                onPointerLeave={clearHoveredCell}
-                onMouseLeave={clearHoveredCell}
                 style={{
                   gridTemplateColumns: `${leftColumn} repeat(${Math.max(
                     weekDays.length,
@@ -423,20 +444,6 @@ function RowSection({
             key={key}
             type="button"
             onClick={() => onCellClick({ row, date })}
-            onMouseEnter={() => {
-              if (dragState.dragging) return;
-              if (row.kind !== "class") {
-                setHoveredCell(null);
-                return;
-              }
-              setHoveredCell({ rowId: row.id, dateISO });
-            }}
-            onMouseLeave={() => {
-              if (!hoveredClassCell) return;
-              if (hoveredClassCell.rowId !== row.id) return;
-              if (hoveredClassCell.dateISO !== dateISO) return;
-              setHoveredCell(null);
-            }}
             onDragOver={(e) => {
               if (!dragState.dragging) return;
               e.preventDefault();
