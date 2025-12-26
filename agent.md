@@ -20,14 +20,15 @@ Backend
 
 ## 2) Core UI
 Top bar
-- Title, open slots badge (green when all slots filled), Settings button, theme toggle, avatar.
+- Title, Settings button (ghost/outlined), theme toggle, avatar (outlined circle).
+- Open slots badge lives in the schedule card header (green when all slots filled).
 - Responsive: stacks on small screens; avatar row moves below the main controls.
 
 Schedule card
-- Week navigator lives inside the card header; current range label sits between the arrows and the Today button sits next to them.
+- Week navigator lives inside the card header; range label uses DD.MM.YYYY (or DD.MM.YYYY – DD.MM.YYYY); Today button sits next to the arrows.
 - On mobile, the schedule renders a single day with a day navigator (label between arrows, Today next to them).
-- Today badge floats above the current day column header.
-- Week starts Monday, weekend columns shaded.
+- Today is shown by circling the day number in the header.
+- Week starts Monday; weekend/holiday styling is header-only: weekend header light gray, holiday header light lavender; holiday name is a tiny purple label under the day.
 - Mobile: grid uses touch scrolling and slightly tighter paddings.
 - Control row between class rows and pool rows with icon buttons:
   - Only necessary, Distribute all, Reset to free (week and per day), with tooltips.
@@ -37,21 +38,23 @@ Rows
 - Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Manual Pool (id: pool-manual), Vacation (id: pool-vacation).
 - Pool rows appear below a separator line.
 - Row labels are uppercase, no colored dots, truncate around 20 characters (tighter on mobile).
+- Vacation row background stays the same gray even on weekends/holidays.
 
 Cells
 - Multiple clinician pills per cell, sorted by surname.
 - Empty slots shown as gray dashed pills based on min slots; plus/minus badges are gray; label is not bold.
-- Drag and drop is same-day only; other days grey out while dragging.
+- Drag and drop is same-day only; invalid drops (wrong day or outside the grid) snap back instantly.
 - Dragging into or out of Vacation updates the clinician vacation ranges.
 - Eligible target cells for a dragged clinician show a green border.
 - Ineligible manual assignment is allowed, with a yellow warning icon.
 - No eligible classes shows a red warning icon.
 - Warning tooltips show only when hovering the icon itself.
-- Hovering a class cell highlights eligible clinicians for that class on the same date (desktop only).
+- Hovering a class cell highlights eligible clinicians for that class on the same date (desktop only); highlight stays when hovering a pill and is cleared while dragging.
 
 Pills
 - Compact blue pill, normal font weight; eligible hover highlight uses green background + green border (no extra thickness).
 - Warning icons are small circular badges at top-right of the pill.
+- Drag preview uses the normal pill style (highlight removed).
 
 ---
 
@@ -71,9 +74,16 @@ Clinicians
 Clinician Editor (modal)
 - Eligible classes list is ordered. Drag to set priority (this order is also the preference list).
 - Add eligible classes via dropdown + Add button; remove via per-row Remove button.
-- Vacation management with compact date inputs and a dash between start and end.
+- Vacation management uses compact DD.MM.YYYY inputs with a dash between start and end.
 - Past vacations collapsed in a <details>.
 - Modal body is scrollable for long vacation lists.
+
+Holidays
+- Year selector with stepper buttons.
+- Country picker with flag emoji (top EU countries + CH, LU), alphabetical.
+- "Load Holidays" fetches from https://date.nager.at/api/v3/PublicHolidays.
+- Add holidays manually; list shows DD.MM.YYYY dates (input accepts DD.MM.YYYY or ISO).
+- Holidays behave like weekends in solver + min slot logic and show in the calendar header.
 
 ---
 
@@ -106,6 +116,8 @@ type Assignment = {
 };
 
 type MinSlotsByRowId = Record<string, { weekday: number; weekend: number }>;
+
+type Holiday = { dateISO: string; name: string };
 ```
 
 ---
@@ -147,7 +159,10 @@ Backend stores one JSON blob per user in SQLite:
   "rows": [...],
   "clinicians": [...],
   "assignments": [...],
-  "minSlotsByRowId": {...}
+  "minSlotsByRowId": {...},
+  "holidayCountry": "DE",
+  "holidayYear": 2025,
+  "holidays": [{ "dateISO": "2025-12-25", "name": "Christmas Day" }]
 }
 ```
 Table: `app_state` (id = username). Legacy row id `"state"` is migrated to `"jk"`.
@@ -170,6 +185,8 @@ Endpoints
 - JWT auth; frontend stores token in `localStorage` key `authToken`.
 - Admin user is created on startup if `ADMIN_USERNAME`/`ADMIN_PASSWORD` are set and the user does not already exist.
 - Creating a user in the admin panel copies the creator's current state as the new user's initial state.
+- Login is case-sensitive (`admin` is lowercase).
+- Login screen includes show/hide password toggle.
 
 ---
 
