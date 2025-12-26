@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
 import HelpView from "../components/schedule/HelpView";
+import IcalExportModal from "../components/schedule/IcalExportModal";
 import ScheduleGrid from "../components/schedule/ScheduleGrid";
 import SettingsView from "../components/schedule/SettingsView";
 import TopBar from "../components/schedule/TopBar";
@@ -20,6 +21,7 @@ import {
 } from "../data/mockData";
 import { cx } from "../lib/classNames";
 import { addDays, addWeeks, startOfWeek, toISODate } from "../lib/date";
+import { buildICalendar, type ICalEvent } from "../lib/ical";
 
 const CLASS_COLORS = [
   "bg-violet-500",
@@ -124,6 +126,7 @@ export default function WeeklySchedulePage({
   const [viewMode, setViewMode] = useState<"calendar" | "settings" | "help">(
     "calendar",
   );
+  const [icalOpen, setIcalOpen] = useState(false);
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
   const [assignmentMap, setAssignmentMap] = useState<Map<string, Assignment[]>>(() =>
     buildAssignmentMap(assignments),
@@ -174,6 +177,10 @@ export default function WeeklySchedulePage({
     () => new Map(allRows.map((row) => [row.id, row])),
     [allRows],
   );
+  const clinicianById = useMemo(
+    () => new Map(clinicians.map((clinician) => [clinician.id, clinician])),
+    [clinicians],
+  );
   const holidayDates = useMemo(
     () => new Set(holidays.map((holiday) => holiday.dateISO)),
     [holidays],
@@ -195,6 +202,109 @@ export default function WeeklySchedulePage({
     const date = new Date(`${dateISO}T00:00:00`);
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
     return isWeekend || holidayDates.has(dateISO);
+  };
+
+  const downloadTextFile = (filename: string, mimeType: string, content: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const collectClassAssignments = () => {
+    const items: Assignment[] = [];
+    for (const list of assignmentMap.values()) {
+      for (const assignment of list) {
+        const row = rowById.get(assignment.rowId);
+        if (!row || row.kind !== "class") continue;
+        items.push(assignment);
+      }
+    }
+    return items;
+  };
+
+  const withinRange = (
+    dateISO: string,
+    range: { startISO?: string; endISO?: string },
+  ) => {
+    if (range.startISO && dateISO < range.startISO) return false;
+    if (range.endISO && dateISO > range.endISO) return false;
+    return true;
+  };
+
+  const buildIcalEventsForAssignments = (
+    assignments: Assignment[],
+    options: { includeClinicianInSummary: boolean },
+  ): ICalEvent[] => {
+    return assignments
+      .map((assignment): ICalEvent | null => {
+        const row = rowById.get(assignment.rowId);
+        const clinician = clinicianById.get(assignment.clinicianId);
+        if (!row || row.kind !== "class" || !clinician) return null;
+        const summary = options.includeClinicianInSummary
+          ? `${row.name} — ${clinician.name}`
+          : row.name;
+        const description = options.includeClinicianInSummary
+          ? undefined
+          : `Clinician: ${clinician.name}`;
+        return {
+          uid: `${assignment.id}@shift-planner`,
+          dateISO: assignment.dateISO,
+          summary,
+          ...(description ? { description } : {}),
+        };
+      })
+      .filter((item): item is ICalEvent => item !== null)
+      .sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+  };
+
+  const handleDownloadIcalAll = (range: { startISO?: string; endISO?: string }) => {
+    const classAssignments = collectClassAssignments().filter((assignment) =>
+      withinRange(assignment.dateISO, range),
+    );
+    const events = buildIcalEventsForAssignments(classAssignments, {
+      includeClinicianInSummary: true,
+    });
+    const ics = buildICalendar({
+      calendarName: "Shift Planner (All clinicians)",
+      events,
+    });
+    downloadTextFile("shift-planner-all.ics", "text/calendar;charset=utf-8", ics);
+  };
+
+  const handleDownloadIcalClinician = (
+    clinicianId: string,
+    range: { startISO?: string; endISO?: string },
+  ) => {
+    const clinician = clinicianById.get(clinicianId);
+    if (!clinician) return;
+    const classAssignments = collectClassAssignments().filter(
+      (assignment) =>
+        assignment.clinicianId === clinicianId &&
+        withinRange(assignment.dateISO, range),
+    );
+    const events = buildIcalEventsForAssignments(classAssignments, {
+      includeClinicianInSummary: false,
+    });
+    const safeName = clinician.name
+      .trim()
+      .replaceAll(/[^\w\- ]+/g, "")
+      .replaceAll(/\s+/g, "-")
+      .toLowerCase();
+    const ics = buildICalendar({
+      calendarName: `Shift Planner (${clinician.name})`,
+      events,
+    });
+    downloadTextFile(
+      `shift-planner-${safeName || clinician.id}.ics`,
+      "text/calendar;charset=utf-8",
+      ics,
+    );
   };
 
   const renderAssignmentMap = useMemo(() => {
@@ -686,6 +796,7 @@ export default function WeeklySchedulePage({
       <TopBar
         viewMode={viewMode}
         onSetViewMode={setViewMode}
+        onOpenIcalExport={() => setIcalOpen(true)}
         username={currentUser.username}
         onLogout={onLogout}
         theme={theme}
@@ -1112,6 +1223,16 @@ export default function WeeklySchedulePage({
         onAddVacation={handleAddVacation}
         onUpdateVacation={handleUpdateVacation}
         onRemoveVacation={handleRemoveVacation}
+      />
+
+      <IcalExportModal
+        open={icalOpen}
+        onClose={() => setIcalOpen(false)}
+        clinicians={clinicians.map((clinician) => ({ id: clinician.id, name: clinician.name }))}
+        defaultStartISO={toISODate(weekStart)}
+        defaultEndISO={toISODate(weekEndInclusive)}
+        onDownloadAll={handleDownloadIcalAll}
+        onDownloadClinician={handleDownloadIcalClinician}
       />
 
       {solverNotice ? (

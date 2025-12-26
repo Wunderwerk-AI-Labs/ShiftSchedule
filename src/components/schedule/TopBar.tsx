@@ -4,6 +4,7 @@ import { cx } from "../../lib/classNames";
 type TopBarProps = {
   viewMode: "calendar" | "settings" | "help";
   onSetViewMode: (nextMode: "calendar" | "settings" | "help") => void;
+  onOpenIcalExport: () => void;
   username: string;
   onLogout: () => void;
   theme: "light" | "dark";
@@ -13,6 +14,7 @@ type TopBarProps = {
 export default function TopBar({
   viewMode,
   onSetViewMode,
+  onOpenIcalExport,
   username,
   onLogout,
   theme,
@@ -86,6 +88,17 @@ export default function TopBar({
             )}
           >
             {viewMode === "help" ? "Back" : "Help"}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenIcalExport}
+            className={cx(
+              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
+              "hover:bg-slate-100 active:bg-slate-200/80",
+              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
+            )}
+          >
+            iCal
           </button>
           <div ref={menuRef} className="relative">
             <button
