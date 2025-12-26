@@ -69,45 +69,42 @@ export default function TopBar({
           >
             {viewMode === "calendar" ? "Settings" : "Back to Schedule"}
           </button>
-        </div>
-      </div>
-      <div
-        ref={menuRef}
-        className="absolute right-4 top-4 flex justify-end sm:right-6 sm:top-5"
-      >
-        <button
-          type="button"
-          aria-label="Account"
-          onClick={() => setMenuOpen((open) => !open)}
-          className={cx(
-            "grid h-10 w-10 place-items-center rounded-full border border-slate-300 bg-transparent text-sm font-semibold text-slate-700 shadow-sm",
-            "hover:bg-slate-100 active:bg-slate-200/80",
-            "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
-          )}
-        >
-          {badge || "U"}
-        </button>
-        {menuOpen ? (
-          <div className="absolute right-0 z-50 mt-2 w-40 rounded-xl border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
-            <div className="px-2 py-1 text-xs font-semibold text-slate-500 dark:text-slate-300">
-              {username}
-            </div>
+          <div ref={menuRef} className="relative">
             <button
               type="button"
-              onClick={() => {
-                onLogout();
-                setMenuOpen(false);
-              }}
+              aria-label="Account"
+              onClick={() => setMenuOpen((open) => !open)}
               className={cx(
-                "mt-1 flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs font-semibold",
-                "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
-                "dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                "grid h-10 w-10 place-items-center rounded-full border border-slate-300 bg-transparent text-sm font-semibold text-slate-700 shadow-sm",
+                "hover:bg-slate-100 active:bg-slate-200/80",
+                "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
               )}
             >
-              <span>Sign out</span>
+              {badge || "U"}
             </button>
+            {menuOpen ? (
+              <div className="absolute right-0 z-50 mt-2 w-40 rounded-xl border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                <div className="px-2 py-1 text-xs font-semibold text-slate-500 dark:text-slate-300">
+                  {username}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onLogout();
+                    setMenuOpen(false);
+                  }}
+                  className={cx(
+                    "mt-1 flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs font-semibold",
+                    "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                    "dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                  )}
+                >
+                  <span>Sign out</span>
+                </button>
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        </div>
       </div>
     </div>
   );
