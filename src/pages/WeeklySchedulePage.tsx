@@ -17,6 +17,7 @@ import {
   WorkplaceRow,
   workplaceRows,
 } from "../data/mockData";
+import { cx } from "../lib/classNames";
 import { addDays, addWeeks, startOfWeek, toISODate } from "../lib/date";
 
 const CLASS_COLORS = [
@@ -577,11 +578,22 @@ export default function WeeklySchedulePage({
       }),
     );
   };
+  const openSlotsBadge = (
+    <span
+      className={cx(
+        "inline-flex items-center self-start rounded-full px-2.5 py-1 text-[11px] font-normal ring-1 ring-inset sm:self-auto sm:px-3",
+        openSlotsCount === 0
+          ? "bg-emerald-50 text-emerald-600 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200 dark:ring-emerald-500/40"
+          : "bg-rose-50 text-rose-600 ring-rose-200 dark:bg-rose-900/40 dark:text-rose-200 dark:ring-rose-500/40",
+      )}
+    >
+      {openSlotsCount} Open Slots
+    </span>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       <TopBar
-        openSlotsCount={openSlotsCount}
         viewMode={viewMode}
         onToggleView={() =>
           setViewMode((prev) => (prev === "calendar" ? "settings" : "calendar"))
@@ -600,23 +612,28 @@ export default function WeeklySchedulePage({
             rows={allRows}
             assignmentMap={renderAssignmentMap}
             header={
-              isMobile ? (
-                <MobileDayNavigator
-                  date={anchorDate}
-                  onPrevDay={() => setAnchorDate((d) => addDays(d, -1))}
-                  onNextDay={() => setAnchorDate((d) => addDays(d, 1))}
-                  onToday={() => setAnchorDate(new Date())}
-                />
-              ) : (
-                <WeekNavigator
-                  variant="card"
-                  rangeStart={weekStart}
-                  rangeEndInclusive={weekEndInclusive}
-                  onPrevWeek={() => setAnchorDate((d) => addWeeks(d, -1))}
-                  onNextWeek={() => setAnchorDate((d) => addWeeks(d, 1))}
-                  onToday={() => setAnchorDate(new Date())}
-                />
-              )
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  {isMobile ? (
+                    <MobileDayNavigator
+                      date={anchorDate}
+                      onPrevDay={() => setAnchorDate((d) => addDays(d, -1))}
+                      onNextDay={() => setAnchorDate((d) => addDays(d, 1))}
+                      onToday={() => setAnchorDate(new Date())}
+                    />
+                  ) : (
+                    <WeekNavigator
+                      variant="card"
+                      rangeStart={weekStart}
+                      rangeEndInclusive={weekEndInclusive}
+                      onPrevWeek={() => setAnchorDate((d) => addWeeks(d, -1))}
+                      onNextWeek={() => setAnchorDate((d) => addWeeks(d, 1))}
+                      onToday={() => setAnchorDate(new Date())}
+                    />
+                  )}
+                </div>
+                {openSlotsBadge}
+              </div>
             }
             separatorBeforeRowIds={poolsSeparatorId ? [poolsSeparatorId] : []}
             minSlotsByRowId={minSlotsByRowId}

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
 
 type TopBarProps = {
-  openSlotsCount: number;
   viewMode: "calendar" | "settings";
   onToggleView: () => void;
   username: string;
@@ -12,7 +11,6 @@ type TopBarProps = {
 };
 
 export default function TopBar({
-  openSlotsCount,
   viewMode,
   onToggleView,
   username,
@@ -45,18 +43,6 @@ export default function TopBar({
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
             Weekly Schedule
           </h1>
-          {viewMode === "calendar" ? (
-            <span
-              className={cx(
-                "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset sm:px-3 sm:text-sm",
-                openSlotsCount === 0
-                  ? "bg-emerald-50 text-emerald-600 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200 dark:ring-emerald-500/40"
-                  : "bg-rose-50 text-rose-600 ring-rose-200 dark:bg-rose-900/40 dark:text-rose-200 dark:ring-rose-500/40",
-              )}
-            >
-              {openSlotsCount} Open Slots
-            </span>
-          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
@@ -75,11 +61,11 @@ export default function TopBar({
           <button
             type="button"
             onClick={onToggleView}
-            className={cx(
-              "inline-flex items-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-900 shadow-sm sm:px-4 sm:text-sm",
-              "hover:bg-slate-50 active:bg-slate-100",
-              "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-            )}
+          className={cx(
+            "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
+            "hover:bg-slate-100 active:bg-slate-200/80",
+            "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
+          )}
           >
             {viewMode === "calendar" ? "Settings" : "Back to Schedule"}
           </button>
@@ -87,15 +73,16 @@ export default function TopBar({
       </div>
       <div
         ref={menuRef}
-        className="relative mt-3 flex justify-end px-4 sm:absolute sm:right-6 sm:top-5 sm:mt-0 sm:px-0"
+        className="absolute right-4 top-4 flex justify-end sm:right-6 sm:top-5"
       >
         <button
           type="button"
           aria-label="Account"
           onClick={() => setMenuOpen((open) => !open)}
           className={cx(
-            "grid h-10 w-10 place-items-center rounded-full bg-sky-500 text-sm font-semibold text-white shadow-sm",
-            "hover:bg-sky-600 active:bg-sky-700",
+            "grid h-10 w-10 place-items-center rounded-full border border-slate-300 bg-transparent text-sm font-semibold text-slate-700 shadow-sm",
+            "hover:bg-slate-100 active:bg-slate-200/80",
+            "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
           )}
         >
           {badge || "U"}
