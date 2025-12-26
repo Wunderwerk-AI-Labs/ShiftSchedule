@@ -98,6 +98,10 @@ Hover stuck after drag (local/remote)
 - Root cause: CSS `:hover` (group-hover) sometimes stays active after a drag cancel, leaving ghost slots or cell backgrounds stuck.
 - Fix: drive ghost slot visibility and cell hover background from `hoveredClassCell` state instead of CSS hover.
 
+Drag preview styling
+- Drag image uses a cloned pill; if it was highlighted, the clone kept emerald classes.
+- Fix: strip all emerald classes on clone and re-apply the normal blue classes during drag start.
+
 ---
 
 ## 4) Data Model (Shared Concept)

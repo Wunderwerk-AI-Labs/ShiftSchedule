@@ -5,6 +5,7 @@ type AssignmentPillProps = {
   showNoEligibilityWarning?: boolean;
   showIneligibleWarning?: boolean;
   isHighlighted?: boolean;
+  isDragging?: boolean;
   className?: string;
 };
 
@@ -13,17 +14,19 @@ export default function AssignmentPill({
   showNoEligibilityWarning,
   showIneligibleWarning,
   isHighlighted = false,
+  isDragging = false,
   className,
 }: AssignmentPillProps) {
+  const showHighlight = isHighlighted && !isDragging;
   return (
     <div
       data-assignment-pill="true"
       className={cx(
         "group/pill relative w-full rounded-xl border px-1.5 py-0.5 text-[11px] font-normal leading-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]",
         "transition-colors hover:z-10",
-        isHighlighted
-          ? "border-emerald-500 bg-emerald-100 text-emerald-950 hover:border-emerald-500 hover:bg-emerald-100 dark:border-emerald-300 dark:bg-emerald-900/70 dark:text-emerald-50 dark:hover:border-emerald-300 dark:hover:bg-emerald-900/70"
-          : "border-sky-500 bg-sky-50 text-sky-800 hover:border-sky-600 hover:bg-sky-100 dark:border-sky-400 dark:bg-sky-900/40 dark:text-sky-100 dark:hover:border-sky-300 dark:hover:bg-sky-900/60",
+        showHighlight
+          ? "border-emerald-300 bg-emerald-100/80 text-emerald-900 hover:border-emerald-300 hover:bg-emerald-100/80 dark:border-emerald-500/60 dark:bg-emerald-900/40 dark:text-emerald-100 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-900/40"
+          : "border-sky-200 bg-sky-50 text-sky-800 hover:border-sky-300 hover:bg-sky-100 dark:border-sky-500/40 dark:bg-sky-900/40 dark:text-sky-100 dark:hover:border-sky-400/60 dark:hover:bg-sky-900/60",
         className,
       )}
     >

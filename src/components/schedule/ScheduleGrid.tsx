@@ -467,7 +467,7 @@ function RowSection({
                 "bg-slate-50/70 dark:bg-slate-800/50",
               { "border-r-0": isLastCol },
               row.kind === "class" && isWeekend ? "bg-white dark:bg-slate-900" : "",
-              showQualified && "border-emerald-400 ring-2 ring-emerald-300 ring-inset",
+              showQualified && "bg-emerald-50/70 dark:bg-emerald-900/30",
               {
                 "bg-slate-200/70 text-slate-400 opacity-60": isOtherDay,
               },
@@ -496,11 +496,25 @@ function RowSection({
                         if (pill) {
                           pill.classList.remove(
                             "border-emerald-500",
+                            "border-emerald-300",
                             "bg-emerald-100",
+                            "bg-emerald-100/80",
                             "text-emerald-950",
+                            "text-emerald-900",
                             "dark:border-emerald-300",
+                            "dark:border-emerald-500/60",
                             "dark:bg-emerald-900/70",
+                            "dark:bg-emerald-900/40",
                             "dark:text-emerald-50",
+                            "dark:text-emerald-100",
+                          );
+                          pill.classList.add(
+                            "border-sky-200",
+                            "bg-sky-50",
+                            "text-sky-800",
+                            "dark:border-sky-500/40",
+                            "dark:bg-sky-900/40",
+                            "dark:text-sky-100",
                           );
                         }
                         clone.style.position = "absolute";
@@ -560,6 +574,7 @@ function RowSection({
                           !!hoveredClassCell &&
                           getIsQualified(assignment.clinicianId, hoveredClassCell.rowId)
                         }
+                        isDragging={isDraggingAssignment}
                       />
                     </div>
                   );
