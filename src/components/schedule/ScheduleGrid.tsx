@@ -4,7 +4,7 @@ import { formatDayHeader, toISODate } from "../../lib/date";
 import AssignmentPill from "./AssignmentPill";
 import EmptySlotPill from "./EmptySlotPill";
 import RowLabel from "./RowLabel";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, PointerEvent, SetStateAction } from "react";
 
 type ScheduleGridProps = {
@@ -73,6 +73,7 @@ export default function ScheduleGrid({
     rowId: string;
     dateISO: string;
   } | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const hoveredClassCellRef = useRef<{ rowId: string; dateISO: string } | null>(
     null,
   );
@@ -94,6 +95,10 @@ export default function ScheduleGrid({
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (event.pointerType && event.pointerType !== "mouse") return;
+    if (dragState.dragging) {
+      clearHoveredCell();
+      return;
+    }
     const target = event.target as HTMLElement | null;
     const cell = target?.closest<HTMLElement>('[data-schedule-cell="true"]');
     if (!cell) {
@@ -115,6 +120,32 @@ export default function ScheduleGrid({
     setHoveredCell({ rowId, dateISO });
   };
 
+  useEffect(() => {
+    if (!dragState.dragging) return;
+    const handleWindowDragOver = (event: DragEvent) => {
+      const target = event.target as HTMLElement | null;
+      const inGrid = target?.closest?.('[data-schedule-grid="true"]');
+      if (inGrid) return;
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+    };
+    const handleWindowDrop = (event: DragEvent) => {
+      const target = event.target as HTMLElement | null;
+      const inGrid = target?.closest?.('[data-schedule-grid="true"]');
+      if (inGrid) return;
+      event.preventDefault();
+      setDragState({ dragging: null, dragOverKey: null });
+    };
+    window.addEventListener("dragover", handleWindowDragOver);
+    window.addEventListener("drop", handleWindowDrop);
+    return () => {
+      window.removeEventListener("dragover", handleWindowDragOver);
+      window.removeEventListener("drop", handleWindowDrop);
+    };
+  }, [dragState.dragging]);
+
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-8 sm:px-6 sm:pb-10">
       <div
@@ -133,6 +164,8 @@ export default function ScheduleGrid({
           >
             <div className="min-w-full w-full">
               <div
+                ref={gridRef}
+                data-schedule-grid="true"
                 className="grid"
                 onPointerMove={handlePointerMove}
                 onPointerLeave={clearHoveredCell}
@@ -392,6 +425,7 @@ function RowSection({
             onClick={() => onCellClick({ row, date })}
             onMouseEnter={() => {
               if (row.kind !== "class") return;
+              if (dragState.dragging) return;
               setHoveredCell({ rowId: row.id, dateISO });
             }}
             onDragOver={(e) => {
@@ -461,9 +495,23 @@ function RowSection({
                       draggable
                       onDragStart={(e) => {
                         e.stopPropagation();
+                        setHoveredCell(null);
                         e.dataTransfer.effectAllowed = "move";
                         const source = e.currentTarget;
                         const clone = source.cloneNode(true) as HTMLElement;
+                        const pill = clone.querySelector<HTMLElement>(
+                          '[data-assignment-pill="true"]',
+                        );
+                        if (pill) {
+                          pill.classList.remove(
+                            "border-emerald-500",
+                            "bg-emerald-100",
+                            "text-emerald-950",
+                            "dark:border-emerald-300",
+                            "dark:bg-emerald-900/70",
+                            "dark:text-emerald-50",
+                          );
+                        }
                         clone.style.position = "absolute";
                         clone.style.top = "-9999px";
                         clone.style.left = "-9999px";

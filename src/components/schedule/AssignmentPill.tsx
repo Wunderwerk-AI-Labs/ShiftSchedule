@@ -17,11 +17,17 @@ export default function AssignmentPill({
 }: AssignmentPillProps) {
   return (
     <div
+      data-assignment-pill="true"
       className={cx(
         "group/pill relative w-full rounded-xl border border-sky-500 bg-sky-50 px-1.5 py-0.5 text-[11px] font-normal leading-4 text-sky-800 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]",
         "transition-colors",
-        "hover:border-sky-600 hover:bg-sky-100 hover:z-10",
-        "dark:border-sky-400 dark:bg-sky-900/40 dark:text-sky-100 dark:hover:border-sky-300 dark:hover:bg-sky-900/60",
+        isHighlighted
+          ? "hover:border-emerald-500 hover:bg-emerald-100"
+          : "hover:border-sky-600 hover:bg-sky-100",
+        "hover:z-10",
+        isHighlighted
+          ? "dark:hover:border-emerald-300 dark:hover:bg-emerald-900/70"
+          : "dark:border-sky-400 dark:bg-sky-900/40 dark:text-sky-100 dark:hover:border-sky-300 dark:hover:bg-sky-900/60",
         isHighlighted &&
           "border-emerald-500 bg-emerald-100 text-emerald-950 dark:border-emerald-300 dark:bg-emerald-900/70 dark:text-emerald-50",
         className,
