@@ -424,9 +424,17 @@ function RowSection({
             type="button"
             onClick={() => onCellClick({ row, date })}
             onMouseEnter={() => {
-              if (row.kind !== "class") return;
               if (dragState.dragging) return;
+              if (row.kind !== "class") {
+                clearHoveredCell();
+                return;
+              }
               setHoveredCell({ rowId: row.id, dateISO });
+            }}
+            onMouseLeave={() => {
+              if (hoveredClassCellRef.current?.rowId !== row.id) return;
+              if (hoveredClassCellRef.current?.dateISO !== dateISO) return;
+              clearHoveredCell();
             }}
             onDragOver={(e) => {
               if (!dragState.dragging) return;
