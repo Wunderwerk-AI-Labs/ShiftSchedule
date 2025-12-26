@@ -371,7 +371,7 @@ function RowSection({
       ) : null}
       <div
         className={cx(
-          "border-r border-slate-200 py-5 dark:border-slate-800",
+          "border-r border-slate-200 py-1 dark:border-slate-800 sm:py-1",
           borderBottomClass,
           rowBg,
         )}
@@ -472,7 +472,7 @@ function RowSection({
             data-row-kind={row.kind}
             data-date-iso={dateISO}
             className={cx(
-              "group relative border-r border-slate-200 p-2 text-left dark:border-slate-800 sm:p-3",
+              "group relative border-r border-slate-200 px-2 py-1 text-left dark:border-slate-800 sm:px-3 sm:py-1",
               borderBottomClass,
               cellBgClass,
               { "border-r-0": isLastCol },
