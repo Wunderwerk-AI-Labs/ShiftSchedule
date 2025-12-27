@@ -26,7 +26,8 @@ export ADMIN_PASSWORD=change-me
 export JWT_SECRET=change-me-too
 ```
 On first startup, the admin user is created if it doesn't already exist.
-If the admin already exists, the password is not overwritten.
+If the admin already exists, the password is not overwritten unless you set
+`ADMIN_PASSWORD_RESET=true` to force a reset for local dev.
 
 1) Install backend deps
 ```bash

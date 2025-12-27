@@ -711,6 +711,12 @@ def _verify_password(password: str, hashed: str) -> bool:
     return pwd_context.verify(password, hashed)
 
 
+def _is_truthy(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _user_row_to_public(row: sqlite3.Row) -> UserPublic:
     return UserPublic(
         username=row["username"],
@@ -851,6 +857,7 @@ def _require_admin(current_user: UserPublic = Depends(_get_current_user)) -> Use
 def _ensure_admin_user() -> None:
     username = os.environ.get("ADMIN_USERNAME")
     password = os.environ.get("ADMIN_PASSWORD")
+    reset_password = _is_truthy(os.environ.get("ADMIN_PASSWORD_RESET"))
     if not username or not password:
         return
     normalized = username.strip().lower()
@@ -858,6 +865,11 @@ def _ensure_admin_user() -> None:
         return
     existing = _get_user_by_username(normalized)
     if existing:
+        if reset_password:
+            _update_user(
+                normalized,
+                UserUpdateRequest(active=True, role="admin", password=password),
+            )
         return
     _create_user(normalized, password, "admin", active=True)
 

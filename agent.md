@@ -303,6 +303,7 @@ Endpoints
 ## 8) Auth Model (Backend + Frontend)
 - JWT auth; frontend stores token in `localStorage` key `authToken`.
 - Admin user is created on startup if `ADMIN_USERNAME`/`ADMIN_PASSWORD` are set and the user does not already exist.
+- Set `ADMIN_PASSWORD_RESET=true` to force-reset the admin password on startup (useful for local dev DBs).
 - Creating a user in the admin panel copies the creator's current state as the new user's initial state.
 - Login is case-sensitive (`admin` is lowercase).
 - Login screen includes show/hide password toggle.
