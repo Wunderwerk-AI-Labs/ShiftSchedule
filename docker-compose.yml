@@ -8,6 +8,8 @@ services:
       CORS_ALLOW_ORIGINS: https://${DOMAIN}
       # External base URL used to build public iCal subscription links (backend is reachable via /api).
       PUBLIC_BASE_URL: https://${DOMAIN}/api
+      # Frontend base URL used for PDF rendering (Playwright).
+      FRONTEND_BASE_URL: https://${DOMAIN}
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}

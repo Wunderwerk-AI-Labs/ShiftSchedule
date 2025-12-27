@@ -142,7 +142,7 @@ export default function ScheduleGrid({
   }, [dragState.dragging]);
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 pb-8 sm:px-6 sm:pb-10">
+    <div className="schedule-grid mx-auto w-full max-w-7xl px-4 pb-8 sm:px-6 sm:pb-10">
       <div
         className="relative mt-4 rounded-2xl border-2 border-slate-900/80 bg-white p-[2px] shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:mt-6 sm:rounded-3xl"
       >
@@ -155,7 +155,7 @@ export default function ScheduleGrid({
             </div>
           ) : null}
           <div
-            className="relative z-10 overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y [-webkit-overflow-scrolling:touch] sm:overflow-visible"
+            className="calendar-scroll relative z-10 overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y [-webkit-overflow-scrolling:touch] sm:overflow-visible"
           >
             <div className="min-w-full w-full">
               <div
@@ -371,7 +371,7 @@ function RowSection({
       ) : null}
       <div
         className={cx(
-          "border-r border-slate-200 py-1 dark:border-slate-800 sm:py-1",
+          "row border-r border-slate-200 py-1 dark:border-slate-800 sm:py-1",
           borderBottomClass,
           rowBg,
         )}
@@ -472,7 +472,7 @@ function RowSection({
             data-row-kind={row.kind}
             data-date-iso={dateISO}
             className={cx(
-              "group relative border-r border-slate-200 px-2 py-1 text-left dark:border-slate-800 sm:px-3 sm:py-1",
+              "row group relative border-r border-slate-200 px-2 py-1 text-left dark:border-slate-800 sm:px-3 sm:py-1",
               borderBottomClass,
               cellBgClass,
               { "border-r-0": isLastCol },
@@ -654,7 +654,7 @@ function ControlRow({
 }) {
   return (
     <>
-      <div className="border-b border-r border-slate-200 bg-white px-5 py-3 overflow-visible dark:border-slate-800 dark:bg-slate-900">
+      <div className="no-print border-b border-r border-slate-200 bg-white px-5 py-3 overflow-visible dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-2">
           <ControlButton
             label="Only necessary (week)"
@@ -680,7 +680,7 @@ function ControlRow({
           <div
             key={`control-${dateISO}`}
             className={cx(
-              "border-b border-r border-slate-200 px-4 py-3 text-center overflow-visible dark:border-slate-800",
+              "no-print border-b border-r border-slate-200 px-4 py-3 text-center overflow-visible dark:border-slate-800",
               "bg-white dark:bg-slate-900",
               { "border-r-0": isLastCol },
             )}

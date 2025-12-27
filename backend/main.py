@@ -8,10 +8,12 @@ from hashlib import sha256
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, Field, ValidationError
 from ortools.sat.python import cp_model
 
@@ -254,6 +256,11 @@ def _default_state() -> AppState:
 DB_PATH = os.environ.get("SCHEDULE_DB_PATH", "schedule.db")
 JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret")
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
+FRONTEND_BASE_URL = (
+    os.environ.get("FRONTEND_BASE_URL")
+    or os.environ.get("APP_ORIGIN")
+    or "http://localhost:5173"
+).strip()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "720"))
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
@@ -725,6 +732,15 @@ def _create_access_token(user: UserPublic) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token.strip()
+
+
 def _get_current_user(authorization: Optional[str] = Header(default=None)) -> UserPublic:
     if not authorization:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token.")
@@ -898,6 +914,147 @@ def get_state(current_user: UserPublic = Depends(_get_current_user)):
 def set_state(payload: AppState, current_user: UserPublic = Depends(_get_current_user)):
     _save_state(payload, current_user.username)
     return payload
+
+
+@app.get("/v1/pdf/week")
+def export_week_pdf(
+    start: str = Query(..., min_length=8),
+    authorization: Optional[str] = Header(default=None),
+    current_user: UserPublic = Depends(_get_current_user),
+):
+    start_iso = _parse_date_input(start)
+    if not start_iso:
+        raise HTTPException(status_code=400, detail="Start date required.")
+    token = _extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token.")
+    base_url = FRONTEND_BASE_URL.rstrip("/")
+    print_url = f"{base_url}/print/week?start={start_iso}"
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1400, "height": 900})
+                page.add_init_script(
+                    "localStorage.setItem('authToken', %s);" % json.dumps(token)
+                )
+                page.goto(print_url, wait_until="networkidle", timeout=20000)
+                page.wait_for_function("window.__PDF_READY__ === true", timeout=20000)
+                page.emulate_media(media="print")
+                dims = page.evaluate(
+                    """() => {
+                        const body = document.body;
+                        const html = document.documentElement;
+                        return {
+                            width: Math.max(body.scrollWidth, html.scrollWidth),
+                            height: Math.max(body.scrollHeight, html.scrollHeight),
+                        };
+                    }"""
+                )
+                width = float(dims.get("width", 0) or 0)
+                height = float(dims.get("height", 0) or 0)
+                dpi = 96.0
+                a4_width = 11.69 * dpi
+                a4_height = 8.27 * dpi
+                margin = (10 / 25.4) * dpi
+                usable_width = max(1.0, a4_width - (2 * margin))
+                usable_height = max(1.0, a4_height - (2 * margin))
+                scale = 1.0
+                if width > 0 and height > 0:
+                    scale = min(1.0, usable_width / width, usable_height / height)
+                pdf_bytes = page.pdf(
+                    format="A4",
+                    landscape=True,
+                    print_background=True,
+                    scale=scale,
+                    margin={"top": "10mm", "right": "10mm", "bottom": "10mm", "left": "10mm"},
+                )
+            finally:
+                browser.close()
+    except PlaywrightTimeoutError as exc:
+        raise HTTPException(status_code=504, detail="PDF render timed out.") from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=500, detail="PDF render failed.") from exc
+
+    filename = f"shift-planner-{start_iso}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/v1/pdf/weeks")
+def export_weeks_pdf(
+    start: str = Query(..., min_length=8),
+    weeks: int = Query(..., ge=1, le=55),
+    authorization: Optional[str] = Header(default=None),
+    current_user: UserPublic = Depends(_get_current_user),
+):
+    start_iso = _parse_date_input(start)
+    if not start_iso:
+        raise HTTPException(status_code=400, detail="Start date required.")
+    token = _extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token.")
+    base_url = FRONTEND_BASE_URL.rstrip("/")
+    print_url = f"{base_url}/print/weeks?start={start_iso}&weeks={weeks}"
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1400, "height": 900})
+                page.add_init_script(
+                    "localStorage.setItem('authToken', %s);" % json.dumps(token)
+                )
+                page.goto(print_url, wait_until="networkidle", timeout=20000)
+                page.wait_for_function("window.__PDF_READY__ === true", timeout=20000)
+                page.emulate_media(media="print")
+                dims = page.evaluate(
+                    """() => {
+                        const body = document.body;
+                        const html = document.documentElement;
+                        return {
+                            width: Math.max(body.scrollWidth, html.scrollWidth),
+                            height: Math.max(body.scrollHeight, html.scrollHeight),
+                        };
+                    }"""
+                )
+                width = float(dims.get("width", 0) or 0)
+                dpi = 96.0
+                a4_width = 11.69 * dpi
+                margin = (10 / 25.4) * dpi
+                usable_width = max(1.0, a4_width - (2 * margin))
+                scale = 1.0
+                if width > 0:
+                    scale = min(1.0, usable_width / width)
+                pdf_bytes = page.pdf(
+                    format="A4",
+                    landscape=True,
+                    print_background=True,
+                    scale=scale,
+                    margin={
+                        "top": "10mm",
+                        "right": "10mm",
+                        "bottom": "10mm",
+                        "left": "10mm",
+                    },
+                )
+            finally:
+                browser.close()
+    except PlaywrightTimeoutError as exc:
+        raise HTTPException(status_code=504, detail="PDF render timed out.") from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=500, detail="PDF render failed.") from exc
+
+    filename = f"shift-planner-{start_iso}-{weeks}w.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/v1/ical/publish", response_model=IcalPublishStatus)

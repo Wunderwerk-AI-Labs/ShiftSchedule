@@ -4,7 +4,7 @@ import { cx } from "../../lib/classNames";
 type TopBarProps = {
   viewMode: "calendar" | "settings" | "help";
   onSetViewMode: (nextMode: "calendar" | "settings" | "help") => void;
-  onOpenIcalExport: () => void;
+  onOpenExport: () => void;
   username: string;
   onLogout: () => void;
   theme: "light" | "dark";
@@ -14,7 +14,7 @@ type TopBarProps = {
 export default function TopBar({
   viewMode,
   onSetViewMode,
-  onOpenIcalExport,
+  onOpenExport,
   username,
   onLogout,
   theme,
@@ -42,23 +42,26 @@ export default function TopBar({
     <div className="relative border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          <button
+            type="button"
+            onClick={() => onSetViewMode("calendar")}
+            className="text-2xl font-semibold tracking-tight text-slate-900 transition-colors hover:text-slate-700 dark:text-slate-100 dark:hover:text-slate-200"
+          >
             🩺 Shift Planner
-          </h1>
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={onToggleTheme}
-            aria-label="Toggle theme"
+            onClick={onOpenExport}
             className={cx(
-              "inline-flex items-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm",
-              "hover:bg-slate-50 active:bg-slate-100",
-              "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
+              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
+              "hover:bg-slate-100 active:bg-slate-200/80",
+              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
             )}
           >
-            {theme === "dark" ? "☀" : "☾"}
+            Export
           </button>
           <button
             type="button"
@@ -71,7 +74,7 @@ export default function TopBar({
               "hover:bg-slate-100 active:bg-slate-200/80",
               "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
               viewMode === "settings" &&
-                "bg-slate-100 dark:bg-slate-800/60",
+                "border-sky-300 bg-sky-100 text-sky-800 shadow-sm dark:border-sky-400/50 dark:bg-sky-900/60 dark:text-sky-100",
             )}
           >
             {viewMode === "settings" ? "Back" : "Settings"}
@@ -84,21 +87,23 @@ export default function TopBar({
               "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
               "hover:bg-slate-100 active:bg-slate-200/80",
               "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
-              viewMode === "help" && "bg-slate-100 dark:bg-slate-800/60",
+              viewMode === "help" &&
+                "border-sky-300 bg-sky-100 text-sky-800 shadow-sm dark:border-sky-400/50 dark:bg-sky-900/60 dark:text-sky-100",
             )}
           >
             {viewMode === "help" ? "Back" : "Help"}
           </button>
           <button
             type="button"
-            onClick={onOpenIcalExport}
+            onClick={onToggleTheme}
+            aria-label="Toggle theme"
             className={cx(
-              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
-              "hover:bg-slate-100 active:bg-slate-200/80",
-              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
+              "inline-flex items-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm",
+              "hover:bg-slate-50 active:bg-slate-100",
+              "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700",
             )}
           >
-            iCal
+            {theme === "dark" ? "☀" : "☾"}
           </button>
           <div ref={menuRef} className="relative">
             <button

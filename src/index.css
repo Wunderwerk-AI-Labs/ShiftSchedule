@@ -8,3 +8,42 @@
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);
   border-radius: 0.5rem;
 }
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  html,
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+    background: #fff !important;
+    height: auto !important;
+  }
+  .schedule-grid {
+    padding-bottom: 0 !important;
+  }
+  .calendar-scroll {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  .sticky,
+  .fixed {
+    position: static !important;
+  }
+  .row {
+    break-inside: avoid;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-page {
+    break-after: page;
+    page-break-after: always;
+  }
+  .print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}

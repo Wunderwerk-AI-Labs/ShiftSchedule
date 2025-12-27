@@ -20,7 +20,9 @@ Backend
 
 ## 2) Core UI
 Top bar
-- Title, Settings button (ghost/outlined), theme toggle, avatar (outlined circle).
+- Title is clickable and returns to calendar view.
+- Button order (left → right): Export, Settings, Help, Theme toggle, User avatar.
+- Settings/Help buttons turn into a highlighted **Back** state when active.
 - Open slots badge lives in the schedule card header (green when all slots filled).
 - Responsive: stacks on small screens; avatar row moves below the main controls.
 
@@ -32,6 +34,7 @@ Schedule card
 - Mobile: grid uses touch scrolling and slightly tighter paddings.
 - Control row between class rows and pool rows with icon buttons:
   - Only necessary, Distribute all, Reset to free (week and per day), with tooltips.
+- Week publication uses a **Publish** toggle pill in the header, placed to the right of the Open Slots badge.
 
 Rows
 - Class rows (editable, reorderable priority): MRI, CT, Sonography, Conventional, On Call, etc.
@@ -90,10 +93,30 @@ Admin user management
 - User import: create user form accepts an export JSON to seed the new user's state.
 
 iCal (download + subscription feed)
-- The top bar has an `iCal` button that opens a modal with two tabs:
-  - **Download**: generates `.ics` files locally in the browser (no server endpoint).
-  - **Subscribe / Publish**: publishes cryptic URL feeds (all clinicians + per clinician) that can be subscribed by external calendar clients without login.
+- The top bar has an **Export** button that opens a modal:
+  - Primary tabs: **PDF** and **iCal**.
+  - iCal has a secondary toggle for **Subscription** (default) vs **Download**.
   - Subscriptions include **only weeks marked Published** in the schedule view (week toggle above the grid).
+
+PDF export (server-side, Playwright)
+- Print-only routes:
+  - `/print/week?start=YYYY-MM-DD`
+  - `/print/weeks?start=YYYY-MM-DD&weeks=N` (multiple pages in one PDF)
+- Backend endpoints:
+  - `GET /v1/pdf/week?start=YYYY-MM-DD` (single week)
+  - `GET /v1/pdf/weeks?start=YYYY-MM-DD&weeks=N` (combined PDF)
+- PDF render specifics:
+  - A4 landscape with background colors.
+  - Auto-scale to fit the full table on the page.
+  - Open Slots badge, Publish toggle, and Open Slot pills are hidden in PDF.
+- The print route sets `window.__PDF_READY__ = true` after data loads + two rAFs; backend waits for that signal.
+- Export UI:
+  - PDF tab accepts start week + number of weeks (max 55).
+  - User can choose **one combined PDF** or **individual files**.
+- Env var `FRONTEND_BASE_URL` is used by the backend to reach the frontend for PDF rendering:
+  - Domain setup: `https://$DOMAIN`
+  - IP-only setup: `http://SERVER_IP`
+- Print CSS lives in `src/index.css` (A4 landscape, `print-color-adjust`, overflow visible, no-print elements hidden).
 
 iCal download (frontend-only)
 - Supports:
@@ -130,6 +153,11 @@ Known issues / fixes
   - `POST /v1/ical/publish` (enable links; keeps existing tokens)
   - `POST /v1/ical/publish/rotate` (new tokens for all + clinicians; old URLs become 404)
   - `DELETE /v1/ical/publish` (unpublish; URL becomes 404)
+- Subscription UI behavior:
+  - Status is a **Links active** toggle; turning it off unpublishes.
+  - **Refresh links** rotates tokens after confirmation.
+  - All clinicians link is shown in the same list as individual clinicians.
+  - Links are auto-refreshed when the Export modal opens (no separate “Update links” button).
 - Subscribe URL base:
   - Backend uses env var `PUBLIC_BASE_URL` if set (recommended for production behind HTTPS). For the domain+Caddy setup in this repo (backend behind `/api`), set `PUBLIC_BASE_URL=https://$DOMAIN/api`.
   - Otherwise it falls back to `request.base_url` (works for local dev).

@@ -9,6 +9,7 @@ type IcalExportModalProps = {
   clinicians: Array<{ id: string; name: string }>;
   defaultStartISO: string;
   defaultEndISO: string;
+  defaultPdfStartISO: string;
   onDownloadAll: (range: { startISO?: string; endISO?: string }) => void;
   onDownloadClinician: (
     clinicianId: string,
@@ -20,6 +21,14 @@ type IcalExportModalProps = {
   onPublish: () => void;
   onRotate: () => void;
   onUnpublish: () => void;
+  onExportPdf: (args: {
+    startISO: string;
+    weeks: number;
+    mode: "combined" | "individual";
+  }) => void;
+  pdfExporting: boolean;
+  pdfProgress?: { current: number; total: number } | null;
+  pdfError?: string | null;
 };
 
 export default function IcalExportModal({
@@ -28,6 +37,7 @@ export default function IcalExportModal({
   clinicians,
   defaultStartISO,
   defaultEndISO,
+  defaultPdfStartISO,
   onDownloadAll,
   onDownloadClinician,
   publishStatus,
@@ -36,10 +46,18 @@ export default function IcalExportModal({
   onPublish,
   onRotate,
   onUnpublish,
+  onExportPdf,
+  pdfExporting,
+  pdfProgress,
+  pdfError,
 }: IcalExportModalProps) {
   const [startText, setStartText] = useState<string>("");
   const [endText, setEndText] = useState<string>("");
-  const [tab, setTab] = useState<"download" | "subscribe">("download");
+  const [tab, setTab] = useState<"pdf" | "ical">("pdf");
+  const [icalTab, setIcalTab] = useState<"download" | "subscribe">("subscribe");
+  const [pdfStartText, setPdfStartText] = useState<string>("");
+  const [pdfWeeksText, setPdfWeeksText] = useState<string>("1");
+  const [pdfMode, setPdfMode] = useState<"combined" | "individual">("combined");
   const [copyState, setCopyState] = useState<{
     status: "idle" | "copied" | "error";
     key?: string;
@@ -81,11 +99,15 @@ export default function IcalExportModal({
 
   useEffect(() => {
     if (!open) return;
-    setTab("download");
+    setTab("pdf");
+    setIcalTab("subscribe");
     setCopyState({ status: "idle" });
     setStartText(isoToEuropean(defaultStartISO));
     setEndText(isoToEuropean(defaultEndISO));
-  }, [defaultEndISO, defaultStartISO, open]);
+    setPdfStartText(isoToEuropean(defaultPdfStartISO));
+    setPdfWeeksText("1");
+    setPdfMode("combined");
+  }, [defaultEndISO, defaultPdfStartISO, defaultStartISO, open]);
 
   const range = useMemo(() => {
     const parsedStart = parseDateInput(startText);
@@ -107,6 +129,19 @@ export default function IcalExportModal({
       hasError: !parsedStart.valid || !parsedEnd.valid,
     };
   }, [endText, startText]);
+
+  const pdfValidation = useMemo(() => {
+    const parsedStart = parseDateInput(pdfStartText);
+    const weeks = Number(pdfWeeksText);
+    const weeksValid = Number.isFinite(weeks) && weeks >= 1 && weeks <= 55;
+    return {
+      startValid: parsedStart.valid,
+      startISO: parsedStart.iso,
+      weeksValid,
+      weeks: Math.trunc(weeks),
+      hasError: !parsedStart.valid || !weeksValid,
+    };
+  }, [pdfStartText, pdfWeeksText]);
 
   const subscribeUrl = publishStatus?.all?.subscribeUrl ?? "";
   const clinicianLinks = publishStatus?.clinicians ?? [];
@@ -166,10 +201,10 @@ export default function IcalExportModal({
           <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5 dark:border-slate-800">
             <div>
               <div className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                Download iCal (.ics)
+                Export
               </div>
               <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                One iCal file can contain multiple dates and multiple events.
+                Choose a format and configure your export.
               </div>
             </div>
             <button
@@ -187,41 +222,67 @@ export default function IcalExportModal({
 
           <div className="min-h-0 overflow-y-auto px-6 py-5">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
-              Export your assignments as calendar events:
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                <li>Each assignment becomes an all-day event on that date.</li>
-                <li>Only class assignments are exported (not pool rows).</li>
-              </ul>
+              PDF creates printable week exports. iCal can be downloaded as files or shared as
+              subscription links.
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setTab("download")}
+                onClick={() => setTab("pdf")}
                 className={cx(
                   "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                  tab === "download"
+                  tab === "pdf"
                     ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
                 )}
               >
-                Download
+                PDF
               </button>
               <button
                 type="button"
-                onClick={() => setTab("subscribe")}
+                onClick={() => setTab("ical")}
                 className={cx(
                   "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                  tab === "subscribe"
+                  tab === "ical"
                     ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
                 )}
               >
-                Subscribe / Publish
+                iCal
               </button>
             </div>
 
-            {tab === "download" ? (
+            {tab === "ical" ? (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIcalTab("subscribe")}
+                  className={cx(
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                    icalTab === "subscribe"
+                      ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
+                  )}
+                >
+                  Subscription
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIcalTab("download")}
+                  className={cx(
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                    icalTab === "download"
+                      ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
+                  )}
+                >
+                  Download
+                </button>
+              </div>
+            ) : null}
+
+            {tab === "ical" && icalTab === "download" ? (
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -307,7 +368,7 @@ export default function IcalExportModal({
                   </div>
                 )}
               </div>
-            ) : (
+            ) : tab === "ical" && icalTab === "subscribe" ? (
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                   Subscription scope
@@ -317,13 +378,129 @@ export default function IcalExportModal({
                   <span className="font-semibold">Published</span> in the schedule view.
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {tab === "download" ? (
+            {tab === "pdf" ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  PDF export
+                </div>
+                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Choose a starting week and how many weeks to export. Each week is saved as a
+                  separate PDF.
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-1">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">
+                      Start week (DD.MM.YYYY)
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="DD.MM.YYYY"
+                      value={pdfStartText}
+                      onChange={(e) => setPdfStartText(e.target.value)}
+                      className={cx(
+                        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
+                        "focus:border-sky-300 focus:outline-none",
+                        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                        !pdfValidation.startValid && "border-rose-300 bg-rose-50/50",
+                      )}
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">
+                      Number of weeks
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={55}
+                      value={pdfWeeksText}
+                      onChange={(e) => setPdfWeeksText(e.target.value)}
+                      className={cx(
+                        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
+                        "focus:border-sky-300 focus:outline-none",
+                        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                        !pdfValidation.weeksValid && "border-rose-300 bg-rose-50/50",
+                      )}
+                    />
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPdfMode("combined")}
+                    className={cx(
+                      "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                      pdfMode === "combined"
+                        ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
+                    )}
+                  >
+                    Export as one large PDF file
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPdfMode("individual")}
+                    className={cx(
+                      "rounded-full border px-3 py-1.5 text-xs font-semibold",
+                      pdfMode === "individual"
+                        ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
+                    )}
+                  >
+                    Export PDF as individual files
+                  </button>
+                </div>
+                {pdfValidation.hasError ? (
+                  <div className="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-300">
+                    Enter a valid start date and number of weeks (1–55).
+                  </div>
+                ) : null}
+                {pdfError ? (
+                  <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-900/30 dark:text-rose-200">
+                    {pdfError}
+                  </div>
+                ) : null}
+                {pdfProgress ? (
+                  <div className="mt-3 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    Exporting {pdfProgress.current} of {pdfProgress.total} weeks…
+                  </div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!pdfValidation.startISO) return;
+                      onExportPdf({
+                        startISO: pdfValidation.startISO,
+                        weeks: pdfValidation.weeks,
+                        mode: pdfMode,
+                      });
+                    }}
+                    disabled={pdfValidation.hasError || pdfExporting}
+                    className={cx(
+                      "inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900",
+                      "hover:bg-slate-50 active:bg-slate-100",
+                      "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                  >
+                    Export PDF
+                  </button>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    {pdfMode === "combined"
+                      ? "Download as one file."
+                      : "Files download one by one."}
+                  </span>
+                </div>
+              </div>
+            ) : tab === "ical" && icalTab === "download" ? (
               <>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                   <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                    Download
+                    iCal download
                   </div>
                   <button
                     type="button"
@@ -378,27 +555,43 @@ export default function IcalExportModal({
                   file into your calendar app (Google Calendar, Apple Calendar, Outlook).
                 </div>
               </>
-            ) : (
+            ) : tab === "ical" && icalTab === "subscribe" ? (
               <>
                 <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                      Status
+                      Links active
                     </div>
-                    <span
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isPublished}
+                      onClick={() => {
+                        if (publishLoading) return;
+                        if (isPublished) {
+                          const ok = window.confirm(
+                            "Disable these links? Existing subscription links will stop working.",
+                          );
+                          if (!ok) return;
+                          onUnpublish();
+                          return;
+                        }
+                        onPublish();
+                      }}
                       className={cx(
-                        "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
+                        "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
                         isPublished
-                          ? "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200 dark:ring-emerald-500/40"
-                          : "bg-slate-50 text-slate-600 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
+                          ? "bg-emerald-500"
+                          : "bg-slate-300 dark:bg-slate-700",
                       )}
                     >
-                      {publishLoading && !publishStatus
-                        ? "Loading…"
-                        : isPublished
-                          ? "Published"
-                          : "Not published"}
-                    </span>
+                      <span
+                        className={cx(
+                          "inline-block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow transition-transform",
+                          isPublished && "translate-x-[22px]",
+                        )}
+                      />
+                    </button>
                   </div>
 
                   {publishError ? (
@@ -410,132 +603,78 @@ export default function IcalExportModal({
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={onPublish}
-                      disabled={!canPublish}
-                      className={cx(
-                        "inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900",
-                        "hover:bg-slate-50 active:bg-slate-100",
-                        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                        "disabled:cursor-not-allowed disabled:opacity-50",
-                      )}
-                    >
-                      {isPublished ? "Update links" : "Publish links"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onRotate}
-                      disabled={!isPublished || publishLoading}
-                      className={cx(
-                        "inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900",
-                        "hover:bg-slate-50 active:bg-slate-100",
-                        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                        "disabled:cursor-not-allowed disabled:opacity-50",
-                      )}
-                    >
-                      Rotate link
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => {
                         if (!isPublished) return;
                         const ok = window.confirm(
-                          "Unpublish this calendar feed? Existing subscription links will stop working.",
+                          "Refresh the links? Old links will stop working.",
                         );
                         if (!ok) return;
-                        onUnpublish();
+                        onRotate();
                       }}
                       disabled={!isPublished || publishLoading}
                       className={cx(
-                        "inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700",
-                        "hover:bg-rose-100 active:bg-rose-200/70",
-                        "dark:border-rose-500/40 dark:bg-rose-900/30 dark:text-rose-200 dark:hover:bg-rose-900/40",
+                        "inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900",
+                        "hover:bg-slate-50 active:bg-slate-100",
+                        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
                         "disabled:cursor-not-allowed disabled:opacity-50",
                       )}
                     >
-                      Unpublish
+                      Refresh links
                     </button>
                   </div>
 
-                  {isPublished && subscribeUrl ? (
-                    <div className="mt-4">
-                      <div className="text-xs font-semibold text-slate-500 dark:text-slate-300">
-                        All clinicians
-                      </div>
-                      <div className="mt-2 flex gap-2">
-                        <input
-                          type="text"
-                          readOnly
-                          value={subscribeUrl}
-                          className={cx(
-                            "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
-                            "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                          )}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(subscribeUrl, "all")}
-                          className={cx(
-                            "shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900",
-                            "hover:bg-slate-50 active:bg-slate-100",
-                            "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                          )}
-                        >
-                          {getCopyLabel("all")}
-                        </button>
-                      </div>
-                      <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                        Anyone with this link can subscribe (read-only). Keep it private.
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {isPublished && clinicianLinks.length > 0 ? (
+                  {isPublished ? (
                     <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
                       <div className="bg-white px-4 py-2 text-xs font-semibold text-slate-500 dark:bg-slate-900 dark:text-slate-300">
-                        Clinician links
+                        Subscription links
                       </div>
                       <div className="divide-y divide-slate-200 dark:divide-slate-800">
-                        {clinicianLinks.map((clinician) => {
-                          const key = `clinician-${clinician.clinicianId}`;
-                          return (
-                            <div
-                              key={clinician.clinicianId}
-                              className="bg-white px-4 py-3 dark:bg-slate-900"
-                            >
-                              <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                                {clinician.clinicianName}
+                        {[{ clinicianId: "all", clinicianName: "All clinicians", subscribeUrl }, ...clinicianLinks]
+                          .filter((item) => item.subscribeUrl)
+                          .map((clinician) => {
+                            const key = `clinician-${clinician.clinicianId}`;
+                            return (
+                              <div
+                                key={clinician.clinicianId}
+                                className="bg-white px-4 py-3 dark:bg-slate-900"
+                              >
+                                <div className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                                  {clinician.clinicianName}
+                                </div>
+                                <div className="mt-2 flex gap-2">
+                                  <input
+                                    type="text"
+                                    readOnly
+                                    value={clinician.subscribeUrl}
+                                    className={cx(
+                                      "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
+                                      "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                                    )}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => copyToClipboard(clinician.subscribeUrl, key)}
+                                    className={cx(
+                                      "shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900",
+                                      "hover:bg-slate-50 active:bg-slate-100",
+                                      "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+                                    )}
+                                  >
+                                    {getCopyLabel(key)}
+                                  </button>
+                                </div>
                               </div>
-                              <div className="mt-2 flex gap-2">
-                                <input
-                                  type="text"
-                                  readOnly
-                                  value={clinician.subscribeUrl}
-                                  className={cx(
-                                    "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
-                                    "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                                  )}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => copyToClipboard(clinician.subscribeUrl, key)}
-                                  className={cx(
-                                    "shrink-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900",
-                                    "hover:bg-slate-50 active:bg-slate-100",
-                                    "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                                  )}
-                                >
-                                  {getCopyLabel(key)}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                      </div>
+                      <div className="bg-white px-4 py-2 text-xs text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+                        Anyone with these links can subscribe (read-only). Keep them private.
                       </div>
                     </div>
                   ) : null}
                 </div>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

@@ -9,6 +9,8 @@ import WeekNavigator from "../components/schedule/WeekNavigator";
 import AdminUsersPanel from "../components/auth/AdminUsersPanel";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/schedule/icons";
 import {
+  exportWeekPdf,
+  exportWeeksPdf,
   getIcalPublishStatus,
   getState,
   publishIcal,
@@ -33,6 +35,11 @@ import {
 import { cx } from "../lib/classNames";
 import { addDays, addWeeks, startOfWeek, toISODate } from "../lib/date";
 import { buildICalendar, type ICalEvent } from "../lib/ical";
+import {
+  buildRenderedAssignmentMap,
+  FREE_POOL_ID,
+  VACATION_POOL_ID,
+} from "../lib/schedule";
 
 const CLASS_COLORS = [
   "bg-violet-500",
@@ -45,9 +52,7 @@ const CLASS_COLORS = [
   "bg-sky-500",
   "bg-lime-500",
 ];
-const FREE_POOL_ID = "pool-not-allocated";
 const MANUAL_POOL_ID = "pool-manual";
-const VACATION_POOL_ID = "pool-vacation";
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => {
@@ -137,12 +142,17 @@ export default function WeeklySchedulePage({
   const [viewMode, setViewMode] = useState<"calendar" | "settings" | "help">(
     "calendar",
   );
-  const [icalOpen, setIcalOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [icalPublishStatus, setIcalPublishStatus] = useState<IcalPublishStatus | null>(
     null,
   );
   const [icalPublishLoading, setIcalPublishLoading] = useState(false);
   const [icalPublishError, setIcalPublishError] = useState<string | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  );
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
   const [assignmentMap, setAssignmentMap] = useState<Map<string, Assignment[]>>(() =>
     buildAssignmentMap(assignments),
@@ -228,6 +238,17 @@ export default function WeeklySchedulePage({
 
   const downloadTextFile = (filename: string, mimeType: string, content: string) => {
     const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const downloadBlob = (filename: string, blob: Blob) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -329,12 +350,21 @@ export default function WeeklySchedulePage({
     );
   };
 
-  const openIcalModal = () => {
-    setIcalOpen(true);
+  const openExportModal = () => {
+    setExportOpen(true);
     setIcalPublishError(null);
     setIcalPublishLoading(true);
     getIcalPublishStatus()
-      .then((status) => {
+      .then(async (status) => {
+        if (status.published) {
+          try {
+            const refreshed = await publishIcal();
+            setIcalPublishStatus(refreshed);
+            return;
+          } catch {
+            // fall through to show existing status
+          }
+        }
         setIcalPublishStatus(status);
       })
       .catch(() => {
@@ -344,8 +374,8 @@ export default function WeeklySchedulePage({
       .finally(() => setIcalPublishLoading(false));
   };
 
-  const closeIcalModal = () => {
-    setIcalOpen(false);
+  const closeExportModal = () => {
+    setExportOpen(false);
     setIcalPublishError(null);
     setIcalPublishLoading(false);
   };
@@ -389,77 +419,42 @@ export default function WeeklySchedulePage({
     }
   };
 
-  const renderAssignmentMap = useMemo(() => {
-    const freePoolId = FREE_POOL_ID;
-    const vacationPoolId = VACATION_POOL_ID;
-    const vacationByDate = new Map<string, Set<string>>();
-    for (const clinician of clinicians) {
-      for (const vacation of clinician.vacations) {
-        let cursor = new Date(`${vacation.startISO}T00:00:00`);
-        const end = new Date(`${vacation.endISO}T00:00:00`);
-        while (cursor <= end) {
-          const dateISO = toISODate(cursor);
-          let set = vacationByDate.get(dateISO);
-          if (!set) {
-            set = new Set();
-            vacationByDate.set(dateISO, set);
-          }
-          set.add(clinician.id);
-          cursor = addDays(cursor, 1);
+  const handleExportPdfBatch = async (args: {
+    startISO: string;
+    weeks: number;
+    mode: "combined" | "individual";
+  }) => {
+    setPdfError(null);
+    setPdfExporting(true);
+    try {
+      if (args.mode === "combined") {
+        setPdfProgress({ current: 0, total: args.weeks });
+        const pdfBlob = await exportWeeksPdf(args.startISO, args.weeks);
+        const endISO = toISODate(addDays(addWeeks(new Date(`${args.startISO}T00:00:00`), args.weeks), -1));
+        downloadBlob(`shift-planner-${args.startISO}-to-${endISO}.pdf`, pdfBlob);
+      } else {
+        const baseDate = startOfWeek(new Date(`${args.startISO}T00:00:00`), 1);
+        for (let i = 0; i < args.weeks; i += 1) {
+          const weekStartDate = addWeeks(baseDate, i);
+          const weekStartISO = toISODate(weekStartDate);
+          setPdfProgress({ current: i + 1, total: args.weeks });
+          const pdfBlob = await exportWeekPdf(weekStartISO);
+          downloadBlob(`shift-planner-${weekStartISO}.pdf`, pdfBlob);
+          await new Promise((resolve) => setTimeout(resolve, 400));
         }
       }
+    } catch {
+      setPdfError("PDF export failed.");
+    } finally {
+      setPdfExporting(false);
+      setPdfProgress(null);
     }
+  };
 
-    const next = new Map<string, Assignment[]>();
-    const assignedByDate = new Map<string, Set<string>>();
-
-    for (const [key, list] of assignmentMap.entries()) {
-      const [rowId, dateISO] = key.split("__");
-      if (!dateISO) {
-        continue;
-      }
-      if (rowId === freePoolId || rowId === vacationPoolId) {
-        continue;
-      }
-
-      const vacationSet = vacationByDate.get(dateISO);
-      const filtered = list.filter(
-        (item) => !vacationSet || !vacationSet.has(item.clinicianId),
-      );
-      if (filtered.length === 0) continue;
-      next.set(key, [...filtered]);
-
-      let set = assignedByDate.get(dateISO);
-      if (!set) {
-        set = new Set();
-        assignedByDate.set(dateISO, set);
-      }
-      for (const item of filtered) set.add(item.clinicianId);
-    }
-
-    for (const date of displayDays) {
-      const dateISO = toISODate(date);
-      const assigned = assignedByDate.get(dateISO) ?? new Set<string>();
-      const vacationSet = vacationByDate.get(dateISO) ?? new Set<string>();
-      for (const clinician of clinicians) {
-        if (assigned.has(clinician.id)) continue;
-        const inVacation = vacationSet.has(clinician.id);
-        const poolRowId = inVacation ? vacationPoolId : freePoolId;
-        const key = `${poolRowId}__${dateISO}`;
-        const item: Assignment = {
-          id: `pool-${poolRowId}-${clinician.id}-${dateISO}`,
-          rowId: poolRowId,
-          dateISO,
-          clinicianId: clinician.id,
-        };
-        const existing = next.get(key);
-        if (existing) existing.push(item);
-        else next.set(key, [item]);
-      }
-    }
-
-    return next;
-  }, [assignmentMap, displayDays, clinicians]);
+  const renderAssignmentMap = useMemo(
+    () => buildRenderedAssignmentMap(assignmentMap, clinicians, displayDays),
+    [assignmentMap, clinicians, displayDays],
+  );
 
   const isOnVacation = (clinicianId: string, dateISO: string) => {
     const clinician = clinicians.find((item) => item.id === clinicianId);
@@ -875,6 +870,30 @@ export default function WeeklySchedulePage({
       {openSlotsCount} Open Slots
     </span>
   );
+  const publishToggle = (
+    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+      <span>Publish</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isWeekPublished}
+        onClick={() => handleWeekPublishToggle(!isWeekPublished)}
+        className={cx(
+          "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+          isWeekPublished
+            ? "bg-emerald-500"
+            : "bg-slate-300 dark:bg-slate-700",
+        )}
+      >
+        <span
+          className={cx(
+            "inline-block h-4 w-4 translate-x-0.5 rounded-full bg-white shadow transition-transform",
+            isWeekPublished && "translate-x-[18px]",
+          )}
+        />
+      </button>
+    </div>
+  );
   const handleWeekPublishToggle = (nextPublished: boolean) => {
     setPublishedWeekStartISOs((prev) => {
       const next = new Set(prev);
@@ -892,7 +911,11 @@ export default function WeeklySchedulePage({
       <TopBar
         viewMode={viewMode}
         onSetViewMode={setViewMode}
-        onOpenIcalExport={openIcalModal}
+        onOpenExport={() => {
+          setPdfError(null);
+          setPdfProgress(null);
+          openExportModal();
+        }}
         username={currentUser.username}
         onLogout={onLogout}
         theme={theme}
@@ -909,62 +932,32 @@ export default function WeeklySchedulePage({
             holidayDates={holidayDates}
             holidayNameByDate={holidayNameByDate}
             header={
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {isMobile ? (
-                        <MobileDayNavigator
-                          date={anchorDate}
-                          onPrevDay={() => setAnchorDate((d) => addDays(d, -1))}
-                          onNextDay={() => setAnchorDate((d) => addDays(d, 1))}
-                          onToday={() => setAnchorDate(new Date())}
-                        />
-                      ) : (
-                        <WeekNavigator
-                          variant="card"
-                          rangeStart={weekStart}
-                          rangeEndInclusive={weekEndInclusive}
-                          onPrevWeek={() => setAnchorDate((d) => addWeeks(d, -1))}
-                          onNextWeek={() => setAnchorDate((d) => addWeeks(d, 1))}
-                          onToday={() => setAnchorDate(new Date())}
-                        />
-                      )}
-                    </div>
-                    {openSlotsBadge}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="font-semibold text-slate-500 dark:text-slate-300">
-                      Week publication
-                    </span>
-                    <div className="inline-flex overflow-hidden rounded-full border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-                      <button
-                        type="button"
-                        onClick={() => handleWeekPublishToggle(true)}
-                        className={cx(
-                          "px-3 py-1 text-[11px] font-semibold",
-                          isWeekPublished
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200"
-                            : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800",
-                        )}
-                      >
-                        Published
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleWeekPublishToggle(false)}
-                        className={cx(
-                          "px-3 py-1 text-[11px] font-semibold",
-                          !isWeekPublished
-                            ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                            : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800",
-                        )}
-                      >
-                        Unpublished
-                      </button>
-                    </div>
-                  </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {isMobile ? (
+                    <MobileDayNavigator
+                      date={anchorDate}
+                      onPrevDay={() => setAnchorDate((d) => addDays(d, -1))}
+                      onNextDay={() => setAnchorDate((d) => addDays(d, 1))}
+                      onToday={() => setAnchorDate(new Date())}
+                    />
+                  ) : (
+                    <WeekNavigator
+                      variant="card"
+                      rangeStart={weekStart}
+                      rangeEndInclusive={weekEndInclusive}
+                      onPrevWeek={() => setAnchorDate((d) => addWeeks(d, -1))}
+                      onNextWeek={() => setAnchorDate((d) => addWeeks(d, 1))}
+                      onToday={() => setAnchorDate(new Date())}
+                    />
+                  )}
                 </div>
-              }
+                <div className="flex flex-wrap items-center gap-2">
+                  {openSlotsBadge}
+                  {publishToggle}
+                </div>
+              </div>
+            }
             separatorBeforeRowIds={poolsSeparatorId ? [poolsSeparatorId] : []}
             minSlotsByRowId={minSlotsByRowId}
             getClinicianName={(id) => clinicianNameById.get(id) ?? "Unknown"}
@@ -1355,8 +1348,8 @@ export default function WeeklySchedulePage({
       />
 
       <IcalExportModal
-        open={icalOpen}
-        onClose={closeIcalModal}
+        open={exportOpen}
+        onClose={closeExportModal}
         clinicians={clinicians.map((clinician) => ({ id: clinician.id, name: clinician.name }))}
         defaultStartISO={toISODate(weekStart)}
         defaultEndISO={toISODate(weekEndInclusive)}
@@ -1368,6 +1361,11 @@ export default function WeeklySchedulePage({
         onPublish={handlePublishSubscription}
         onRotate={handleRotateSubscription}
         onUnpublish={handleUnpublishSubscription}
+        defaultPdfStartISO={currentWeekStartISO}
+        onExportPdf={handleExportPdfBatch}
+        pdfExporting={pdfExporting}
+        pdfProgress={pdfProgress}
+        pdfError={pdfError}
       />
 
       {solverNotice ? (

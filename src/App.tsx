@@ -7,6 +7,8 @@ import {
   type AuthUser,
 } from "./api/client";
 import LoginPage from "./pages/LoginPage";
+import PrintWeekPage from "./pages/PrintWeekPage";
+import PrintWeeksPage from "./pages/PrintWeeksPage";
 import WeeklySchedulePage from "./pages/WeeklySchedulePage";
 
 export default function App() {
@@ -39,6 +41,29 @@ export default function App() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     window.localStorage.setItem("theme", theme);
   }, [theme]);
+
+  const isPrintWeekRoute =
+    typeof window !== "undefined" && window.location.pathname.startsWith("/print/week");
+  const isPrintWeeksRoute =
+    typeof window !== "undefined" && window.location.pathname.startsWith("/print/weeks");
+
+  if (isPrintWeekRoute || isPrintWeeksRoute) {
+    if (loading) {
+      return (
+        <div className="min-h-screen bg-white px-6 py-10 text-sm text-slate-500">
+          Loading...
+        </div>
+      );
+    }
+    if (!currentUser) {
+      return (
+        <div className="min-h-screen bg-white px-6 py-10 text-sm text-rose-600">
+          Unauthorized.
+        </div>
+      );
+    }
+    return isPrintWeeksRoute ? <PrintWeeksPage theme={theme} /> : <PrintWeekPage theme={theme} />;
+  }
 
   const toggleTheme = () =>
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));

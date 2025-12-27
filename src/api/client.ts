@@ -298,3 +298,33 @@ export async function unpublishIcal(): Promise<void> {
     throw new Error(`Failed to unpublish iCal: ${res.status}`);
   }
 }
+
+export async function exportWeekPdf(startISO: string): Promise<Blob> {
+  const res = await fetch(
+    `${API_BASE}/v1/pdf/week?start=${encodeURIComponent(startISO)}`,
+    {
+      headers: buildHeaders(),
+    },
+  );
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    throw new Error(`Failed to export PDF: ${res.status}`);
+  }
+  return res.blob();
+}
+
+export async function exportWeeksPdf(startISO: string, weeks: number): Promise<Blob> {
+  const res = await fetch(
+    `${API_BASE}/v1/pdf/weeks?start=${encodeURIComponent(startISO)}&weeks=${encodeURIComponent(
+      String(weeks),
+    )}`,
+    {
+      headers: buildHeaders(),
+    },
+  );
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    throw new Error(`Failed to export PDF: ${res.status}`);
+  }
+  return res.blob();
+}
