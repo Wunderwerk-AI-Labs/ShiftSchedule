@@ -30,7 +30,6 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
   const [assignmentMap, setAssignmentMap] = useState<Map<string, Assignment[]>>(new Map());
   const [minSlotsByRowId, setMinSlotsByRowId] = useState(defaultMinSlotsByRowId);
   const [slotOverridesByKey, setSlotOverridesByKey] = useState<Record<string, number>>({});
-  const [showLocationsInView, setShowLocationsInView] = useState(true);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,11 +103,6 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
         }
         if (state.minSlotsByRowId) setMinSlotsByRowId(state.minSlotsByRowId);
         if (state.slotOverridesByKey) setSlotOverridesByKey(state.slotOverridesByKey);
-        setShowLocationsInView(
-          state.showLocationsInView === undefined
-            ? true
-            : state.showLocationsInView,
-        );
         if (state.holidays) setHolidays(state.holidays);
       })
       .catch(() => {
@@ -133,15 +127,7 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(markReady);
     });
-  }, [
-    loading,
-    rows,
-    clinicians,
-    assignmentMap,
-    minSlotsByRowId,
-    slotOverridesByKey,
-    showLocationsInView,
-  ]);
+  }, [loading, rows, clinicians, assignmentMap, minSlotsByRowId, slotOverridesByKey]);
 
   if (loading) {
     return (
@@ -187,7 +173,6 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
           return clinician ? clinician.qualifiedClassIds.includes(rowId) : false;
         }}
         slotOverridesByKey={slotOverridesByKey}
-        showLocations={showLocationsInView}
         onRemoveEmptySlot={() => {}}
         onMoveWithinDay={() => {}}
         onCellClick={() => {}}

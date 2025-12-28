@@ -174,7 +174,6 @@ export default function WeeklySchedulePage({
   const [slotOverridesByKey, setSlotOverridesByKey] = useState<
     Record<string, number>
   >({});
-  const [showLocationsInView, setShowLocationsInView] = useState(true);
   const [clinicians, setClinicians] = useState<Clinician[]>(() =>
     defaultClinicians.map((clinician) => ({
       ...clinician,
@@ -825,11 +824,6 @@ export default function WeeklySchedulePage({
         if (state.slotOverridesByKey) {
           setSlotOverridesByKey(state.slotOverridesByKey);
         }
-        setShowLocationsInView(
-          state.showLocationsInView === undefined
-            ? true
-            : state.showLocationsInView,
-        );
         if (state.holidays) setHolidays(state.holidays);
         if (state.holidayCountry) setHolidayCountry(state.holidayCountry);
         if (state.holidayYear) setHolidayYear(state.holidayYear);
@@ -864,7 +858,6 @@ export default function WeeklySchedulePage({
       assignments: toAssignments(),
       minSlotsByRowId,
       slotOverridesByKey,
-      showLocationsInView,
       holidays,
       holidayCountry,
       holidayYear,
@@ -882,7 +875,6 @@ export default function WeeklySchedulePage({
     assignmentMap,
     minSlotsByRowId,
     slotOverridesByKey,
-    showLocationsInView,
     holidays,
     holidayCountry,
     holidayYear,
@@ -1137,7 +1129,6 @@ export default function WeeklySchedulePage({
               return clinician ? clinician.qualifiedClassIds.includes(rowId) : false;
             }}
             slotOverridesByKey={slotOverridesByKey}
-            showLocations={showLocationsInView}
             onRemoveEmptySlot={({ rowId, dateISO }) => {
               adjustSlotOverride(rowId, dateISO, -1);
             }}
@@ -1284,12 +1275,10 @@ export default function WeeklySchedulePage({
             classRows={classRows}
             poolRows={poolRows}
             minSlotsByRowId={minSlotsByRowId}
-            showLocationsInView={showLocationsInView}
             clinicians={clinicians}
             holidays={holidays}
             holidayCountry={holidayCountry}
             holidayYear={holidayYear}
-            onChangeShowLocationsInView={setShowLocationsInView}
             onChangeMinSlots={(rowId, kind, nextValue) => {
               setMinSlotsByRowId((prev) => ({
                 ...prev,

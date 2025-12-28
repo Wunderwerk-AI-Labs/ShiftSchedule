@@ -36,7 +36,6 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
   const [assignmentMap, setAssignmentMap] = useState<Map<string, Assignment[]>>(new Map());
   const [minSlotsByRowId, setMinSlotsByRowId] = useState(defaultMinSlotsByRowId);
   const [slotOverridesByKey, setSlotOverridesByKey] = useState<Record<string, number>>({});
-  const [showLocationsInView, setShowLocationsInView] = useState(true);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,11 +97,6 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
         }
         if (state.minSlotsByRowId) setMinSlotsByRowId(state.minSlotsByRowId);
         if (state.slotOverridesByKey) setSlotOverridesByKey(state.slotOverridesByKey);
-        setShowLocationsInView(
-          state.showLocationsInView === undefined
-            ? true
-            : state.showLocationsInView,
-        );
         if (state.holidays) setHolidays(state.holidays);
       })
       .catch(() => {
@@ -127,16 +121,7 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(markReady);
     });
-  }, [
-    loading,
-    rows,
-    clinicians,
-    assignmentMap,
-    minSlotsByRowId,
-    slotOverridesByKey,
-    totalWeeks,
-    showLocationsInView,
-  ]);
+  }, [loading, rows, clinicians, assignmentMap, minSlotsByRowId, slotOverridesByKey, totalWeeks]);
 
   if (loading) {
     return (
@@ -193,7 +178,6 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
                   return clinician ? clinician.qualifiedClassIds.includes(rowId) : false;
                 }}
                 slotOverridesByKey={slotOverridesByKey}
-                showLocations={showLocationsInView}
                 onRemoveEmptySlot={() => {}}
                 onMoveWithinDay={() => {}}
                 onCellClick={() => {}}

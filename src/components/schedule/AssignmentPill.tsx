@@ -2,10 +2,6 @@ import { cx } from "../../lib/classNames";
 
 type AssignmentPillProps = {
   name: string;
-  shiftName?: string;
-  showShiftName?: boolean;
-  location?: string;
-  showLocation?: boolean;
   showNoEligibilityWarning?: boolean;
   showIneligibleWarning?: boolean;
   isHighlighted?: boolean;
@@ -15,10 +11,6 @@ type AssignmentPillProps = {
 
 export default function AssignmentPill({
   name,
-  shiftName,
-  showShiftName = false,
-  location,
-  showLocation = false,
   showNoEligibilityWarning,
   showIneligibleWarning,
   isHighlighted = false,
@@ -38,14 +30,8 @@ export default function AssignmentPill({
         className,
       )}
     >
-      <div className="flex flex-col items-center gap-[2px] truncate">
-        {showShiftName && shiftName ? (
-          <span className="truncate text-[9px] font-semibold uppercase tracking-[0.04em] text-slate-600 dark:text-slate-200">
-            {shiftName}
-          </span>
-        ) : null}
-        <div className="flex items-center justify-center gap-1 truncate">
-          <span className="truncate text-center">{name}</span>
+      <div className="flex items-center justify-center gap-1 truncate">
+        <span className="truncate text-center">{name}</span>
         {showNoEligibilityWarning ? (
           <span className="group/warn absolute right-1 top-0 -translate-y-1/2">
             <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-300 text-[10px] font-semibold text-rose-700 shadow-sm">
@@ -63,12 +49,6 @@ export default function AssignmentPill({
             <span className="pointer-events-none absolute right-0 top-full z-30 mt-1 w-max rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 opacity-0 shadow-sm transition-opacity duration-75 group-hover/warn:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
               Not eligible for this slot.
             </span>
-          </span>
-        ) : null}
-        </div>
-        {showLocation && location ? (
-          <span className="truncate text-[9px] font-medium text-slate-500 dark:text-slate-200/80">
-            {location}
           </span>
         ) : null}
       </div>

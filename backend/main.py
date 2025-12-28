@@ -87,8 +87,6 @@ class Assignment(BaseModel):
     rowId: str
     dateISO: str
     clinicianId: str
-    shiftName: Optional[str] = None
-    location: Optional[str] = None
 
 
 class MinSlots(BaseModel):
@@ -102,7 +100,6 @@ class AppState(BaseModel):
     assignments: List[Assignment]
     minSlotsByRowId: Dict[str, MinSlots]
     slotOverridesByKey: Dict[str, int] = Field(default_factory=dict)
-    showLocationsInView: bool = True
     holidayCountry: Optional[str] = None
     holidayYear: Optional[int] = None
     holidays: List[Holiday] = Field(default_factory=list)
@@ -255,7 +252,6 @@ def _default_state() -> AppState:
         assignments=[],
         minSlotsByRowId=min_slots,
         slotOverridesByKey={},
-        showLocationsInView=True,
         holidayCountry="DE",
         holidayYear=current_year,
         holidays=[],
@@ -1328,7 +1324,6 @@ def get_public_web_week(
             for row_id, min_slots in state.minSlotsByRowId.items()
         },
         "slotOverridesByKey": state.slotOverridesByKey,
-        "showLocationsInView": state.showLocationsInView,
         "holidays": holidays,
     }
     return Response(

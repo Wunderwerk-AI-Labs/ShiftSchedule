@@ -7,12 +7,10 @@ type SettingsViewProps = {
   classRows: WorkplaceRow[];
   poolRows: WorkplaceRow[];
   minSlotsByRowId: Record<string, { weekday: number; weekend: number }>;
-  showLocationsInView: boolean;
   clinicians: Array<{ id: string; name: string }>;
   holidays: Holiday[];
   holidayCountry: string;
   holidayYear: number;
-  onChangeShowLocationsInView: (nextValue: boolean) => void;
   onChangeMinSlots: (
     rowId: string,
     kind: "weekday" | "weekend",
@@ -37,12 +35,10 @@ export default function SettingsView({
   classRows,
   poolRows,
   minSlotsByRowId,
-  showLocationsInView,
   clinicians,
   holidays,
   holidayCountry,
   holidayYear,
-  onChangeShowLocationsInView,
   onChangeMinSlots,
   onRenameClass,
   onRemoveClass,
@@ -187,37 +183,6 @@ export default function SettingsView({
             )}
           >
             Add Class
-          </button>
-        </div>
-
-        <div className="mt-6 flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/60">
-          <div>
-            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-              Show location in calendar
-            </div>
-            <div className="text-sm text-slate-600 dark:text-slate-300">
-              Toggle whether shift locations are visible in the schedule view.
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={showLocationsInView}
-            onClick={() => onChangeShowLocationsInView(!showLocationsInView)}
-            className={cx(
-              "relative inline-flex h-7 w-12 items-center rounded-full border transition-colors",
-              showLocationsInView
-                ? "border-emerald-500 bg-emerald-500/10"
-                : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900",
-            )}
-          >
-            <span
-              className={cx(
-                "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
-                "dark:bg-slate-200",
-                showLocationsInView ? "translate-x-5" : "translate-x-1",
-              )}
-            />
           </button>
         </div>
 
