@@ -51,19 +51,6 @@ export const locationsEnabled = true;
 
 export const workplaceRows: WorkplaceRow[] = [
   {
-    id: "pool-not-allocated",
-    name: "Distribution Pool",
-    kind: "pool",
-    dotColorClass: "bg-slate-400",
-  },
-  {
-    id: "pool-manual",
-    name: "Reserve Pool",
-    kind: "pool",
-    dotColorClass: "bg-slate-300",
-  },
-  { id: "pool-vacation", name: "Vacation", kind: "pool", dotColorClass: "bg-emerald-500" },
-  {
     id: "mri",
     name: "MRI",
     kind: "class",
@@ -148,6 +135,19 @@ export const workplaceRows: WorkplaceRow[] = [
       },
     ],
   },
+  {
+    id: "pool-not-allocated",
+    name: "Distribution Pool",
+    kind: "pool",
+    dotColorClass: "bg-slate-400",
+  },
+  {
+    id: "pool-manual",
+    name: "Reserve Pool",
+    kind: "pool",
+    dotColorClass: "bg-slate-300",
+  },
+  { id: "pool-vacation", name: "Vacation", kind: "pool", dotColorClass: "bg-emerald-500" },
 ];
 
 export const defaultMinSlotsByRowId: Record<

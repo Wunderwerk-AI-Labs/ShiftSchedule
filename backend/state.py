@@ -260,24 +260,6 @@ def _default_state() -> AppState:
     default_location = Location(id=DEFAULT_LOCATION_ID, name=DEFAULT_LOCATION_NAME)
     rows = [
         WorkplaceRow(
-            id="pool-not-allocated",
-            name="Distribution Pool",
-            kind="pool",
-            dotColorClass="bg-slate-400",
-        ),
-        WorkplaceRow(
-            id="pool-manual",
-            name="Reserve Pool",
-            kind="pool",
-            dotColorClass="bg-slate-300",
-        ),
-        WorkplaceRow(
-            id="pool-vacation",
-            name="Vacation",
-            kind="pool",
-            dotColorClass="bg-emerald-500",
-        ),
-        WorkplaceRow(
             id="mri",
             name="MRI",
             kind="class",
@@ -371,6 +353,24 @@ def _default_state() -> AppState:
                     endDayOffset=0,
                 )
             ],
+        ),
+        WorkplaceRow(
+            id="pool-not-allocated",
+            name="Distribution Pool",
+            kind="pool",
+            dotColorClass="bg-slate-400",
+        ),
+        WorkplaceRow(
+            id="pool-manual",
+            name="Reserve Pool",
+            kind="pool",
+            dotColorClass="bg-slate-300",
+        ),
+        WorkplaceRow(
+            id="pool-vacation",
+            name="Vacation",
+            kind="pool",
+            dotColorClass="bg-emerald-500",
         ),
     ]
     clinicians = [
