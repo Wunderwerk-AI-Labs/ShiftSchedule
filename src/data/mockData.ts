@@ -5,6 +5,20 @@ export type WorkplaceRow = {
   name: string;
   kind: "class" | "pool";
   dotColorClass: string;
+  locationId?: string;
+  subShifts?: SubShift[];
+};
+
+export type Location = {
+  id: string;
+  name: string;
+};
+
+export type SubShift = {
+  id: string;
+  name: string;
+  order: 1 | 2 | 3;
+  hours: number;
 };
 
 export type Assignment = {
@@ -28,6 +42,8 @@ export type Clinician = {
   vacations: VacationPeriod[];
 };
 
+export const locations: Location[] = [{ id: "loc-default", name: "Default" }];
+
 export const workplaceRows: WorkplaceRow[] = [
   {
     id: "pool-not-allocated",
@@ -42,22 +58,57 @@ export const workplaceRows: WorkplaceRow[] = [
     dotColorClass: "bg-slate-300",
   },
   { id: "pool-vacation", name: "Vacation", kind: "pool", dotColorClass: "bg-emerald-500" },
-  { id: "mri", name: "MRI", kind: "class", dotColorClass: "bg-violet-500" },
-  { id: "ct", name: "CT", kind: "class", dotColorClass: "bg-cyan-500" },
-  { id: "sonography", name: "Sonography", kind: "class", dotColorClass: "bg-fuchsia-500" },
-  { id: "conventional", name: "Conventional", kind: "class", dotColorClass: "bg-amber-400" },
-  { id: "on-call", name: "On Call", kind: "class", dotColorClass: "bg-blue-600" },
+  {
+    id: "mri",
+    name: "MRI",
+    kind: "class",
+    dotColorClass: "bg-violet-500",
+    locationId: "loc-default",
+    subShifts: [{ id: "s1", name: "Shift 1", order: 1, hours: 8 }],
+  },
+  {
+    id: "ct",
+    name: "CT",
+    kind: "class",
+    dotColorClass: "bg-cyan-500",
+    locationId: "loc-default",
+    subShifts: [{ id: "s1", name: "Shift 1", order: 1, hours: 8 }],
+  },
+  {
+    id: "sonography",
+    name: "Sonography",
+    kind: "class",
+    dotColorClass: "bg-fuchsia-500",
+    locationId: "loc-default",
+    subShifts: [{ id: "s1", name: "Shift 1", order: 1, hours: 8 }],
+  },
+  {
+    id: "conventional",
+    name: "Conventional",
+    kind: "class",
+    dotColorClass: "bg-amber-400",
+    locationId: "loc-default",
+    subShifts: [{ id: "s1", name: "Shift 1", order: 1, hours: 8 }],
+  },
+  {
+    id: "on-call",
+    name: "On Call",
+    kind: "class",
+    dotColorClass: "bg-blue-600",
+    locationId: "loc-default",
+    subShifts: [{ id: "s1", name: "Shift 1", order: 1, hours: 8 }],
+  },
 ];
 
 export const defaultMinSlotsByRowId: Record<
   string,
   { weekday: number; weekend: number }
 > = {
-  mri: { weekday: 2, weekend: 1 },
-  ct: { weekday: 2, weekend: 1 },
-  sonography: { weekday: 2, weekend: 1 },
-  conventional: { weekday: 2, weekend: 1 },
-  "on-call": { weekday: 1, weekend: 1 },
+  "mri::s1": { weekday: 2, weekend: 1 },
+  "ct::s1": { weekday: 2, weekend: 1 },
+  "sonography::s1": { weekday: 2, weekend: 1 },
+  "conventional::s1": { weekday: 2, weekend: 1 },
+  "on-call::s1": { weekday: 1, weekend: 1 },
 };
 
 export const clinicians: Clinician[] = [

@@ -1,4 +1,4 @@
-import { Assignment, WorkplaceRow } from "../../data/mockData";
+import { Assignment } from "../../data/mockData";
 import { cx } from "../../lib/classNames";
 import { formatDayHeader, toISODate } from "../../lib/date";
 import AssignmentPill from "./AssignmentPill";
@@ -6,11 +6,12 @@ import EmptySlotPill from "./EmptySlotPill";
 import RowLabel from "./RowLabel";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
+import type { ScheduleRow } from "../../lib/shiftRows";
 
 type ScheduleGridProps = {
   leftHeaderTitle: string;
   weekDays: Date[];
-  rows: WorkplaceRow[];
+  rows: ScheduleRow[];
   assignmentMap: Map<string, Assignment[]>;
   header?: React.ReactNode;
   holidayDates?: Set<string>;
@@ -19,7 +20,7 @@ type ScheduleGridProps = {
   getClinicianName: (clinicianId: string) => string;
   getIsQualified: (clinicianId: string, rowId: string) => boolean;
   getHasEligibleClasses: (clinicianId: string) => boolean;
-  onCellClick: (args: { row: WorkplaceRow; date: Date }) => void;
+  onCellClick: (args: { row: ScheduleRow; date: Date }) => void;
   onClinicianClick?: (clinicianId: string) => void;
   onMoveWithinDay: (args: {
     dateISO: string;
@@ -228,9 +229,17 @@ export default function ScheduleGrid({
 
                 {rows.map((row, index) => {
                   const showSeparator = separatorBeforeRowIds.includes(row.id);
-                  const nextRowId = rows[index + 1]?.id;
+                  const nextRow = rows[index + 1];
+                  const nextRowId = nextRow?.id;
                   const suppressBottomBorder =
                     !!nextRowId && separatorBeforeRowIds.includes(nextRowId);
+                  const isSubShiftContinuation =
+                    row.kind === "class" && (row.subShiftOrder ?? 1) > 1;
+                  const hasNextSubShift =
+                    row.kind === "class" &&
+                    nextRow?.kind === "class" &&
+                    row.parentId &&
+                    row.parentId === nextRow.parentId;
                   return (
                     <Fragment key={row.id}>
                       {showSeparator ? <SeparatorRow /> : null}
@@ -249,6 +258,8 @@ export default function ScheduleGrid({
                         hoveredClassCell={hoveredClassCell}
                         setHoveredCell={setHoveredCell}
                         suppressBottomBorder={suppressBottomBorder}
+                        isSubShiftContinuation={isSubShiftContinuation}
+                        hasNextSubShift={hasNextSubShift}
                         minSlots={minSlotsByRowId[row.id] ?? { weekday: 0, weekend: 0 }}
                         slotOverridesByKey={slotOverridesByKey}
                         onRemoveEmptySlot={onRemoveEmptySlot}
@@ -288,15 +299,17 @@ function RowSection({
   onRemoveEmptySlot,
   holidayDates,
   holidayNameByDate,
+  isSubShiftContinuation,
+  hasNextSubShift,
   readOnly = false,
 }: {
-  row: WorkplaceRow;
+  row: ScheduleRow;
   weekDays: Date[];
   assignmentMap: Map<string, Assignment[]>;
   getClinicianName: (clinicianId: string) => string;
   getIsQualified: (clinicianId: string, rowId: string) => boolean;
   getHasEligibleClasses: (clinicianId: string) => boolean;
-  onCellClick: (args: { row: WorkplaceRow; date: Date }) => void;
+  onCellClick: (args: { row: ScheduleRow; date: Date }) => void;
   onClinicianClick?: (clinicianId: string) => void;
   onMoveWithinDay: (args: {
     dateISO: string;
@@ -333,6 +346,8 @@ function RowSection({
   onRemoveEmptySlot?: (args: { rowId: string; dateISO: string }) => void;
   holidayDates?: Set<string>;
   holidayNameByDate?: Record<string, string>;
+  isSubShiftContinuation: boolean;
+  hasNextSubShift: boolean;
   readOnly?: boolean;
 }) {
   const rowBg =
@@ -343,23 +358,33 @@ function RowSection({
         : "bg-white dark:bg-slate-900";
   const isDistributionPoolRow = row.id === "pool-not-allocated";
   const isManualPoolRow = row.id === "pool-manual";
-  const borderBottomClass = suppressBottomBorder
-    ? "border-b-0"
-    : row.id === "pool-vacation"
+  const hideBottomBorder = row.kind === "class" && hasNextSubShift;
+  const borderBottomClass =
+    suppressBottomBorder || hideBottomBorder
       ? "border-b-0"
-      : isDistributionPoolRow
-        ? "border-b-2 border-slate-200 dark:border-slate-800"
-        : isManualPoolRow
+      : row.id === "pool-vacation"
+        ? "border-b-0"
+        : isDistributionPoolRow
           ? "border-b-2 border-slate-200 dark:border-slate-800"
-          : "border-b border-slate-200 dark:border-slate-800";
+          : isManualPoolRow
+            ? "border-b-2 border-slate-200 dark:border-slate-800"
+            : "border-b border-slate-200 dark:border-slate-800";
+  const subShiftSeparatorClass = isSubShiftContinuation
+    ? "border-t border-slate-200 dark:border-slate-700"
+    : "";
+  const subShiftSeparatorStyle = isSubShiftContinuation
+    ? { borderTopStyle: "dashed" as const }
+    : undefined;
   return (
     <>
       <div
         className={cx(
           "row border-r border-slate-200 py-1 dark:border-slate-800 sm:py-1",
           borderBottomClass,
+          subShiftSeparatorClass,
           rowBg,
         )}
+        style={subShiftSeparatorStyle}
       >
         <RowLabel row={row} />
       </div>
@@ -478,9 +503,11 @@ function RowSection({
             className={cx(
               "row group relative border-r border-slate-200 px-2 py-1 text-left dark:border-slate-800 sm:px-3 sm:py-1",
               borderBottomClass,
+              subShiftSeparatorClass,
               cellBgClass,
               { "border-r-0": isLastCol },
             )}
+            style={subShiftSeparatorStyle}
           >
             <div className="flex flex-col gap-1">
               {sortedAssignments.length > 0 ? (

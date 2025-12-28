@@ -1,10 +1,24 @@
 export type RowKind = "class" | "pool";
 
+export type Location = {
+  id: string;
+  name: string;
+};
+
+export type SubShift = {
+  id: string;
+  name: string;
+  order: 1 | 2 | 3;
+  hours: number;
+};
+
 export type WorkplaceRow = {
   id: string;
   name: string;
   kind: RowKind;
   dotColorClass: string;
+  locationId?: string;
+  subShifts?: SubShift[];
 };
 
 export type VacationRange = {
@@ -36,6 +50,7 @@ export type Assignment = {
 export type MinSlots = { weekday: number; weekend: number };
 
 export type AppState = {
+  locations?: Location[];
   rows: WorkplaceRow[];
   clinicians: Clinician[];
   assignments: Assignment[];
@@ -81,6 +96,7 @@ export type PublicWebWeekResponse = {
   published: boolean;
   weekStartISO: string;
   weekEndISO: string;
+  locations?: Location[];
   rows?: WorkplaceRow[];
   clinicians?: Clinician[];
   assignments?: Assignment[];

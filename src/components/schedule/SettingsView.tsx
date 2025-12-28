@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { cx } from "../../lib/classNames";
-import { WorkplaceRow } from "../../data/mockData";
+import { Location, WorkplaceRow } from "../../data/mockData";
 import type { Holiday } from "../../api/client";
+import {
+  buildShiftRowId,
+  DEFAULT_LOCATION_ID,
+  normalizeSubShifts,
+} from "../../lib/shiftRows";
 
 type SettingsViewProps = {
   classRows: WorkplaceRow[];
   poolRows: WorkplaceRow[];
+  locations: Location[];
   minSlotsByRowId: Record<string, { weekday: number; weekend: number }>;
   clinicians: Array<{ id: string; name: string }>;
   holidays: Holiday[];
@@ -20,7 +26,18 @@ type SettingsViewProps = {
   onRemoveClass: (rowId: string) => void;
   onAddClass: () => void;
   onReorderClass: (fromId: string, toId: string) => void;
+  onChangeClassLocation: (rowId: string, locationId: string) => void;
+  onSetSubShiftCount: (rowId: string, nextCount: number) => void;
+  onRenameSubShift: (rowId: string, subShiftId: string, nextName: string) => void;
+  onUpdateSubShiftHours: (
+    rowId: string,
+    subShiftId: string,
+    nextHours: number,
+  ) => void;
   onRenamePool: (rowId: string, nextName: string) => void;
+  onAddLocation: (name: string) => void;
+  onRenameLocation: (locationId: string, nextName: string) => void;
+  onRemoveLocation: (locationId: string) => void;
   onAddClinician: (name: string) => void;
   onEditClinician: (clinicianId: string) => void;
   onRemoveClinician: (clinicianId: string) => void;
@@ -34,6 +51,7 @@ type SettingsViewProps = {
 export default function SettingsView({
   classRows,
   poolRows,
+  locations,
   minSlotsByRowId,
   clinicians,
   holidays,
@@ -44,7 +62,14 @@ export default function SettingsView({
   onRemoveClass,
   onAddClass,
   onReorderClass,
+  onChangeClassLocation,
+  onSetSubShiftCount,
+  onRenameSubShift,
+  onUpdateSubShiftHours,
   onRenamePool,
+  onAddLocation,
+  onRenameLocation,
+  onRemoveLocation,
   onAddClinician,
   onEditClinician,
   onRemoveClinician,
@@ -56,6 +81,8 @@ export default function SettingsView({
 }: SettingsViewProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [newLocationName, setNewLocationName] = useState("");
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [newClinicianName, setNewClinicianName] = useState("");
   const [newHolidayDate, setNewHolidayDate] = useState("");
   const [newHolidayName, setNewHolidayName] = useState("");
@@ -170,7 +197,7 @@ export default function SettingsView({
               Settings
             </h2>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-              Define minimum required slots per class (weekday vs weekend/holiday).
+              Define sub-shifts, locations, and minimum required slots per shift.
             </p>
           </div>
           <button
@@ -186,21 +213,16 @@ export default function SettingsView({
           </button>
         </div>
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800">
-          <div className="grid grid-cols-[auto_2fr_1fr_1fr_auto] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-            <div>Priority</div>
-            <div>Class</div>
-            <div>Min Slots (Weekday)</div>
-            <div>Min Slots (Weekend)</div>
-            <div className="text-right">Actions</div>
-          </div>
-          <div className="divide-y divide-slate-200 dark:divide-slate-800">
-            {classRows.map((row, index) => (
+        <div className="mt-6 space-y-4">
+          {classRows.map((row, index) => {
+            const subShifts = normalizeSubShifts(row.subShifts);
+            const subShiftCount = subShifts.length;
+            return (
               <div
                 key={row.id}
                 className={cx(
-                  "grid grid-cols-[auto_2fr_1fr_1fr_auto] items-center gap-3 px-4 py-3 dark:bg-slate-900/70",
-                  dragOverId === row.id && "bg-sky-50",
+                  "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/60",
+                  dragOverId === row.id && "border-sky-200 bg-sky-50 dark:bg-sky-950/40",
                 )}
                 onDragOver={(event) => {
                   if (!draggingId) return;
@@ -213,8 +235,7 @@ export default function SettingsView({
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  const fromId =
-                    draggingId || event.dataTransfer.getData("text/plain");
+                  const fromId = draggingId || event.dataTransfer.getData("text/plain");
                   if (!fromId || fromId === row.id) {
                     setDragOverId(null);
                     return;
@@ -224,93 +245,184 @@ export default function SettingsView({
                   setDragOverId(null);
                 }}
               >
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    {index + 1}
-                  </span>
-                  <button
-                    type="button"
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", row.id);
-                      setDraggingId(row.id);
-                    }}
-                    onDragEnd={() => {
-                      setDraggingId(null);
-                      setDragOverId(null);
-                    }}
-                    className="cursor-grab rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                    aria-label={`Reorder ${row.name}`}
-                  >
-                    ≡
-                  </button>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      {index + 1}
+                    </span>
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", row.id);
+                        setDraggingId(row.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingId(null);
+                        setDragOverId(null);
+                      }}
+                      className="cursor-grab rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                      aria-label={`Reorder ${row.name}`}
+                    >
+                      ≡
+                    </button>
+                    <input
+                      type="text"
+                      value={row.name}
+                      onChange={(e) => onRenameClass(row.id, e.target.value)}
+                      className={cx(
+                        "min-w-[180px] rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                        "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                      )}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                        Location
+                      </span>
+                      <select
+                        value={row.locationId ?? DEFAULT_LOCATION_ID}
+                        onChange={(event) =>
+                          onChangeClassLocation(row.id, event.target.value)
+                        }
+                        className={cx(
+                          "h-9 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-900",
+                          "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                        )}
+                      >
+                        {locations.map((location) => (
+                          <option key={location.id} value={location.id}>
+                            {location.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                        Sub-shifts
+                      </span>
+                      <select
+                        value={subShiftCount}
+                        onChange={(event) =>
+                          onSetSubShiftCount(row.id, Number(event.target.value))
+                        }
+                        className={cx(
+                          "h-9 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-900",
+                          "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                        )}
+                      >
+                        {[1, 2, 3].map((count) => (
+                          <option key={count} value={count}>
+                            {count}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveClass(row.id)}
+                      className={cx(
+                        "rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600",
+                        "hover:bg-slate-50 hover:text-slate-900",
+                        "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                      )}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  <input
-                    type="text"
-                    value={row.name}
-                    onChange={(e) => onRenameClass(row.id, e.target.value)}
-                    className={cx(
-                      "w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
-                      "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                    )}
-                  />
-                </div>
-                <div>
-                  <input
-                    type="number"
-                    min={0}
-                    value={minSlotsByRowId[row.id]?.weekday ?? 0}
-                    onChange={(e) => {
-                      const raw = Number(e.target.value);
-                      onChangeMinSlots(
-                        row.id,
-                        "weekday",
-                        Number.isFinite(raw) ? raw : 0,
+
+                <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+                  <div className="grid grid-cols-[auto_2fr_1fr_1fr_1fr] gap-3 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                    <div>Shift</div>
+                    <div>Name</div>
+                    <div>Hours</div>
+                    <div>Min Slots (Weekday)</div>
+                    <div>Min Slots (Weekend)</div>
+                  </div>
+                  <div className="divide-y divide-slate-200 dark:divide-slate-800">
+                    {subShifts.map((shift) => {
+                      const shiftRowId = buildShiftRowId(row.id, shift.id);
+                      return (
+                        <div
+                          key={shift.id}
+                          className="grid grid-cols-[auto_2fr_1fr_1fr_1fr] items-center gap-3 px-4 py-3 text-sm dark:bg-slate-900/70"
+                        >
+                          <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                            {shift.order}
+                          </div>
+                          <input
+                            type="text"
+                            value={shift.name}
+                            onChange={(event) =>
+                              onRenameSubShift(row.id, shift.id, event.target.value)
+                            }
+                            className={cx(
+                              "w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                              "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                            )}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            value={shift.hours}
+                            onChange={(event) => {
+                              const raw = Number(event.target.value);
+                              onUpdateSubShiftHours(
+                                row.id,
+                                shift.id,
+                                Number.isFinite(raw) ? raw : 0,
+                              );
+                            }}
+                            className={cx(
+                              "w-20 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                              "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]",
+                            )}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            value={minSlotsByRowId[shiftRowId]?.weekday ?? 0}
+                            onChange={(event) => {
+                              const raw = Number(event.target.value);
+                              onChangeMinSlots(
+                                shiftRowId,
+                                "weekday",
+                                Number.isFinite(raw) ? raw : 0,
+                              );
+                            }}
+                            className={cx(
+                              "w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                              "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]",
+                            )}
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            value={minSlotsByRowId[shiftRowId]?.weekend ?? 0}
+                            onChange={(event) => {
+                              const raw = Number(event.target.value);
+                              onChangeMinSlots(
+                                shiftRowId,
+                                "weekend",
+                                Number.isFinite(raw) ? raw : 0,
+                              );
+                            }}
+                            className={cx(
+                              "w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                              "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]",
+                            )}
+                          />
+                        </div>
                       );
-                    }}
-                    className={cx(
-                      "w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
-                      "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]",
-                    )}
-                  />
-                </div>
-                <div>
-                  <input
-                    type="number"
-                    min={0}
-                    value={minSlotsByRowId[row.id]?.weekend ?? 0}
-                    onChange={(e) => {
-                      const raw = Number(e.target.value);
-                      onChangeMinSlots(
-                        row.id,
-                        "weekend",
-                        Number.isFinite(raw) ? raw : 0,
-                      );
-                    }}
-                    className={cx(
-                      "w-28 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
-                      "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:[color-scheme:dark]",
-                    )}
-                  />
-                </div>
-                <div className="text-right">
-                  <button
-                    type="button"
-                    onClick={() => onRemoveClass(row.id)}
-                    className={cx(
-                      "rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600",
-                      "hover:bg-slate-50 hover:text-slate-900",
-                      "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
-                    )}
-                  >
-                    Remove
-                  </button>
+                    })}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/60">
@@ -333,6 +445,94 @@ export default function SettingsView({
                 <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
                   {poolNoteById[row.id] ?? "Pool"}
                 </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/60">
+          <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
+            Locations
+          </div>
+          <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            Create locations and assign classes to a single site.
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <input
+              type="text"
+              value={newLocationName}
+              onChange={(e) => setNewLocationName(e.target.value)}
+              placeholder="New location name"
+              className={cx(
+                "w-full max-w-xs rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+              )}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const trimmed = newLocationName.trim();
+                if (!trimmed) return;
+                onAddLocation(trimmed);
+                setNewLocationName("");
+                setLocationError(null);
+              }}
+              className={cx(
+                "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm",
+                "hover:bg-slate-50 active:bg-slate-100",
+                "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+              )}
+            >
+              Add Location
+            </button>
+          </div>
+          {locationError ? (
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-900/30 dark:text-rose-200">
+              {locationError}
+            </div>
+          ) : null}
+          <div className="mt-4 space-y-3">
+            {locations.map((location) => (
+              <div key={location.id} className="flex items-center gap-4">
+                <input
+                  type="text"
+                  value={location.name}
+                  onChange={(event) => {
+                    onRenameLocation(location.id, event.target.value);
+                    setLocationError(null);
+                  }}
+                  className={cx(
+                    "w-full max-w-sm rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900",
+                    "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
+                  )}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (location.id === DEFAULT_LOCATION_ID) {
+                      setLocationError("Default location cannot be deleted.");
+                      return;
+                    }
+                    const usedBy = classRows
+                      .filter((row) => row.locationId === location.id)
+                      .map((row) => row.name);
+                    if (usedBy.length > 0) {
+                      setLocationError(
+                        `Location is still used by: ${usedBy.join(", ")}.`,
+                      );
+                      return;
+                    }
+                    onRemoveLocation(location.id);
+                    setLocationError(null);
+                  }}
+                  className={cx(
+                    "rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600",
+                    "hover:bg-rose-50 hover:text-rose-700",
+                    "dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-900/30",
+                  )}
+                >
+                  Delete
+                </button>
               </div>
             ))}
           </div>

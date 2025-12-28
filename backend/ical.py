@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional
 
+SHIFT_ROW_SEPARATOR = "::"
+
 
 def _escape_text(value: str) -> str:
     return (
@@ -61,6 +63,23 @@ def _fold_lines(lines: Iterable[str]) -> str:
     return "\r\n".join(_fold_ical_line(line) for line in lines) + "\r\n"
 
 
+def _parse_shift_row_id(row_id: str) -> tuple[str, Optional[str]]:
+    if SHIFT_ROW_SEPARATOR not in row_id:
+        return row_id, None
+    class_id, sub_shift_id = row_id.split(SHIFT_ROW_SEPARATOR, 1)
+    return class_id, sub_shift_id or None
+
+
+def _resolve_sub_shift_name(row: Dict[str, Any], sub_shift_id: Optional[str]) -> Optional[str]:
+    sub_shifts = row.get("subShifts") or []
+    if not sub_shift_id:
+        sub_shift_id = "s1"
+    for shift in sub_shifts:
+        if shift.get("id") == sub_shift_id:
+            return shift.get("name") or None
+    return None
+
+
 def generate_ics(
     app_state: Dict[str, Any],
     published_week_start_isos: Optional[list[str]],
@@ -110,7 +129,10 @@ def generate_ics(
 
     for assignment in assignments:
         row_id = assignment.get("rowId")
-        row = row_by_id.get(row_id)
+        if not row_id:
+            continue
+        class_id, sub_shift_id = _parse_shift_row_id(row_id)
+        row = row_by_id.get(class_id)
         if not row or row.get("kind") != "class":
             continue
 
@@ -144,10 +166,15 @@ def generate_ics(
         clinician_name = clinician_name_by_id.get(
             assignment_clinician_id, assignment_clinician_id or "Unknown"
         )
-        row_name = row.get("name") or row_id or "Class"
+        row_name = row.get("name") or class_id or "Class"
+        sub_shift_name = _resolve_sub_shift_name(row, sub_shift_id)
         assignment_id = assignment.get("id") or f"{date_iso}-{row_id}-{assignment_clinician_id}"
 
-        summary = f"{row_name} — {clinician_name}"
+        summary = (
+            f"{row_name} ({sub_shift_name}) - {clinician_name}"
+            if sub_shift_name
+            else f"{row_name} - {clinician_name}"
+        )
         start = _iso_to_yyyymmdd(date_iso)
         end = _iso_to_yyyymmdd(_add_days_iso(date_iso, 1))
         uid = f"{assignment_id}@shiftschedule"

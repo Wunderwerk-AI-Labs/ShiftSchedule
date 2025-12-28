@@ -38,6 +38,7 @@ Schedule card
 
 Rows
 - Class rows (editable, reorderable priority): MRI, CT, Sonography, Conventional, On Call, etc.
+- Each class expands into 1-3 sub-shift rows in the grid; sub-shift labels are indented under the class name and show the location tag.
 - Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Reserve Pool (id: pool-manual), Vacation (id: pool-vacation).
 - Pool rows appear below a separator line.
 - Row labels are uppercase, no colored dots, truncate around 20 characters (tighter on mobile).
@@ -65,7 +66,13 @@ Pills
 Classes
 - Reorder by drag handle to set priority.
 - Rename, remove, add.
-- Min slots split into weekday vs weekend/holiday.
+- Location selector per class.
+- Sub-shifts per class: 1-3, named, ordered, and editable hours per sub-shift.
+- Min slots split into weekday vs weekend/holiday per sub-shift.
+
+Locations
+- Add, rename, delete (delete blocked while referenced by any class).
+- Default location always exists (id: loc-default).
 
 Pools
 - Rename pool rows (Distribution Pool, Vacation). No deletion.
@@ -203,11 +210,25 @@ Drag preview styling
 ```ts
 type RowKind = "class" | "pool";
 
+type Location = {
+  id: string;
+  name: string;
+};
+
+type SubShift = {
+  id: string;
+  name: string;
+  order: 1 | 2 | 3;
+  hours: number;
+};
+
 type WorkplaceRow = {
   id: string;
   name: string;
   kind: RowKind;
   dotColorClass: string;
+  locationId?: string;
+  subShifts?: SubShift[];
 };
 
 type VacationRange = { id: string; startISO: string; endISO: string };
@@ -232,14 +253,18 @@ type MinSlotsByRowId = Record<string, { weekday: number; weekend: number }>;
 type Holiday = { dateISO: string; name: string };
 ```
 
+Shift row IDs
+- Class assignments use shiftRowId: `${classId}::${subShiftId}` (example: `mri::s1`).
+- Pool rows continue using their plain pool IDs.
+
 ---
 
 ## 5) Scheduling Logic (Frontend)
 - Vacation override: for each date, if clinician is on vacation, they appear in Vacation pool and their class assignment is suppressed.
 - Distribution Pool: any clinician not assigned to a class and not on vacation appears here.
-- Assignments stored in a map (rowId + dateISO -> list of assignments).
+- Assignments stored in a map (rowId + dateISO -> list of assignments); class rows use shiftRowId.
 - Drag and drop only within the same day.
-- Clicking a class cell increments the per-day slot override (adds an "Open Slot"); remove via the minus badge.
+- Clicking a class sub-shift cell increments the per-day slot override for that shiftRowId (adds an "Open Slot"); remove via the minus badge.
 
 ---
 
@@ -256,6 +281,8 @@ Behavior
   - Qualification required.
   - Vacation overrides assignment.
   - Manual assignments remain in place; solver adds only from the pool.
+- Targets shiftRowIds for class sub-shifts; priority is class order first, then sub-shift order.
+- Qualification + preference checks still use the parent class id (not shiftRowId).
 - Objective:
   - Prioritize coverage by class order (top of class list is highest).
   - Minimize missing required slots.
@@ -268,6 +295,7 @@ Behavior
 Backend stores one JSON blob per user in SQLite:
 ```json
 {
+  "locations": [{ "id": "loc-default", "name": "Default" }],
   "rows": [...],
   "clinicians": [...],
   "assignments": [...],
@@ -278,6 +306,10 @@ Backend stores one JSON blob per user in SQLite:
   "holidays": [{ "dateISO": "2025-12-25", "name": "Christmas Day" }]
 }
 ```
+State normalization on load
+- Ensures `locations` exists (adds loc-default).
+- Ensures class rows have `locationId` and `subShifts` (defaults to s1).
+- Migrates class assignments + min slots + slot overrides from classId to shiftRowId (`classId::s1`).
 Table: `app_state` (id = username). Legacy row id `"state"` is migrated to `"jk"`. The table now also has an `updated_at` column which is bumped on every `POST /v1/state` save.
 
 Endpoints
@@ -384,6 +416,7 @@ Frontend
 - `src/components/schedule/RowLabel.tsx`
 - `src/components/schedule/AssignmentPill.tsx`
 - `src/api/client.ts`
+- `src/lib/shiftRows.ts` (shiftRowId helpers + state normalization)
 
 Backend
 - `backend/main.py`

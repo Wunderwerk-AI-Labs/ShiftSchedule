@@ -7,10 +7,12 @@ import {
   buildAssignmentMap,
   Clinician,
   WorkplaceRow,
+  locations as defaultLocations,
 } from "../data/mockData";
 import { addDays, addWeeks, startOfWeek, toISODate } from "../lib/date";
 import { buildRenderedAssignmentMap } from "../lib/schedule";
 import { cx } from "../lib/classNames";
+import { buildScheduleRows, normalizeAppState } from "../lib/shiftRows";
 
 type PublicWeekPageProps = {
   token: string;
@@ -78,23 +80,46 @@ export default function PublicWeekPage({ token, theme }: PublicWeekPageProps) {
     };
   }, [token, weekStartISO]);
 
-  const rows = (data?.rows ?? []) as WorkplaceRow[];
-  const clinicians = (data?.clinicians ?? []) as Clinician[];
-  const assignmentMap = useMemo(() => {
-    if (!data?.assignments) return new Map<string, Assignment[]>();
-    return buildAssignmentMap(data.assignments as Assignment[]);
+  const normalized = useMemo(() => {
+    if (!data?.published) return null;
+    const normalizedState = normalizeAppState({
+      locations: data.locations ?? [],
+      rows: (data.rows ?? []) as WorkplaceRow[],
+      clinicians: (data.clinicians ?? []) as Clinician[],
+      assignments: (data.assignments ?? []) as Assignment[],
+      minSlotsByRowId: data.minSlotsByRowId ?? {},
+      slotOverridesByKey: data.slotOverridesByKey ?? {},
+      holidays: data.holidays ?? [],
+      publishedWeekStartISOs: [],
+    });
+    return normalizedState.state;
   }, [data]);
+
+  const rows = (normalized?.rows ?? []) as WorkplaceRow[];
+  const clinicians = (normalized?.clinicians ?? []) as Clinician[];
+  const scheduleRows = useMemo(
+    () => buildScheduleRows(rows, normalized?.locations ?? defaultLocations),
+    [rows, normalized?.locations],
+  );
+  const rowById = useMemo(
+    () => new Map(scheduleRows.map((row) => [row.id, row])),
+    [scheduleRows],
+  );
+  const assignmentMap = useMemo(() => {
+    if (!normalized?.assignments) return new Map<string, Assignment[]>();
+    return buildAssignmentMap(normalized.assignments as Assignment[]);
+  }, [normalized]);
   const renderAssignmentMap = useMemo(
     () => buildRenderedAssignmentMap(assignmentMap, clinicians, weekDays),
     [assignmentMap, clinicians, weekDays],
   );
   const holidayDates = useMemo(
-    () => new Set((data?.holidays ?? []).map((holiday) => holiday.dateISO)),
-    [data],
+    () => new Set((normalized?.holidays ?? []).map((holiday) => holiday.dateISO)),
+    [normalized],
   );
   const holidayNameByDate = useMemo(() => {
     const map = new Map<string, string[]>();
-    for (const holiday of data?.holidays ?? []) {
+    for (const holiday of normalized?.holidays ?? []) {
       const list = map.get(holiday.dateISO) ?? [];
       list.push(holiday.name);
       map.set(holiday.dateISO, list);
@@ -104,7 +129,7 @@ export default function PublicWeekPage({ token, theme }: PublicWeekPageProps) {
       record[dateISO] = names.join(" · ");
     }
     return record;
-  }, [data]);
+  }, [normalized]);
 
   const poolSeparatorId = useMemo(
     () => rows.find((row) => row.kind === "pool")?.id ?? "",
@@ -152,23 +177,28 @@ export default function PublicWeekPage({ token, theme }: PublicWeekPageProps) {
         <ScheduleGrid
           leftHeaderTitle=""
           weekDays={weekDays}
-          rows={rows}
+          rows={scheduleRows}
           assignmentMap={renderAssignmentMap}
           holidayDates={holidayDates}
           holidayNameByDate={holidayNameByDate}
           readOnly
           header={null}
           separatorBeforeRowIds={poolSeparatorId ? [poolSeparatorId] : []}
-          minSlotsByRowId={data?.minSlotsByRowId ?? {}}
-          slotOverridesByKey={data?.slotOverridesByKey ?? {}}
+          minSlotsByRowId={normalized?.minSlotsByRowId ?? {}}
+          slotOverridesByKey={normalized?.slotOverridesByKey ?? {}}
           getClinicianName={(id) => clinicians.find((c) => c.id === id)?.name ?? "Unknown"}
           getHasEligibleClasses={(id) => {
             const clinician = clinicians.find((item) => item.id === id);
             return clinician ? clinician.qualifiedClassIds.length > 0 : false;
           }}
           getIsQualified={(clinicianId, rowId) => {
+            const scheduleRow = rowById.get(rowId);
+            const classId =
+              scheduleRow?.kind === "class"
+                ? scheduleRow.parentId ?? scheduleRow.id
+                : rowId;
             const clinician = clinicians.find((item) => item.id === clinicianId);
-            return clinician ? clinician.qualifiedClassIds.includes(rowId) : false;
+            return clinician ? clinician.qualifiedClassIds.includes(classId) : false;
           }}
           onCellClick={() => {}}
           onMoveWithinDay={() => {}}
