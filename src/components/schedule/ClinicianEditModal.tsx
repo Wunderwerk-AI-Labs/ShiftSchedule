@@ -10,6 +10,7 @@ type ClinicianEditModalProps = {
     name: string;
     qualifiedClassIds: string[];
     vacations: Array<{ id: string; startISO: string; endISO: string }>;
+    workingHoursPerWeek?: number;
   } | null;
   classRows: Array<{ id: string; name: string }>;
   onToggleQualification: (clinicianId: string, classId: string) => void;
@@ -18,6 +19,7 @@ type ClinicianEditModalProps = {
     fromClassId: string,
     toClassId: string,
   ) => void;
+  onUpdateWorkingHours: (clinicianId: string, workingHoursPerWeek?: number) => void;
   onAddVacation: (clinicianId: string) => void;
   onUpdateVacation: (
     clinicianId: string,
@@ -34,6 +36,7 @@ export default function ClinicianEditModal({
   classRows,
   onToggleQualification,
   onReorderQualification,
+  onUpdateWorkingHours,
   onAddVacation,
   onUpdateVacation,
   onRemoveVacation,
@@ -56,7 +59,7 @@ export default function ClinicianEditModal({
                 Edit {clinician.name}
               </div>
               <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                Update eligible classes and vacations.
+                Update eligible sections and vacations.
               </div>
             </div>
             <button
@@ -72,6 +75,38 @@ export default function ClinicianEditModal({
             </button>
           </div>
           <div className="min-h-0 overflow-y-auto px-6 py-5">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                Working hours per week
+              </div>
+              <div className="mt-2 flex items-center gap-3">
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={clinician.workingHoursPerWeek ?? ""}
+                  onChange={(event) => {
+                    const raw = event.target.value.trim();
+                    if (!raw) {
+                      onUpdateWorkingHours(clinician.id, undefined);
+                      return;
+                    }
+                    const parsed = Number(raw);
+                    if (!Number.isFinite(parsed)) return;
+                    onUpdateWorkingHours(clinician.id, Math.max(0, parsed));
+                  }}
+                  placeholder="Hours/week"
+                  className={cx(
+                    "w-36 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900",
+                    "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:[color-scheme:dark]",
+                  )}
+                />
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  Optional, can be left blank. Denotes the number of working hours according to
+                  the contract.
+                </span>
+              </div>
+            </div>
             <ClinicianEditor
               clinician={clinician}
               classRows={classRows}

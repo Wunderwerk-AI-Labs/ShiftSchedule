@@ -38,7 +38,7 @@ export default function AssignmentPill({
               !
             </span>
             <span className="pointer-events-none absolute right-0 top-full z-30 mt-1 w-max rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 opacity-0 shadow-sm transition-opacity duration-75 group-hover/warn:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-              No eligible classes defined yet.
+              No eligible sections defined yet.
             </span>
           </span>
         ) : showIneligibleWarning ? (

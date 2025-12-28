@@ -128,7 +128,7 @@ export default function ClinicianEditor({
     <div>
       <div className="relative mt-4 rounded-2xl border-2 border-sky-200 bg-sky-50/60 px-4 py-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)] dark:border-sky-500/40 dark:bg-sky-900/20">
         <div className="absolute -top-3 left-4 rounded-full border border-sky-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-600 dark:border-sky-500/40 dark:bg-slate-900 dark:text-sky-200">
-          Eligible Classes
+          Eligible Sections
         </div>
         <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
           Drag to set priority, toggle to add or remove.
@@ -136,7 +136,7 @@ export default function ClinicianEditor({
         <div className="mt-4 space-y-2">
           {eligibleRows.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-300">
-              No eligible classes selected yet.
+              No eligible sections selected yet.
             </div>
           ) : (
             eligibleRows.map((row, index) => (
@@ -204,7 +204,7 @@ export default function ClinicianEditor({
         {availableRows.length > 0 ? (
           <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Add class
+              Add section
             </div>
             <select
               value={selectedClassId}

@@ -4,7 +4,6 @@ import { cx } from "../../lib/classNames";
 type TopBarProps = {
   viewMode: "calendar" | "settings" | "help";
   onSetViewMode: (nextMode: "calendar" | "settings" | "help") => void;
-  onOpenExport: () => void;
   username: string;
   onLogout: () => void;
   theme: "light" | "dark";
@@ -14,7 +13,6 @@ type TopBarProps = {
 export default function TopBar({
   viewMode,
   onSetViewMode,
-  onOpenExport,
   username,
   onLogout,
   theme,
@@ -52,17 +50,6 @@ export default function TopBar({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <button
-            type="button"
-            onClick={onOpenExport}
-            className={cx(
-              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
-              "hover:bg-slate-100 active:bg-slate-200/80",
-              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
-            )}
-          >
-            Export
-          </button>
           <button
             type="button"
             onClick={() =>

@@ -25,6 +25,13 @@ except ImportError:  # pragma: no cover
 RowKind = Literal["class", "pool"]
 Role = Literal["admin", "user"]
 
+SHIFT_ROW_SEPARATOR = "::"
+DEFAULT_LOCATION_ID = "loc-default"
+DEFAULT_LOCATION_NAME = "Default"
+DEFAULT_SUB_SHIFT_MINUTES = 8 * 60
+DEFAULT_SUB_SHIFT_START_MINUTES = 8 * 60
+DEFAULT_SUB_SHIFT_START = "08:00"
+
 
 class UserPublic(BaseModel):
     username: str
@@ -56,11 +63,28 @@ class TokenResponse(BaseModel):
     user: UserPublic
 
 
+class Location(BaseModel):
+    id: str
+    name: str
+
+
+class SubShift(BaseModel):
+    id: str
+    name: str
+    order: Literal[1, 2, 3]
+    startTime: Optional[str] = None
+    endTime: Optional[str] = None
+    endDayOffset: Optional[int] = None
+    hours: Optional[float] = None
+
+
 class WorkplaceRow(BaseModel):
     id: str
     name: str
     kind: RowKind
     dotColorClass: str
+    locationId: Optional[str] = None
+    subShifts: List[SubShift] = Field(default_factory=list)
 
 
 class VacationRange(BaseModel):
@@ -80,6 +104,7 @@ class Clinician(BaseModel):
     qualifiedClassIds: List[str]
     preferredClassIds: List[str] = []
     vacations: List[VacationRange]
+    workingHoursPerWeek: Optional[float] = None
 
 
 class Assignment(BaseModel):
@@ -95,6 +120,8 @@ class MinSlots(BaseModel):
 
 
 class AppState(BaseModel):
+    locations: List[Location] = Field(default_factory=list)
+    locationsEnabled: bool = True
     rows: List[WorkplaceRow]
     clinicians: List[Clinician]
     assignments: List[Assignment]
@@ -149,8 +176,229 @@ class WebPublishStatus(BaseModel):
     token: Optional[str] = None
 
 
+def _build_shift_row_id(class_id: str, sub_shift_id: str) -> str:
+    return f"{class_id}{SHIFT_ROW_SEPARATOR}{sub_shift_id}"
+
+
+def _parse_shift_row_id(row_id: str) -> tuple[str, Optional[str]]:
+    if SHIFT_ROW_SEPARATOR not in row_id:
+        return row_id, None
+    class_id, sub_shift_id = row_id.split(SHIFT_ROW_SEPARATOR, 1)
+    return class_id, sub_shift_id or None
+
+
+def _ensure_locations(locations: List[Location]) -> List[Location]:
+    by_id = {loc.id: loc for loc in locations if loc.id}
+    if DEFAULT_LOCATION_ID not in by_id:
+        by_id[DEFAULT_LOCATION_ID] = Location(
+            id=DEFAULT_LOCATION_ID, name=DEFAULT_LOCATION_NAME
+        )
+    return list(by_id.values())
+
+def _parse_time_to_minutes(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    match = re.match(r"^(\d{1,2}):(\d{2})$", value.strip())
+    if not match:
+        return None
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def _format_minutes(total_minutes: int) -> str:
+    clamped = total_minutes % (24 * 60)
+    hours = clamped // 60
+    minutes = clamped % 60
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _normalize_sub_shifts(sub_shifts: List[SubShift]) -> List[SubShift]:
+    if not sub_shifts:
+        return [
+            SubShift(
+                id="s1",
+                name="Shift 1",
+                order=1,
+                startTime=DEFAULT_SUB_SHIFT_START,
+                endTime=_format_minutes(DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES),
+            )
+        ]
+    used_orders = set()
+    normalized: List[SubShift] = []
+    for shift in sub_shifts:
+        order = shift.order if shift.order in (1, 2, 3) else None
+        if not order or order in used_orders:
+            for candidate in (1, 2, 3):
+                if candidate not in used_orders:
+                    order = candidate
+                    break
+        if not order or order in used_orders:
+            continue
+        used_orders.add(order)
+        shift_id = shift.id or f"s{order}"
+        shift_name = shift.name or f"Shift {order}"
+        start_minutes = _parse_time_to_minutes(shift.startTime)
+        end_minutes = _parse_time_to_minutes(shift.endTime)
+        raw_offset = shift.endDayOffset if isinstance(shift.endDayOffset, int) else 0
+        end_day_offset = max(0, min(3, raw_offset))
+        if start_minutes is None:
+            start_minutes = DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES * (
+                order - 1
+            )
+        legacy_hours = shift.hours if isinstance(shift.hours, (int, float)) else None
+        duration_minutes = (
+            int(max(0, legacy_hours) * 60) if legacy_hours is not None else DEFAULT_SUB_SHIFT_MINUTES
+        )
+        if end_minutes is None:
+            end_minutes = start_minutes + duration_minutes
+        normalized.append(
+            SubShift(
+                id=shift_id,
+                name=shift_name,
+                order=order,
+                startTime=_format_minutes(start_minutes),
+                endTime=_format_minutes(end_minutes),
+                endDayOffset=end_day_offset,
+            )
+        )
+    if not normalized:
+        normalized.append(
+            SubShift(
+                id="s1",
+                name="Shift 1",
+                order=1,
+                startTime=DEFAULT_SUB_SHIFT_START,
+                endTime=_format_minutes(DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES),
+                endDayOffset=0,
+            )
+        )
+    normalized.sort(key=lambda item: item.order)
+    return normalized[:3]
+
+
+def _resolve_shift_row(
+    row_id: str, rows_by_id: Dict[str, WorkplaceRow]
+) -> tuple[Optional[WorkplaceRow], Optional[SubShift]]:
+    class_id, sub_shift_id = _parse_shift_row_id(row_id)
+    row = rows_by_id.get(class_id)
+    if not row or row.kind != "class":
+        return None, None
+    if not sub_shift_id:
+        sub_shift_id = "s1"
+    sub_shift = next(
+        (shift for shift in row.subShifts if shift.id == sub_shift_id), None
+    )
+    return row, sub_shift
+
+
+def _normalize_state(state: AppState) -> tuple[AppState, bool]:
+    changed = False
+    locations_enabled = state.locationsEnabled is not False
+    if state.locationsEnabled != locations_enabled:
+        state.locationsEnabled = locations_enabled
+        changed = True
+    locations = _ensure_locations(state.locations or [])
+    if state.locations != locations:
+        state.locations = locations
+        changed = True
+    location_ids = {loc.id for loc in state.locations}
+
+    class_rows: List[WorkplaceRow] = []
+    sub_shift_ids_by_class: Dict[str, set[str]] = {}
+    for row in state.rows:
+        if row.kind != "class":
+            continue
+        normalized_shifts = _normalize_sub_shifts(row.subShifts)
+        if row.subShifts != normalized_shifts:
+            row.subShifts = normalized_shifts
+            changed = True
+        else:
+            row.subShifts = normalized_shifts
+        if not row.locationId or row.locationId not in location_ids:
+            row.locationId = DEFAULT_LOCATION_ID
+            changed = True
+        if not locations_enabled and row.locationId != DEFAULT_LOCATION_ID:
+            row.locationId = DEFAULT_LOCATION_ID
+            changed = True
+        class_rows.append(row)
+        sub_shift_ids_by_class[row.id] = {shift.id for shift in row.subShifts}
+
+    class_row_ids = {row.id for row in class_rows}
+
+    next_assignments: List[Assignment] = []
+    for assignment in state.assignments:
+        if assignment.rowId in class_row_ids and SHIFT_ROW_SEPARATOR not in assignment.rowId:
+            assignment = assignment.model_copy(
+                update={"rowId": _build_shift_row_id(assignment.rowId, "s1")}
+            )
+            changed = True
+        next_assignments.append(assignment)
+    state.assignments = next_assignments
+
+    min_slots = dict(state.minSlotsByRowId)
+    for row in class_rows:
+        base = min_slots.pop(row.id, None)
+        if base:
+            changed = True
+        for shift in row.subShifts:
+            shift_row_id = _build_shift_row_id(row.id, shift.id)
+            if shift_row_id not in min_slots:
+                min_slots[shift_row_id] = (
+                    base if shift.id == "s1" and base else MinSlots(weekday=0, weekend=0)
+                )
+                changed = True
+    for key in list(min_slots.keys()):
+        if SHIFT_ROW_SEPARATOR not in key:
+            continue
+        class_id, sub_shift_id = _parse_shift_row_id(key)
+        if not sub_shift_id:
+            del min_slots[key]
+            changed = True
+            continue
+        class_shift_ids = sub_shift_ids_by_class.get(class_id)
+        if not class_shift_ids or sub_shift_id not in class_shift_ids:
+            del min_slots[key]
+            changed = True
+    state.minSlotsByRowId = min_slots
+
+    overrides = state.slotOverridesByKey or {}
+    next_overrides: Dict[str, int] = {}
+    for key, value in overrides.items():
+        row_id, date_iso = key.split("__", 1) if "__" in key else (key, "")
+        if not row_id or not date_iso:
+            continue
+        next_row_id = row_id
+        if row_id in class_row_ids and SHIFT_ROW_SEPARATOR not in row_id:
+            next_row_id = _build_shift_row_id(row_id, "s1")
+            changed = True
+        elif SHIFT_ROW_SEPARATOR in row_id:
+            class_id, sub_shift_id = _parse_shift_row_id(row_id)
+            class_shift_ids = sub_shift_ids_by_class.get(class_id)
+            if not sub_shift_id or not class_shift_ids:
+                changed = True
+                continue
+            if sub_shift_id not in class_shift_ids:
+                fallback = next(iter(class_shift_ids), None)
+                if not fallback:
+                    changed = True
+                    continue
+                next_row_id = _build_shift_row_id(class_id, fallback)
+                changed = True
+        next_key = f"{next_row_id}__{date_iso}"
+        next_overrides[next_key] = next_overrides.get(next_key, 0) + int(value)
+    if overrides != next_overrides:
+        state.slotOverridesByKey = next_overrides
+        changed = True
+
+    return state, changed
+
+
 def _default_state() -> AppState:
     current_year = datetime.now(timezone.utc).year
+    default_location = Location(id=DEFAULT_LOCATION_ID, name=DEFAULT_LOCATION_NAME)
     rows = [
         WorkplaceRow(
             id="pool-not-allocated",
@@ -170,22 +418,100 @@ def _default_state() -> AppState:
             kind="pool",
             dotColorClass="bg-emerald-500",
         ),
-        WorkplaceRow(id="mri", name="MRI", kind="class", dotColorClass="bg-violet-500"),
-        WorkplaceRow(id="ct", name="CT", kind="class", dotColorClass="bg-cyan-500"),
+        WorkplaceRow(
+            id="mri",
+            name="MRI",
+            kind="class",
+            dotColorClass="bg-violet-500",
+            locationId=DEFAULT_LOCATION_ID,
+            subShifts=[
+                SubShift(
+                    id="s1",
+                    name="Shift 1",
+                    order=1,
+                    startTime=DEFAULT_SUB_SHIFT_START,
+                    endTime=_format_minutes(
+                        DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
+                    ),
+                    endDayOffset=0,
+                )
+            ],
+        ),
+        WorkplaceRow(
+            id="ct",
+            name="CT",
+            kind="class",
+            dotColorClass="bg-cyan-500",
+            locationId=DEFAULT_LOCATION_ID,
+            subShifts=[
+                SubShift(
+                    id="s1",
+                    name="Shift 1",
+                    order=1,
+                    startTime=DEFAULT_SUB_SHIFT_START,
+                    endTime=_format_minutes(
+                        DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
+                    ),
+                    endDayOffset=0,
+                )
+            ],
+        ),
         WorkplaceRow(
             id="sonography",
             name="Sonography",
             kind="class",
             dotColorClass="bg-fuchsia-500",
+            locationId=DEFAULT_LOCATION_ID,
+            subShifts=[
+                SubShift(
+                    id="s1",
+                    name="Shift 1",
+                    order=1,
+                    startTime=DEFAULT_SUB_SHIFT_START,
+                    endTime=_format_minutes(
+                        DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
+                    ),
+                    endDayOffset=0,
+                )
+            ],
         ),
         WorkplaceRow(
             id="conventional",
             name="Conventional",
             kind="class",
             dotColorClass="bg-amber-400",
+            locationId=DEFAULT_LOCATION_ID,
+            subShifts=[
+                SubShift(
+                    id="s1",
+                    name="Shift 1",
+                    order=1,
+                    startTime=DEFAULT_SUB_SHIFT_START,
+                    endTime=_format_minutes(
+                        DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
+                    ),
+                    endDayOffset=0,
+                )
+            ],
         ),
         WorkplaceRow(
-            id="on-call", name="On Call", kind="class", dotColorClass="bg-blue-600"
+            id="on-call",
+            name="On Call",
+            kind="class",
+            dotColorClass="bg-blue-600",
+            locationId=DEFAULT_LOCATION_ID,
+            subShifts=[
+                SubShift(
+                    id="s1",
+                    name="Shift 1",
+                    order=1,
+                    startTime=DEFAULT_SUB_SHIFT_START,
+                    endTime=_format_minutes(
+                        DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
+                    ),
+                    endDayOffset=0,
+                )
+            ],
         ),
     ]
     clinicians = [
@@ -240,13 +566,15 @@ def _default_state() -> AppState:
         ),
     ]
     min_slots = {
-        "mri": MinSlots(weekday=2, weekend=1),
-        "ct": MinSlots(weekday=2, weekend=1),
-        "sonography": MinSlots(weekday=2, weekend=1),
-        "conventional": MinSlots(weekday=2, weekend=1),
-        "on-call": MinSlots(weekday=1, weekend=1),
+        _build_shift_row_id("mri", "s1"): MinSlots(weekday=2, weekend=1),
+        _build_shift_row_id("ct", "s1"): MinSlots(weekday=2, weekend=1),
+        _build_shift_row_id("sonography", "s1"): MinSlots(weekday=2, weekend=1),
+        _build_shift_row_id("conventional", "s1"): MinSlots(weekday=2, weekend=1),
+        _build_shift_row_id("on-call", "s1"): MinSlots(weekday=1, weekend=1),
     }
     return AppState(
+        locations=[default_location],
+        locationsEnabled=True,
         rows=rows,
         clinicians=clinicians,
         assignments=[],
@@ -374,6 +702,7 @@ def _load_state(user_id: str) -> AppState:
         if legacy:
             data = json.loads(legacy[0])
             state = AppState.model_validate(data)
+            state, _ = _normalize_state(state)
             _save_state(state, user_id)
             conn.close()
             return state
@@ -383,7 +712,11 @@ def _load_state(user_id: str) -> AppState:
         _save_state(state, user_id)
         return state
     data = json.loads(row[0])
-    return AppState.model_validate(data)
+    state = AppState.model_validate(data)
+    state, changed = _normalize_state(state)
+    if changed:
+        _save_state(state, user_id)
+    return state
 
 
 def _save_state(state: AppState, user_id: str) -> None:
@@ -677,9 +1010,10 @@ def _build_publish_status(
 
 
 def _load_state_blob_and_updated_at(username: str) -> tuple[Dict[str, Any], datetime, str]:
+    state = _load_state(username)
     conn = _get_connection()
     row = conn.execute(
-        "SELECT data, updated_at FROM app_state WHERE id = ?",
+        "SELECT updated_at FROM app_state WHERE id = ?",
         (username,),
     ).fetchone()
     conn.close()
@@ -687,11 +1021,7 @@ def _load_state_blob_and_updated_at(username: str) -> tuple[Dict[str, Any], date
         raise HTTPException(status_code=404, detail="User state not found.")
     updated_at_raw = row["updated_at"] or ""
     updated_at = _parse_iso_datetime(updated_at_raw)
-    try:
-        payload = json.loads(row["data"])
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=500, detail="Invalid stored state.") from exc
-    return payload, updated_at, updated_at_raw
+    return state.model_dump(), updated_at, updated_at_raw
 
 
 def _parse_import_state(payload: Optional[Dict[str, Any]]) -> Optional[AppState]:
@@ -1001,8 +1331,9 @@ def get_state(current_user: UserPublic = Depends(_get_current_user)):
 
 @app.post("/v1/state", response_model=AppState)
 def set_state(payload: AppState, current_user: UserPublic = Depends(_get_current_user)):
-    _save_state(payload, current_user.username)
-    return payload
+    normalized, _ = _normalize_state(payload)
+    _save_state(normalized, current_user.username)
+    return normalized
 
 
 @app.get("/v1/web/publish", response_model=WebPublishStatus)
@@ -1293,8 +1624,8 @@ def get_public_web_week(
     for assignment in state.assignments:
         if assignment.dateISO < week_start_iso or assignment.dateISO > week_end_iso:
             continue
-        row = row_by_id.get(assignment.rowId)
-        if not row or row.kind != "class":
+        row, _sub_shift = _resolve_shift_row(assignment.rowId, row_by_id)
+        if not row:
             continue
         clinician = clinician_by_id.get(assignment.clinicianId)
         if not clinician:
@@ -1316,6 +1647,8 @@ def get_public_web_week(
         "published": True,
         "weekStartISO": week_start_iso,
         "weekEndISO": week_end_iso,
+        "locations": [loc.model_dump() for loc in state.locations],
+        "locationsEnabled": state.locationsEnabled,
         "rows": [row.model_dump() for row in state.rows],
         "clinicians": [clinician.model_dump() for clinician in state.clinicians],
         "assignments": assignments,
@@ -1526,8 +1859,16 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
 
     rows_by_id = {row.id: row for row in STATE.rows}
     class_rows = [row for row in STATE.rows if row.kind == "class"]
-    class_row_ids = {row.id for row in class_rows}
     ignored_pool_rows = {"pool-not-allocated", "pool-vacation"}
+    shift_rows: List[tuple[WorkplaceRow, SubShift, str, int]] = []
+    shift_row_ids: set[str] = set()
+    parent_by_shift_id: Dict[str, str] = {}
+    for index, row in enumerate(class_rows):
+        for shift in row.subShifts:
+            shift_row_id = _build_shift_row_id(row.id, shift.id)
+            shift_rows.append((row, shift, shift_row_id, index))
+            shift_row_ids.add(shift_row_id)
+            parent_by_shift_id[shift_row_id] = row.id
 
     vacation_ids = set()
     for clinician in STATE.clinicians:
@@ -1546,7 +1887,7 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
         if assignment.clinicianId in vacation_ids:
             continue
         assigned_ids.add(assignment.clinicianId)
-        if assignment.rowId in class_row_ids:
+        if assignment.rowId in shift_row_ids:
             class_assignments.append(assignment)
 
     free_clinicians = [
@@ -1562,17 +1903,17 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
         pref_weight[clinician.id] = {}
         for idx, class_id in enumerate(clinician.preferredClassIds):
             pref_weight[clinician.id][class_id] = max(1, len(clinician.preferredClassIds) - idx)
-        for row in class_rows:
+        for row, _shift, shift_row_id, _index in shift_rows:
             if row.id in clinician.qualifiedClassIds:
-                var_map[(clinician.id, row.id)] = model.NewBoolVar(
-                    f"x_{clinician.id}_{row.id}"
+                var_map[(clinician.id, shift_row_id)] = model.NewBoolVar(
+                    f"x_{clinician.id}_{shift_row_id}"
                 )
 
     for clinician in free_clinicians:
         vars_for_clinician = [
-            var_map[(clinician.id, row.id)]
-            for row in class_rows
-            if (clinician.id, row.id) in var_map
+            var_map[(clinician.id, shift_row_id)]
+            for _row, _shift, shift_row_id, _index in shift_rows
+            if (clinician.id, shift_row_id) in var_map
         ]
         if vars_for_clinician:
             model.Add(sum(vars_for_clinician) <= 1)
@@ -1583,44 +1924,48 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
     class_need: Dict[str, int] = {}
     class_order_weight: Dict[str, int] = {}
     total_classes = len(class_rows)
-    for index, row in enumerate(class_rows):
-        required = STATE.minSlotsByRowId.get(row.id, MinSlots(weekday=0, weekend=0))
+    for row, shift, shift_row_id, index in shift_rows:
+        required = STATE.minSlotsByRowId.get(
+            shift_row_id, MinSlots(weekday=0, weekend=0)
+        )
         is_weekend = _is_weekend_or_holiday(dateISO, STATE.holidays)
         base_target = required.weekend if is_weekend else required.weekday
-        override = STATE.slotOverridesByKey.get(f"{row.id}__{dateISO}", 0)
+        override = STATE.slotOverridesByKey.get(f"{shift_row_id}__{dateISO}", 0)
         target = max(0, base_target + override)
-        class_need[row.id] = target
-        class_order_weight[row.id] = max(1, total_classes - index)
-        already = len([a for a in class_assignments if a.rowId == row.id])
+        class_need[shift_row_id] = target
+        class_order_weight[shift_row_id] = max(1, total_classes - index) * 10 + (
+            4 - shift.order
+        )
+        already = len([a for a in class_assignments if a.rowId == shift_row_id])
         missing = max(0, target - already)
         if missing == 0:
             if payload.only_fill_required:
                 assigned_vars = [
-                    var_map[(clinician.id, row.id)]
+                    var_map[(clinician.id, shift_row_id)]
                     for clinician in free_clinicians
-                    if (clinician.id, row.id) in var_map
+                    if (clinician.id, shift_row_id) in var_map
                 ]
                 if assigned_vars:
                     model.Add(sum(assigned_vars) == 0)
             continue
         assigned_vars = [
-            var_map[(clinician.id, row.id)]
+            var_map[(clinician.id, shift_row_id)]
             for clinician in free_clinicians
-            if (clinician.id, row.id) in var_map
+            if (clinician.id, shift_row_id) in var_map
         ]
         if assigned_vars:
-            covered = model.NewBoolVar(f"covered_{row.id}")
+            covered = model.NewBoolVar(f"covered_{shift_row_id}")
             model.Add(sum(assigned_vars) >= covered)
-            coverage_terms.append(covered * class_order_weight[row.id])
+            coverage_terms.append(covered * class_order_weight[shift_row_id])
             if payload.only_fill_required:
                 model.Add(sum(assigned_vars) <= missing)
-        slack = model.NewIntVar(0, missing, f"slack_{row.id}")
+        slack = model.NewIntVar(0, missing, f"slack_{shift_row_id}")
         if assigned_vars:
             model.Add(sum(assigned_vars) + slack >= missing)
         else:
             model.Add(slack >= missing)
         slack_vars.append(slack)
-        slack_terms.append(slack * class_order_weight[row.id])
+        slack_terms.append(slack * class_order_weight[shift_row_id])
 
     total_slack = sum(slack_terms) if slack_terms else 0
     total_coverage = sum(coverage_terms) if coverage_terms else 0
@@ -1628,7 +1973,8 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
         var * class_need.get(rid, 0) for (cid, rid), var in var_map.items()
     )
     total_preference = sum(
-        var * pref_weight.get(cid, {}).get(rid, 0) for (cid, rid), var in var_map.items()
+        var * pref_weight.get(cid, {}).get(parent_by_shift_id.get(rid, ""), 0)
+        for (cid, rid), var in var_map.items()
     )
     if payload.only_fill_required:
         model.Minimize(

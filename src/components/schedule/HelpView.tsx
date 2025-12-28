@@ -54,7 +54,7 @@ export default function HelpView() {
             <ul className="mt-2 list-disc space-y-1 pl-5">
               <li>
                 <span className="font-medium">Open Slots</span> represent the
-                minimum required staffing per class/workstation.
+                minimum required staffing per section/workstation.
               </li>
               <li>
                 Minimum slot requirements can be configured globally (weekday vs
@@ -121,10 +121,10 @@ export default function HelpView() {
         <Section title="4. Manual Assignment (Drag & Drop)">
           <ul className="list-disc space-y-1 pl-5">
             <li>Drag a person pill from a pool.</li>
-            <li>Drop it into a class cell for a specific day.</li>
+            <li>Drop it into a section cell for a specific day.</li>
           </ul>
           <p className="mt-2">
-            If a drop is not allowed (e.g. wrong day or ineligible class), the
+            If a drop is not allowed (e.g. wrong day or ineligible section), the
             person snaps back to the original position.
           </p>
         </Section>
@@ -135,7 +135,7 @@ export default function HelpView() {
               When dragging a person, all eligible cells are highlighted.
             </li>
             <li>
-              When hovering over a class/day cell, all eligible people are
+              When hovering over a section/day cell, all eligible people are
               highlighted in green.
             </li>
           </ul>
@@ -145,7 +145,7 @@ export default function HelpView() {
         <Section title="6. Managing Open Slots">
           <ul className="list-disc space-y-1 pl-5">
             <li>
-              Add an Open Slot by clicking an empty class/day cell.
+              Add an Open Slot by clicking an empty section/day cell.
             </li>
             <li>
               Remove an Open Slot using the “–” button on the Open Slot pill.
@@ -178,12 +178,12 @@ export default function HelpView() {
         <Section title="9. Settings">
           <ul className="list-disc space-y-1 pl-5">
             <li>
-              <span className="font-medium">Classes</span>: names, order, and
+              <span className="font-medium">Sections</span>: names, order, and
               minimum required slots (weekday vs weekend/holiday).
             </li>
             <li>
               <span className="font-medium">People</span>: add/edit/remove,
-              eligible classes, vacations.
+              eligible sections, vacations.
             </li>
             <li>
               <span className="font-medium">Holidays</span>: preload, add/remove.
