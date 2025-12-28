@@ -432,7 +432,18 @@ Frontend
 - `src/lib/shiftRows.ts` (shiftRowId helpers + state normalization)
 
 Backend
-- `backend/main.py`
+- `backend/main.py` (app setup + router wiring)
+- `backend/models.py` (Pydantic models)
+- `backend/constants.py` (shared constants)
+- `backend/db.py` (SQLite schema + connection helpers)
+- `backend/state.py` (state normalization, defaults, persistence)
+- `backend/auth.py` (JWT auth + admin endpoints)
+- `backend/web.py` (public web publish endpoints)
+- `backend/pdf.py` (PDF export endpoints)
+- `backend/ical_routes.py` (iCal endpoints)
+- `backend/publication.py` (tokens + caching helpers)
+- `backend/solver.py` (solver endpoint + logic)
+- `backend/state_routes.py` (health + state endpoints)
 - `backend/requirements.txt`
 - `backend/schedule.db`
 
