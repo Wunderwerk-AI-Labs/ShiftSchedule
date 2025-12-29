@@ -4,6 +4,8 @@ dist/
 backend/schedule.db
 schedule.db
 *.log
+frontend.dev.out
+backend/logs/
 *.tsbuildinfo
 .env
 .env.*
