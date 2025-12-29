@@ -110,6 +110,10 @@ export default function HelpView() {
                   here are not considered by the solver.
                 </li>
                 <li>
+                  <span className="font-medium">Rest Day Pool</span>: people
+                  placed before or after on-call duties to rest.
+                </li>
+                <li>
                   <span className="font-medium">Vacation Pool</span>: people
                   on vacation are excluded from automatic allocation.
                 </li>

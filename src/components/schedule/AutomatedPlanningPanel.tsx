@@ -7,6 +7,9 @@ type AutomatedPlanningPanelProps = {
   weekEndISO: string;
   isRunning: boolean;
   progress: { current: number; total: number } | null;
+  startedAt: number | null;
+  lastRunTotalDays: number | null;
+  lastRunDurationMs: number | null;
   error: string | null;
   onRun: (args: { startISO: string; endISO: string; onlyFillRequired: boolean }) => void;
   onReset: (args: { startISO: string; endISO: string }) => void;
@@ -45,6 +48,9 @@ export default function AutomatedPlanningPanel({
   weekEndISO,
   isRunning,
   progress,
+  startedAt,
+  lastRunTotalDays,
+  lastRunDurationMs,
   error,
   onRun,
   onReset,
@@ -61,10 +67,42 @@ export default function AutomatedPlanningPanel({
     setEndInput(formatEuropeanDate(weekEndISO));
   }, [weekStartISO, weekEndISO, hasTouched]);
 
+  const [elapsedLabel, setElapsedLabel] = useState("0:00");
+  const formatDuration = (valueMs: number) => {
+    const totalSeconds = Math.max(0, Math.floor(valueMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+  useEffect(() => {
+    if (!isRunning || !startedAt) {
+      setElapsedLabel("0:00");
+      return;
+    }
+    const update = () => {
+      const elapsedMs = Date.now() - startedAt;
+      setElapsedLabel(formatDuration(elapsedMs));
+    };
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, [isRunning, startedAt]);
+
   const progressLabel = useMemo(() => {
     if (!progress) return null;
+    if (isRunning && progress.current === 0) {
+      const estimate =
+        typeof lastRunDurationMs === "number" &&
+        typeof lastRunTotalDays === "number" &&
+        lastRunTotalDays > 0
+          ? ` • ETA ~${formatDuration(
+              (lastRunDurationMs / lastRunTotalDays) * progress.total,
+            )}`
+          : "";
+      return `Solving full range (${progress.total} days) • ${elapsedLabel}${estimate}`;
+    }
     return `${progress.current}/${progress.total} days planned`;
-  }, [progress]);
+  }, [progress, isRunning, elapsedLabel, lastRunDurationMs, lastRunTotalDays]);
 
   const parseRange = () => {
     const startISO = parseEuropeanDate(startInput);

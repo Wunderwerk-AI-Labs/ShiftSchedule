@@ -33,14 +33,16 @@ Schedule card
 - Week starts Monday; weekend/holiday styling is header-only: weekend header light gray, holiday header light lavender; holiday name is a tiny purple label under the day.
 - Mobile: grid uses touch scrolling and slightly tighter paddings.
 - Automated shift planning and Export are separate panels in the schedule view; Export panel opens the same modal as before.
+- Vacation Planner panel sits between Automated Shift Planning and Export; it opens the full-screen Vacation Overview.
 - Control row between section rows and pool rows with icon buttons:
   - Only necessary, Distribute all, Reset to free (week and per day), with tooltips.
 - Week publication uses a **Publish** toggle pill in the header, placed to the right of the Open Slots badge.
+- Rule violations badge sits next to Open Slots only when violations exist; click to see details and highlight the related pills (red).
 
 Rows
 - Section rows (editable, reorderable priority): MRI, CT, Sonography, Conventional, On Call, etc.
 - Each section expands into 1-3 shift rows in the grid; the section name shows once, shift labels are indented, and the time range + location (if enabled) are right-aligned.
-- Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Reserve Pool (id: pool-manual), Vacation (id: pool-vacation).
+- Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Reserve Pool (id: pool-manual), Rest Day (id: pool-rest-day), Vacation (id: pool-vacation).
 - Pool rows appear below a separator line.
 - Row labels are uppercase, no colored dots, truncate around 20 characters (tighter on mobile).
 - Vacation row background stays the same gray even on weekends/holidays.
@@ -49,6 +51,7 @@ Cells
 - Multiple clinician pills per cell, sorted by surname.
 - Empty slots shown as gray dashed pills based on min slots; plus/minus badges are gray; label is not bold.
 - Drag and drop is same-day only; invalid drops (wrong day or outside the grid) snap back instantly.
+- Drag/drop does not block rule-violating placements (overlap, same-day location mix, multiple shifts); solver enforces rules but manual overrides are allowed and shown in red.
 - Dragging into or out of Vacation updates the clinician vacation ranges.
 - Eligible target cells for a dragged clinician use a pale green background (consistent with the green "Open Slots" badge when count is 0).
 - Ineligible manual assignment is allowed, with a yellow warning icon.
@@ -60,6 +63,11 @@ Pills
 - Compact blue pill, normal font weight; eligible hover highlight uses green background + green border (no extra thickness).
 - Warning icons are small circular badges at top-right of the pill.
 - Drag preview uses the normal pill style (highlight removed).
+- Assignment pills show a tiny second line with the shift time range.
+- Distribution Pool pills show only the remaining free time segments.
+- Rule-violation pills render in red automatically.
+- While dragging a clinician, all other pills for the same clinician on the same day turn darker blue with a black outline; the dragged pill uses the same style.
+- Smoke test (API): `API_BASE=http://127.0.0.1:8000 ADMIN_USERNAME=admin ADMIN_PASSWORD=<pass> node scripts/smoke-api.mjs`
 
 ---
 
@@ -80,7 +88,8 @@ Locations
 - Toggle in panel header enables/disables locations; when disabled, all sections use Default and location labels are hidden.
 
 Pools
-- Rename pool rows (Distribution Pool, Vacation). No deletion.
+- Rename pool rows (Distribution Pool, Reserve Pool, Rest Day, Vacation). No deletion.
+- Rest Day pool is used to park clinicians before/after on-call duty when the setting is enabled.
 
 Clinicians
 - List with Add Clinician and Edit buttons (Add uses a dashed, full-width button below the list).
@@ -93,6 +102,7 @@ Clinician Editor (modal)
 - Vacation management uses compact DD.MM.YYYY inputs with a dash between start and end.
 - Past vacations collapsed in a <details>.
 - Modal body is scrollable for long vacation lists.
+- Vacation section is shown before Eligible Sections.
 
 Holidays
 - Year selector with stepper buttons.
@@ -101,6 +111,21 @@ Holidays
 - Add holidays manually; list shows DD.MM.YYYY dates (input accepts DD.MM.YYYY or ISO).
 - Add Holiday button is a dashed, full-width button below the list and opens an inline add panel.
 - Holidays behave like weekends in solver + min slot logic and show in the calendar header.
+
+Solver Settings
+- Toggles: Allow multiple shifts per day; Enforce same location per day.
+- On-call rest days: toggle + section selector + days before/after. When enabled, solver enforces rest days and the UI places clinicians into the Rest Day pool.
+- Rule violations are evaluated for the current week and surfaced in the header badge; affected pills are shown in red.
+- Violations include: rest-day conflicts, multiple shifts per day (when disabled), same-day location mismatches (when enforced), and overlapping shift times.
+- Automated planning runs the week solver over the selected date range in one call and shows an ETA based on the last run's per-day duration.
+
+Vacation Overview
+- Open via the Vacation Planner panel in the main schedule view.
+- Full-screen year grid: clinicians as rows, day numbers across the year, month headers span their days.
+- Grey bar per clinician; green segments for vacation ranges (clipped to the selected year).
+- A thin vertical Today marker appears only when viewing the current year.
+- Multi-year timeline: year row stays visible and updates as you scroll; there is a "Today" jump button.
+- Clicking a clinician row opens the Clinician Editor modal scrolled to vacations.
 
 Admin user management
 - User export: admin can download a user state JSON (export includes metadata + AppState).
@@ -261,6 +286,15 @@ type Assignment = {
 type MinSlotsByRowId = Record<string, { weekday: number; weekend: number }>;
 
 type Holiday = { dateISO: string; name: string };
+
+type SolverSettings = {
+  allowMultipleShiftsPerDay: boolean;
+  enforceSameLocationPerDay: boolean;
+  onCallRestEnabled: boolean;
+  onCallRestClassId?: string;
+  onCallRestDaysBefore: number;
+  onCallRestDaysAfter: number;
+};
 ```
 
 Shift row IDs
@@ -272,27 +306,42 @@ Shift row IDs
 
 ## 5) Scheduling Logic (Frontend)
 - Vacation override: for each date, if clinician is on vacation, they appear in Vacation pool and their section assignment is suppressed.
-- Distribution Pool: any clinician not assigned to a section and not on vacation appears here.
+- Distribution Pool:
+  - If “Allow multiple shifts per day” is off: only clinicians with zero section assignments for that day appear.
+  - If on: clinicians still appear if they have at least one non-overlapping shift interval left.
+- Rest Day Pool (pool-rest-day): if on-call rest days are enabled, clinicians assigned to the on-call section are placed into Rest Day on the configured days before/after (fallback to Reserve if Rest Day is missing).
 - Assignments stored in a map (rowId + dateISO -> list of assignments); section rows use shiftRowId.
-- Drag and drop only within the same day.
+- Drag and drop only within the same day; manual overrides are allowed even if they violate solver rules.
 - Clicking a section sub-shift cell increments the per-day slot override for that shiftRowId (adds an "Open Slot"); remove via the minus badge.
+- Overlap checks use time intervals (start/end + endDayOffset); shift order is not used for overlap decisions. These checks feed solver constraints and UI violation detection.
 
 ---
 
 ## 6) Solver (Backend, OR-Tools)
-Endpoint: `POST /v1/solve`
-Payload:
+Endpoints:
+- `POST /v1/solve` (single day)
+- `POST /v1/solve/week` (range solver; accepts `startISO` and optional `endISO`)
+Payloads:
 ```json
 { "dateISO": "YYYY-MM-DD", "only_fill_required": true|false }
 ```
+```json
+{ "startISO": "YYYY-MM-DD", "only_fill_required": true|false }
+```
 
 Behavior
-- Uses only clinicians currently in Distribution Pool (unassigned and not on vacation).
+- Day solver (`/v1/solve`) uses only clinicians in Distribution Pool (unassigned + not on vacation).
+- Week solver (`/v1/solve/week`) considers all clinicians not on vacation; manual assignments are treated as fixed.
+- Range solves include a 1-day context window on both ends for rest-day constraints; rest rules only enforce inside the selected range and emit a warning note if boundary days are already assigned.
 - Hard constraints:
   - Qualification required.
   - Vacation overrides assignment.
-  - Manual assignments remain in place; solver adds only from the pool.
-- Targets shiftRowIds for section sub-shifts; priority is section order first, then sub-shift order.
+  - Manual assignments remain in place; solver adds additional assignments as needed.
+  - Overlap checks use time intervals (start/end + endDayOffset), not shift order.
+  - “Allow multiple shifts per day” off ⇒ at most one assignment per day; on ⇒ multiple only if non-overlapping.
+  - “Enforce same location per day” blocks mixing locations on the same day.
+  - On-call rest days: if enabled, clinicians assigned to the selected on-call section must be unassigned on the configured days before/after.
+- Targets shiftRowIds for section sub-shifts; priority is section order first, then sub-shift order (objective weights).
 - Qualification + preference checks still use the parent class id (not shiftRowId).
 - Objective:
   - Prioritize coverage by section order (top of section list is highest).
@@ -312,17 +361,29 @@ Backend stores one JSON blob per user in SQLite:
   "clinicians": [...],
   "assignments": [...],
   "minSlotsByRowId": {...},
+  "solverSettings": {
+    "allowMultipleShiftsPerDay": false,
+    "enforceSameLocationPerDay": false,
+    "onCallRestEnabled": false,
+    "onCallRestClassId": "on-call",
+    "onCallRestDaysBefore": 1,
+    "onCallRestDaysAfter": 1
+  },
+  "solverRules": [],
   "publishedWeekStartISOs": ["2025-12-22"],
   "holidayCountry": "DE",
   "holidayYear": 2025,
   "holidays": [{ "dateISO": "2025-12-25", "name": "Christmas Day" }]
 }
 ```
+Note: `solverRules` is legacy and not used by the current UI/solver, but remains in state for compatibility.
 State normalization on load
 - Ensures `locations` exists (adds loc-default).
 - Ensures section rows have `locationId` and `subShifts` (defaults to 08:00–16:00, endDayOffset 0).
 - If locations are disabled, section locations are forced to the default location.
 - Migrates section assignments + min slots + slot overrides from classId to shiftRowId (`classId::s1`).
+- Ensures `solverSettings` defaults, clamps on-call rest day values, and fixes invalid on-call class ids.
+- Ensures the Rest Day pool exists (pool-rest-day), inserted after Reserve Pool.
 Table: `app_state` (id = username). Legacy row id `"state"` is migrated to `"jk"`. The table now also has an `updated_at` column which is bumped on every `POST /v1/state` save.
 
 Endpoints
@@ -337,6 +398,7 @@ Endpoints
 - `GET /v1/state`
 - `POST /v1/state`
 - `POST /v1/solve`
+- `POST /v1/solve/week`
 - `GET /v1/ical/publish`
 - `POST /v1/ical/publish`
 - `POST /v1/ical/publish/rotate`
@@ -402,6 +464,7 @@ If the UI says "Solver service is not responding"
 - Check backend health: `curl http://localhost:8000/health`
 - Ensure `VITE_API_URL` matches the backend host/port.
 - If backend logs show 401 on `/v1/solve`, the auth token is invalid (often after a JWT secret change). Log out/in.
+- If backend logs show a validation error for `solverSettings` fields, restart the backend so the updated models load.
 - If using a non-localhost host (LAN or remote), set CORS explicitly:
 ```bash
 CORS_ALLOW_ORIGINS=http://my-host:5173 python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
@@ -428,8 +491,10 @@ Frontend
 - `src/components/schedule/SettingsView.tsx`
 - `src/components/schedule/RowLabel.tsx`
 - `src/components/schedule/AssignmentPill.tsx`
+- `src/components/schedule/VacationOverviewModal.tsx`
 - `src/api/client.ts`
 - `src/lib/shiftRows.ts` (shiftRowId helpers + state normalization)
+- `src/lib/schedule.ts` (rendered assignment map, time intervals, Rest Day pool logic)
 
 Backend
 - `backend/main.py` (app setup + router wiring)
@@ -451,8 +516,8 @@ Backend
 
 ## 11) Notes for New Agents
 - The calendar is the source of truth for edits; Settings manages section priority + min slots + pool names + clinician list.
-- Pool ids: Distribution Pool = `pool-not-allocated`, Manual Pool = `pool-manual`, Vacation = `pool-vacation`.
-- Keep drag restricted to same day.
+- Pool ids: Distribution Pool = `pool-not-allocated`, Reserve Pool = `pool-manual`, Rest Day = `pool-rest-day`, Vacation = `pool-vacation`.
+- Keep drag restricted to same day; manual overrides are allowed even if they violate solver rules.
 - Mobile single-day view uses `useMediaQuery("(max-width: 640px)")` with `displayDays`; week-level calculations still use `fullWeekDays`.
 - `ScheduleGrid` supports variable day counts (dynamic `gridTemplateColumns`, last column determined by index).
 - Hover highlighting is desktop-only (no hover on mobile) and uses `AssignmentPill` `isHighlighted`.

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 RowKind = Literal["class", "pool"]
 Role = Literal["admin", "user"]
+ThenType = Literal["shiftRow", "off"]
 
 
 class UserPublic(BaseModel):
@@ -106,6 +107,8 @@ class AppState(BaseModel):
     holidayYear: Optional[int] = None
     holidays: List[Holiday] = Field(default_factory=list)
     publishedWeekStartISOs: List[str] = Field(default_factory=list)
+    solverSettings: Dict[str, Any] = Field(default_factory=dict)
+    solverRules: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class UserStateExport(BaseModel):
@@ -122,6 +125,38 @@ class SolveDayRequest(BaseModel):
 
 class SolveDayResponse(BaseModel):
     dateISO: str
+    assignments: List[Assignment]
+    notes: List[str]
+
+
+class SolverSettings(BaseModel):
+    allowMultipleShiftsPerDay: bool = False
+    enforceSameLocationPerDay: bool = False
+    onCallRestEnabled: bool = False
+    onCallRestClassId: Optional[str] = None
+    onCallRestDaysBefore: int = 1
+    onCallRestDaysAfter: int = 1
+
+
+class SolverRule(BaseModel):
+    id: str
+    name: str
+    enabled: bool = True
+    ifShiftRowId: str
+    dayDelta: Literal[-1, 1]
+    thenType: ThenType
+    thenShiftRowId: Optional[str] = None
+
+
+class SolveWeekRequest(BaseModel):
+    startISO: str
+    endISO: Optional[str] = None
+    only_fill_required: bool = False
+
+
+class SolveWeekResponse(BaseModel):
+    startISO: str
+    endISO: str
     assignments: List[Assignment]
     notes: List[str]
 

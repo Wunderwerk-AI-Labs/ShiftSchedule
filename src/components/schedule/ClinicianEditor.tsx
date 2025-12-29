@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
 
 type ClinicianEditorProps = {
@@ -9,6 +9,7 @@ type ClinicianEditorProps = {
     vacations: Array<{ id: string; startISO: string; endISO: string }>;
   };
   classRows: Array<{ id: string; name: string }>;
+  initialSection?: "vacations";
   onToggleQualification: (clinicianId: string, classId: string) => void;
   onReorderQualification: (
     clinicianId: string,
@@ -32,12 +33,15 @@ export default function ClinicianEditor({
   onAddVacation,
   onUpdateVacation,
   onRemoveVacation,
+  initialSection,
 }: ClinicianEditorProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [vacationDrafts, setVacationDrafts] = useState<Record<string, string>>(
     {},
   );
+  const [showPastVacations, setShowPastVacations] = useState(false);
+  const vacationPanelRef = useRef<HTMLDivElement | null>(null);
   const eligibleIds = clinician.qualifiedClassIds;
   const eligibleRows = eligibleIds
     .map((id) => classRows.find((row) => row.id === id))
@@ -124,120 +128,22 @@ export default function ClinicianEditor({
     }
   }, [availableRows, selectedClassId]);
 
+  useEffect(() => {
+    if (initialSection !== "vacations") return;
+    if (pastVacations.length > 0) {
+      setShowPastVacations(true);
+    }
+    if (vacationPanelRef.current) {
+      vacationPanelRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }, [initialSection, clinician.id, pastVacations.length]);
+
   return (
     <div>
-      <div className="relative mt-4 rounded-2xl border-2 border-sky-200 bg-sky-50/60 px-4 py-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)] dark:border-sky-500/40 dark:bg-sky-900/20">
-        <div className="absolute -top-3 left-4 rounded-full border border-sky-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-600 dark:border-sky-500/40 dark:bg-slate-900 dark:text-sky-200">
-          Eligible Sections
-        </div>
-        <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-          Drag to set priority, toggle to add or remove.
-        </div>
-        <div className="mt-4 space-y-2">
-          {eligibleRows.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-300">
-              No eligible sections selected yet.
-            </div>
-          ) : (
-            eligibleRows.map((row, index) => (
-              <div
-                key={row.id}
-                className={cx(
-                  "flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
-                  dragOverId === row.id && "border-sky-300 bg-sky-50",
-                )}
-                onDragOver={(event) => {
-                  if (!draggingId || draggingId === row.id) return;
-                  event.preventDefault();
-                  setDragOverId(row.id);
-                }}
-                onDragLeave={() => {
-                  setDragOverId((prev) => (prev === row.id ? null : prev));
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const fromId =
-                    draggingId || event.dataTransfer.getData("text/plain");
-                  if (!fromId || fromId === row.id) {
-                    setDragOverId(null);
-                    return;
-                  }
-                  onReorderQualification(clinician.id, fromId, row.id);
-                  setDraggingId(null);
-                  setDragOverId(null);
-                }}
-              >
-                <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
-                  {index + 1}
-                </span>
-                <button
-                  type="button"
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", row.id);
-                    setDraggingId(row.id);
-                  }}
-                  onDragEnd={() => {
-                    setDraggingId(null);
-                    setDragOverId(null);
-                  }}
-                  className="cursor-grab rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                  aria-label={`Reorder ${row.name}`}
-                >
-                  ≡
-                </button>
-                <span className="flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                  {row.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onToggleQualification(clinician.id, row.id)}
-                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
-                  Remove
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-        {availableRows.length > 0 ? (
-          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Add section
-            </div>
-            <select
-              value={selectedClassId}
-              onChange={(event) => setSelectedClassId(event.target.value)}
-              className={cx(
-                "rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700",
-                "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
-              )}
-            >
-              {availableRows.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => {
-                if (!selectedClassId) return;
-                onToggleQualification(clinician.id, selectedClassId);
-              }}
-              className={cx(
-                "rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50",
-                "dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800",
-              )}
-            >
-              Add
-            </button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="relative mt-6 rounded-2xl border-2 border-emerald-200 bg-emerald-50/60 px-4 py-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)] dark:border-emerald-500/40 dark:bg-emerald-900/20">
+      <div
+        ref={vacationPanelRef}
+        className="relative mt-4 rounded-2xl border-2 border-emerald-200 bg-emerald-50/60 px-4 py-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)] dark:border-emerald-500/40 dark:bg-emerald-900/20"
+      >
         <div className="absolute -top-3 left-4 rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-600 dark:border-emerald-500/40 dark:bg-slate-900 dark:text-emerald-200">
           Vacation
         </div>
@@ -350,7 +256,11 @@ export default function ClinicianEditor({
         </div>
 
         {pastVacations.length > 0 ? (
-          <details className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+          <details
+            open={showPastVacations}
+            onToggle={(event) => setShowPastVacations(event.currentTarget.open)}
+            className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900"
+          >
             <summary className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200">
               Past vacations ({pastVacations.length})
             </summary>
@@ -442,6 +352,119 @@ export default function ClinicianEditor({
           </details>
         ) : null}
       </div>
+
+
+      <div className="relative mt-4 rounded-2xl border-2 border-sky-200 bg-sky-50/60 px-4 py-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)] dark:border-sky-500/40 dark:bg-sky-900/20">
+        <div className="absolute -top-3 left-4 rounded-full border border-sky-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-600 dark:border-sky-500/40 dark:bg-slate-900 dark:text-sky-200">
+          Eligible Sections
+        </div>
+        <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+          Drag to set priority, toggle to add or remove.
+        </div>
+        <div className="mt-4 space-y-2">
+          {eligibleRows.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-300">
+              No eligible sections selected yet.
+            </div>
+          ) : (
+            eligibleRows.map((row, index) => (
+              <div
+                key={row.id}
+                className={cx(
+                  "flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+                  dragOverId === row.id && "border-sky-300 bg-sky-50",
+                )}
+                onDragOver={(event) => {
+                  if (!draggingId || draggingId === row.id) return;
+                  event.preventDefault();
+                  setDragOverId(row.id);
+                }}
+                onDragLeave={() => {
+                  setDragOverId((prev) => (prev === row.id ? null : prev));
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const fromId =
+                    draggingId || event.dataTransfer.getData("text/plain");
+                  if (!fromId || fromId === row.id) {
+                    setDragOverId(null);
+                    return;
+                  }
+                  onReorderQualification(clinician.id, fromId, row.id);
+                  setDraggingId(null);
+                  setDragOverId(null);
+                }}
+              >
+                <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+                  {index + 1}
+                </span>
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", row.id);
+                    setDraggingId(row.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingId(null);
+                    setDragOverId(null);
+                  }}
+                  className="cursor-grab rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  aria-label={`Reorder ${row.name}`}
+                >
+                  ≡
+                </button>
+                <span className="flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  {row.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onToggleQualification(clinician.id, row.id)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        {availableRows.length > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Add section
+            </div>
+            <select
+              value={selectedClassId}
+              onChange={(event) => setSelectedClassId(event.target.value)}
+              className={cx(
+                "rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700",
+                "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+              )}
+            >
+              {availableRows.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                if (!selectedClassId) return;
+                onToggleQualification(clinician.id, selectedClassId);
+              }}
+              className={cx(
+                "rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50",
+                "dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800",
+              )}
+            >
+              Add
+            </button>
+          </div>
+        ) : null}
+      </div>
+
     </div>
   );
 }

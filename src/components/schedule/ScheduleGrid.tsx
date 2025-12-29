@@ -1,10 +1,12 @@
-import { Assignment } from "../../data/mockData";
+import type { SolverSettings } from "../../api/client";
+import type { RenderedAssignment, TimeRange } from "../../lib/schedule";
 import { cx } from "../../lib/classNames";
 import { formatDayHeader, toISODate } from "../../lib/date";
+import { buildShiftInterval, formatTimeRangeLabel } from "../../lib/schedule";
 import AssignmentPill from "./AssignmentPill";
 import EmptySlotPill from "./EmptySlotPill";
 import RowLabel from "./RowLabel";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import type { ScheduleRow } from "../../lib/shiftRows";
 
@@ -12,11 +14,12 @@ type ScheduleGridProps = {
   leftHeaderTitle: string;
   weekDays: Date[];
   rows: ScheduleRow[];
-  assignmentMap: Map<string, Assignment[]>;
+  assignmentMap: Map<string, RenderedAssignment[]>;
   header?: React.ReactNode;
   holidayDates?: Set<string>;
   holidayNameByDate?: Record<string, string>;
   readOnly?: boolean;
+  solverSettings?: SolverSettings;
   getClinicianName: (clinicianId: string) => string;
   getIsQualified: (clinicianId: string, rowId: string) => boolean;
   getHasEligibleClasses: (clinicianId: string) => boolean;
@@ -33,6 +36,7 @@ type ScheduleGridProps = {
   minSlotsByRowId?: Record<string, { weekday: number; weekend: number }>;
   slotOverridesByKey?: Record<string, number>;
   onRemoveEmptySlot?: (args: { rowId: string; dateISO: string }) => void;
+  violatingAssignmentKeys?: Set<string>;
 };
 
 export default function ScheduleGrid({
@@ -44,6 +48,7 @@ export default function ScheduleGrid({
   holidayDates,
   holidayNameByDate,
   readOnly = false,
+  solverSettings,
   getClinicianName,
   getIsQualified,
   getHasEligibleClasses,
@@ -54,6 +59,7 @@ export default function ScheduleGrid({
   minSlotsByRowId = {},
   slotOverridesByKey = {},
   onRemoveEmptySlot,
+  violatingAssignmentKeys,
 }: ScheduleGridProps) {
   const [dragState, setDragState] = useState<{
     dragging: {
@@ -76,7 +82,15 @@ export default function ScheduleGrid({
   const isSingleDay = weekDays.length === 1;
   const dayColumnMin = isSingleDay ? 140 : 120;
   const leftColumn = isSingleDay ? "minmax(96px, 140px)" : "max-content";
-
+  const rowById = useMemo(() => new Map(rows.map((row) => [row.id, row])), [rows]);
+  const shiftIntervalsByRowId = useMemo(() => {
+    const map = new Map<string, TimeRange>();
+    for (const row of rows) {
+      const interval = buildShiftInterval(row);
+      if (interval) map.set(row.id, interval);
+    }
+    return map;
+  }, [rows]);
   const setHoveredCell = (next: { rowId: string; dateISO: string } | null) => {
     hoveredClassCellRef.current = next;
     setHoveredClassCell(next);
@@ -143,36 +157,35 @@ export default function ScheduleGrid({
       <div
         className="relative mt-4 rounded-2xl border-2 border-slate-900/80 bg-white p-[2px] shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:mt-6 sm:rounded-3xl"
       >
-        <div
-          className="relative overflow-hidden rounded-[calc(1.5rem-2px)] bg-white dark:bg-slate-900"
-        >
+        <div className="relative rounded-[calc(1.5rem-2px)] bg-white dark:bg-slate-900">
           {header ? (
-            <div className="relative z-0 bg-white px-4 py-3 dark:bg-slate-900 sm:px-6 sm:py-4">
+            <div className="relative z-20 rounded-t-[calc(1.5rem-2px)] bg-white px-4 py-3 dark:bg-slate-900 sm:px-6 sm:py-4">
               {header}
             </div>
           ) : null}
-          <div
-            className="calendar-scroll relative z-10 overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y [-webkit-overflow-scrolling:touch] sm:overflow-visible"
-          >
-            <div className="min-w-full w-full">
-              <div
-                ref={gridRef}
-                data-schedule-grid="true"
-                className="grid"
-                onMouseMove={readOnly ? undefined : handleMouseMove}
-                onMouseLeave={readOnly ? undefined : clearHoveredCell}
-                style={{
-                  gridTemplateColumns: `${leftColumn} repeat(${Math.max(
-                    weekDays.length,
-                    1,
-                  )}, minmax(${dayColumnMin}px, 1fr))`,
-                }}
-              >
-                <div className="flex items-center border-b border-r border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900 sm:px-4">
-                  <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                    {leftHeaderTitle}
+          <div className="relative overflow-hidden rounded-b-[calc(1.5rem-2px)]">
+            <div
+              className="calendar-scroll relative z-10 overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y [-webkit-overflow-scrolling:touch] sm:overflow-visible"
+            >
+              <div className="min-w-full w-full">
+                <div
+                  ref={gridRef}
+                  data-schedule-grid="true"
+                  className="grid"
+                  onMouseMove={readOnly ? undefined : handleMouseMove}
+                  onMouseLeave={readOnly ? undefined : clearHoveredCell}
+                  style={{
+                    gridTemplateColumns: `${leftColumn} repeat(${Math.max(
+                      weekDays.length,
+                      1,
+                    )}, minmax(${dayColumnMin}px, 1fr))`,
+                  }}
+                >
+                  <div className="flex items-center border-b border-r border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-900 sm:px-4">
+                    <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                      {leftHeaderTitle}
+                    </div>
                   </div>
-                </div>
 
                 {weekDays.map((d, index) => {
                   const dateISO = toISODate(d);
@@ -266,10 +279,14 @@ export default function ScheduleGrid({
                         holidayDates={holidayDates}
                         holidayNameByDate={holidayNameByDate}
                         readOnly={readOnly}
+                        rowById={rowById}
+                        shiftIntervalsByRowId={shiftIntervalsByRowId}
+                        violatingAssignmentKeys={violatingAssignmentKeys}
                       />
                     </Fragment>
                   );
                 })}
+                </div>
               </div>
             </div>
           </div>
@@ -302,10 +319,13 @@ function RowSection({
   isSubShiftContinuation,
   hasNextSubShift,
   readOnly = false,
+  rowById,
+  shiftIntervalsByRowId,
+  violatingAssignmentKeys,
 }: {
   row: ScheduleRow;
   weekDays: Date[];
-  assignmentMap: Map<string, Assignment[]>;
+  assignmentMap: Map<string, RenderedAssignment[]>;
   getClinicianName: (clinicianId: string) => string;
   getIsQualified: (clinicianId: string, rowId: string) => boolean;
   getHasEligibleClasses: (clinicianId: string) => boolean;
@@ -349,15 +369,19 @@ function RowSection({
   isSubShiftContinuation: boolean;
   hasNextSubShift: boolean;
   readOnly?: boolean;
+  rowById: Map<string, ScheduleRow>;
+  shiftIntervalsByRowId: Map<string, TimeRange>;
+  violatingAssignmentKeys?: Set<string>;
 }) {
   const rowBg =
     row.id === "pool-vacation"
       ? "bg-slate-200/80 dark:bg-slate-800/80"
-      : row.id === "pool-manual"
+      : row.id === "pool-manual" || row.id === "pool-rest-day"
         ? "bg-slate-50/70 dark:bg-slate-900/70"
         : "bg-white dark:bg-slate-900";
   const isDistributionPoolRow = row.id === "pool-not-allocated";
   const isManualPoolRow = row.id === "pool-manual";
+  const isRestDayPoolRow = row.id === "pool-rest-day";
   const hideBottomBorder = row.kind === "class" && hasNextSubShift;
   const borderBottomClass =
     suppressBottomBorder || hideBottomBorder
@@ -366,7 +390,7 @@ function RowSection({
         ? "border-b-0"
         : isDistributionPoolRow
           ? "border-b-2 border-slate-200 dark:border-slate-800"
-          : isManualPoolRow
+          : isManualPoolRow || isRestDayPoolRow
             ? "border-b-2 border-slate-200 dark:border-slate-800"
             : "border-b border-slate-200 dark:border-slate-800";
   const subShiftSeparatorClass = isSubShiftContinuation
@@ -375,6 +399,17 @@ function RowSection({
   const subShiftSeparatorStyle = isSubShiftContinuation
     ? { borderTopStyle: "dashed" as const }
     : undefined;
+  const rowInterval = shiftIntervalsByRowId.get(row.id) ?? null;
+  const rowTimeLabel = rowInterval
+    ? formatTimeRangeLabel(rowInterval.start, rowInterval.end)
+    : undefined;
+
+  const canDropAssignment = (_payload: {
+    rowId: string;
+    assignmentId: string;
+    clinicianId: string;
+    dateISO: string;
+  }) => true;
   return (
     <>
       <div
@@ -429,7 +464,7 @@ function RowSection({
         const cellBgClass = isOtherDay
           ? "bg-slate-200/70 text-slate-400 opacity-60"
           : showQualified
-            ? "bg-emerald-50/70 dark:bg-emerald-900/30"
+            ? "bg-emerald-100/80 dark:bg-emerald-900/50"
             : isHoveredCell
               ? "bg-slate-50/70 dark:bg-slate-800/50"
               : row.kind === "class" && isWeekend
@@ -447,13 +482,20 @@ function RowSection({
                 : (e) => {
                     if (!dragState.dragging) return;
                     e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
                     if (dragState.dragging.dateISO !== dateISO) {
                       setDragState((s) =>
                         s.dragOverKey ? { ...s, dragOverKey: null } : s,
                       );
                       return;
                     }
+                    if (!canDropAssignment(dragState.dragging)) {
+                      e.dataTransfer.dropEffect = "none";
+                      setDragState((s) =>
+                        s.dragOverKey ? { ...s, dragOverKey: null } : s,
+                      );
+                      return;
+                    }
+                    e.dataTransfer.dropEffect = "move";
                     setDragState((s) =>
                       s.dragOverKey === key ? s : { ...s, dragOverKey: key },
                     );
@@ -484,6 +526,7 @@ function RowSection({
                       };
                       if (payload.dateISO !== dateISO) return;
                       if (payload.rowId === row.id) return;
+                      if (!canDropAssignment(payload)) return;
                       onMoveWithinDay({
                         dateISO,
                         fromRowId: payload.rowId,
@@ -512,13 +555,23 @@ function RowSection({
             <div className="flex flex-col gap-1">
               {sortedAssignments.length > 0 ? (
                 sortedAssignments.map((assignment) => {
-                  const isDraggingAssignment =
-                    dragState.dragging?.assignmentId === assignment.id &&
-                    dragState.dragging?.rowId === row.id &&
-                    dragState.dragging?.dateISO === dateISO;
-                  return (
-                    <div
-                      key={assignment.id}
+                    const isDraggingAssignment =
+                      dragState.dragging?.assignmentId === assignment.id &&
+                      dragState.dragging?.rowId === row.id &&
+                      dragState.dragging?.dateISO === dateISO;
+                    const isDragFocus =
+                      !!dragState.dragging &&
+                      dragState.dragging.dateISO === dateISO &&
+                      dragState.dragging.clinicianId === assignment.clinicianId;
+                    const timeLabel = row.kind === "class" ? rowTimeLabel : undefined;
+                    const timeSegments =
+                      row.id === "pool-not-allocated"
+                        ? assignment.availabilitySegments
+                        : undefined;
+                    const violationKey = `${assignment.rowId}__${assignment.dateISO}__${assignment.clinicianId}`;
+                    return (
+                      <div
+                        key={assignment.id}
                       draggable={!readOnly}
                       onDragStart={
                         readOnly
@@ -548,12 +601,12 @@ function RowSection({
                                   "dark:text-emerald-100",
                                 );
                                 pill.classList.add(
-                                  "border-sky-200",
-                                  "bg-sky-50",
-                                  "text-sky-800",
-                                  "dark:border-sky-500/40",
-                                  "dark:bg-sky-900/40",
-                                  "dark:text-sky-100",
+                                  "border-slate-900",
+                                  "bg-sky-200",
+                                  "text-slate-900",
+                                  "dark:border-slate-100",
+                                  "dark:bg-sky-700/60",
+                                  "dark:text-sky-50",
                                 );
                               }
                               clone.style.position = "absolute";
@@ -610,6 +663,8 @@ function RowSection({
                     >
                       <AssignmentPill
                         name={getClinicianName(assignment.clinicianId)}
+                        timeLabel={timeLabel}
+                        timeSegments={timeSegments}
                         showNoEligibilityWarning={
                           !getHasEligibleClasses(assignment.clinicianId)
                         }
@@ -622,7 +677,9 @@ function RowSection({
                           !!hoveredClassCell &&
                           getIsQualified(assignment.clinicianId, hoveredClassCell.rowId)
                         }
+                        isViolation={violatingAssignmentKeys?.has(violationKey)}
                         isDragging={isDraggingAssignment}
+                        isDragFocus={isDragFocus}
                       />
                     </div>
                   );

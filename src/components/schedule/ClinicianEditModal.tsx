@@ -27,6 +27,7 @@ type ClinicianEditModalProps = {
     updates: { startISO?: string; endISO?: string },
   ) => void;
   onRemoveVacation: (clinicianId: string, vacationId: string) => void;
+  initialSection?: "vacations";
 };
 
 export default function ClinicianEditModal({
@@ -40,6 +41,7 @@ export default function ClinicianEditModal({
   onAddVacation,
   onUpdateVacation,
   onRemoveVacation,
+  initialSection,
 }: ClinicianEditModalProps) {
   if (!open || !clinician) return null;
 
@@ -110,6 +112,7 @@ export default function ClinicianEditModal({
             <ClinicianEditor
               clinician={clinician}
               classRows={classRows}
+              initialSection={initialSection}
               onToggleQualification={onToggleQualification}
               onReorderQualification={onReorderQualification}
               onAddVacation={onAddVacation}

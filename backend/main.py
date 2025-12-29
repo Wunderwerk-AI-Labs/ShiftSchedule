@@ -1,4 +1,6 @@
+import logging
 import os
+import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +14,19 @@ from .state_routes import router as state_router
 from .web import router as web_router
 
 app = FastAPI(title="Weekly Schedule API", version="0.1.0")
+
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_PATH = os.path.join(LOG_DIR, "api.log")
+request_logger = logging.getLogger("api_requests")
+if not request_logger.handlers:
+    handler = logging.FileHandler(LOG_PATH)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%dT%H:%M:%S"
+    )
+    handler.setFormatter(formatter)
+    request_logger.addHandler(handler)
+    request_logger.setLevel(logging.INFO)
 
 CORS_ALLOW_ORIGINS = os.environ.get("CORS_ALLOW_ORIGINS", "")
 CORS_ALLOW_ORIGIN_REGEX = os.environ.get(
@@ -27,6 +42,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def _log_requests(request, call_next):
+    start = time.time()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = int((time.time() - start) * 1000)
+        request_logger.error(
+            "ERROR %s %s?%s %sms %s",
+            request.method,
+            request.url.path,
+            request.url.query,
+            duration_ms,
+            exc,
+        )
+        raise
+    duration_ms = int((time.time() - start) * 1000)
+    request_logger.info(
+        "%s %s?%s %s %sms",
+        request.method,
+        request.url.path,
+        request.url.query,
+        response.status_code,
+        duration_ms,
+    )
+    return response
 
 
 @app.on_event("startup")

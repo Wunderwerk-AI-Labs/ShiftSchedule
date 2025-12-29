@@ -147,6 +147,12 @@ export const workplaceRows: WorkplaceRow[] = [
     kind: "pool",
     dotColorClass: "bg-slate-300",
   },
+  {
+    id: "pool-rest-day",
+    name: "Rest Day",
+    kind: "pool",
+    dotColorClass: "bg-slate-200",
+  },
   { id: "pool-vacation", name: "Vacation", kind: "pool", dotColorClass: "bg-emerald-500" },
 ];
 
@@ -160,6 +166,25 @@ export const defaultMinSlotsByRowId: Record<
   "conventional::s1": { weekday: 2, weekend: 1 },
   "on-call::s1": { weekday: 1, weekend: 1 },
 };
+
+export const defaultSolverSettings = {
+  allowMultipleShiftsPerDay: false,
+  enforceSameLocationPerDay: false,
+  onCallRestEnabled: false,
+  onCallRestClassId: "on-call",
+  onCallRestDaysBefore: 1,
+  onCallRestDaysAfter: 1,
+};
+
+export const defaultSolverRules: Array<{
+  id: string;
+  name: string;
+  enabled: boolean;
+  ifShiftRowId: string;
+  dayDelta: -1 | 1;
+  thenType: "shiftRow" | "off";
+  thenShiftRowId?: string;
+}> = [];
 
 export const clinicians: Clinician[] = [
   {

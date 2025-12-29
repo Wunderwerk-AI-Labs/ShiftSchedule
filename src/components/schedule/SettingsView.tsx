@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { cx } from "../../lib/classNames";
 import { Location, WorkplaceRow } from "../../data/mockData";
-import type { Holiday } from "../../api/client";
+import type { Holiday, SolverSettings } from "../../api/client";
 import {
   buildShiftRowId,
   DEFAULT_LOCATION_ID,
@@ -18,6 +18,7 @@ type SettingsViewProps = {
   holidays: Holiday[];
   holidayCountry: string;
   holidayYear: number;
+  solverSettings: SolverSettings;
   onChangeMinSlots: (
     rowId: string,
     kind: "weekday" | "weekend",
@@ -59,6 +60,7 @@ type SettingsViewProps = {
   onFetchHolidays: (countryCode: string, year: number) => Promise<void>;
   onAddHoliday: (holiday: Holiday) => void;
   onRemoveHoliday: (holiday: Holiday) => void;
+  onChangeSolverSettings: (settings: SolverSettings) => void;
 };
 
 export default function SettingsView({
@@ -71,6 +73,7 @@ export default function SettingsView({
   holidays,
   holidayCountry,
   holidayYear,
+  solverSettings,
   onChangeMinSlots,
   onRenameClass,
   onRemoveClass,
@@ -96,6 +99,7 @@ export default function SettingsView({
   onFetchHolidays,
   onAddHoliday,
   onRemoveHoliday,
+  onChangeSolverSettings,
 }: SettingsViewProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -226,8 +230,20 @@ export default function SettingsView({
   const poolNoteById: Record<string, string> = {
     "pool-not-allocated": "Pool from which people are distributed to workplaces.",
     "pool-manual": "Reserve pool of people that will not be automatically distributed.",
+    "pool-rest-day":
+      "Rest day pool for people placed before or after on-call duties.",
     "pool-vacation":
       "People on vacation. Drag in or out of this row to update vacations.",
+  };
+  const onCallRestClassId =
+    solverSettings.onCallRestClassId &&
+    classRows.some((row) => row.id === solverSettings.onCallRestClassId)
+      ? solverSettings.onCallRestClassId
+      : classRows[0]?.id ?? "";
+  const clampRestDays = (value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(7, Math.trunc(parsed)));
   };
 
   return (
@@ -723,6 +739,188 @@ export default function SettingsView({
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+
+      <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                Solver Settings
+              </div>
+              <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                Control solver behavior and on-call rest days.
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 space-y-4">
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
+              <div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Allow multiple shifts per day
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Off = one assignment per day; On = multiple if times don’t overlap.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={solverSettings.allowMultipleShiftsPerDay}
+                onClick={() =>
+                  onChangeSolverSettings({
+                    ...solverSettings,
+                    allowMultipleShiftsPerDay: !solverSettings.allowMultipleShiftsPerDay,
+                  })
+                }
+                className={cx(
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                  solverSettings.allowMultipleShiftsPerDay
+                    ? "bg-emerald-500"
+                    : "bg-slate-300 dark:bg-slate-700",
+                )}
+              >
+                <span
+                  className={cx(
+                    "inline-block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow transition-transform",
+                    solverSettings.allowMultipleShiftsPerDay && "translate-x-[22px]",
+                  )}
+                />
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
+              <div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Enforce same location per day
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  When multiple shifts per day, all must share the same location.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={solverSettings.enforceSameLocationPerDay}
+                onClick={() =>
+                  onChangeSolverSettings({
+                    ...solverSettings,
+                    enforceSameLocationPerDay: !solverSettings.enforceSameLocationPerDay,
+                  })
+                }
+                className={cx(
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                  solverSettings.enforceSameLocationPerDay
+                    ? "bg-emerald-500"
+                    : "bg-slate-300 dark:bg-slate-700",
+                )}
+              >
+                <span
+                  className={cx(
+                    "inline-block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow transition-transform",
+                    solverSettings.enforceSameLocationPerDay && "translate-x-[22px]",
+                  )}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  On-call rest days
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Place people into the Rest Day pool before or after an on-call duty.
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={solverSettings.onCallRestEnabled}
+                onClick={() =>
+                  onChangeSolverSettings({
+                    ...solverSettings,
+                    onCallRestEnabled: !solverSettings.onCallRestEnabled,
+                    onCallRestClassId: onCallRestClassId || solverSettings.onCallRestClassId,
+                  })
+                }
+                className={cx(
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                  solverSettings.onCallRestEnabled
+                    ? "bg-emerald-500"
+                    : "bg-slate-300 dark:bg-slate-700",
+                )}
+              >
+                <span
+                  className={cx(
+                    "inline-block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow transition-transform",
+                    solverSettings.onCallRestEnabled && "translate-x-[22px]",
+                  )}
+                />
+              </button>
+            </div>
+            <div
+              className={cx(
+                "mt-3 grid gap-3 sm:grid-cols-3",
+                !solverSettings.onCallRestEnabled && "opacity-60",
+              )}
+            >
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Section
+                <select
+                  value={onCallRestClassId}
+                  onChange={(e) =>
+                    onChangeSolverSettings({
+                      ...solverSettings,
+                      onCallRestClassId: e.target.value,
+                    })
+                  }
+                  disabled={!solverSettings.onCallRestEnabled}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                >
+                  {classRows.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Days before
+                <input
+                  type="number"
+                  min={0}
+                  max={7}
+                  value={solverSettings.onCallRestDaysBefore}
+                  onChange={(e) =>
+                    onChangeSolverSettings({
+                      ...solverSettings,
+                      onCallRestDaysBefore: clampRestDays(e.target.value),
+                    })
+                  }
+                  disabled={!solverSettings.onCallRestEnabled}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Days after
+                <input
+                  type="number"
+                  min={0}
+                  max={7}
+                  value={solverSettings.onCallRestDaysAfter}
+                  onChange={(e) =>
+                    onChangeSolverSettings({
+                      ...solverSettings,
+                      onCallRestDaysAfter: clampRestDays(e.target.value),
+                    })
+                  }
+                  disabled={!solverSettings.onCallRestEnabled}
+                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                />
+              </label>
+            </div>
           </div>
         </div>
 

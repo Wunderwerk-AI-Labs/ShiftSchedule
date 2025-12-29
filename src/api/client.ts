@@ -53,6 +53,25 @@ export type Assignment = {
 
 export type MinSlots = { weekday: number; weekend: number };
 
+export type SolverSettings = {
+  allowMultipleShiftsPerDay: boolean;
+  enforceSameLocationPerDay: boolean;
+  onCallRestEnabled: boolean;
+  onCallRestClassId?: string;
+  onCallRestDaysBefore: number;
+  onCallRestDaysAfter: number;
+};
+
+export type SolverRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  ifShiftRowId: string;
+  dayDelta: -1 | 1;
+  thenType: "shiftRow" | "off";
+  thenShiftRowId?: string;
+};
+
 export type AppState = {
   locations?: Location[];
   locationsEnabled?: boolean;
@@ -65,6 +84,8 @@ export type AppState = {
   holidayYear?: number;
   holidays?: Holiday[];
   publishedWeekStartISOs?: string[];
+  solverSettings?: SolverSettings;
+  solverRules?: SolverRule[];
 };
 
 export type UserStateExport = {
@@ -109,6 +130,8 @@ export type PublicWebWeekResponse = {
   minSlotsByRowId?: Record<string, MinSlots>;
   slotOverridesByKey?: Record<string, number>;
   holidays?: Holiday[];
+  solverSettings?: SolverSettings;
+  solverRules?: SolverRule[];
 };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -286,6 +309,31 @@ export async function solveDay(
   if (res.status === 401) handleUnauthorized();
   if (!res.ok) {
     throw new Error(`Failed to solve day: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function solveWeek(
+  startISO: string,
+  options?: { endISO?: string; onlyFillRequired?: boolean },
+): Promise<{
+  startISO: string;
+  endISO: string;
+  assignments: Assignment[];
+  notes: string[];
+}> {
+  const res = await fetch(`${API_BASE}/v1/solve/week`, {
+    method: "POST",
+    headers: buildHeaders(),
+    body: JSON.stringify({
+      startISO,
+      endISO: options?.endISO,
+      only_fill_required: options?.onlyFillRequired ?? false,
+    }),
+  });
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    throw new Error(`Failed to solve week: ${res.status}`);
   }
   return res.json();
 }

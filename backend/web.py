@@ -209,6 +209,8 @@ def get_public_web_week(
         },
         "slotOverridesByKey": state.slotOverridesByKey,
         "holidays": holidays,
+        "solverSettings": state.solverSettings,
+        "solverRules": state.solverRules,
     }
     return Response(
         content=json.dumps(payload),

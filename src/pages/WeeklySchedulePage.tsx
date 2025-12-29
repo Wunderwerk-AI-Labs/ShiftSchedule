@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
 import AutomatedPlanningPanel from "../components/schedule/AutomatedPlanningPanel";
 import HelpView from "../components/schedule/HelpView";
@@ -6,6 +6,7 @@ import IcalExportModal from "../components/schedule/IcalExportModal";
 import ScheduleGrid from "../components/schedule/ScheduleGrid";
 import SettingsView from "../components/schedule/SettingsView";
 import TopBar from "../components/schedule/TopBar";
+import VacationOverviewModal from "../components/schedule/VacationOverviewModal";
 import WeekNavigator from "../components/schedule/WeekNavigator";
 import AdminUsersPanel from "../components/auth/AdminUsersPanel";
 import { ChevronLeftIcon, ChevronRightIcon } from "../components/schedule/icons";
@@ -20,12 +21,14 @@ import {
   rotateIcalToken,
   saveState,
   solveDay,
+  solveWeek,
   rotateWeb,
   unpublishIcal,
   unpublishWeb,
   type AuthUser,
   type Holiday,
   type IcalPublishStatus,
+  type SolverSettings,
   type WebPublishStatus,
 } from "../api/client";
 import {
@@ -35,6 +38,7 @@ import {
   Clinician,
   clinicians as defaultClinicians,
   defaultMinSlotsByRowId,
+  defaultSolverSettings,
   locationsEnabled as defaultLocationsEnabled,
   locations as defaultLocations,
   WorkplaceRow,
@@ -45,7 +49,11 @@ import { addDays, addWeeks, startOfWeek, toISODate } from "../lib/date";
 import { buildICalendar, type ICalEvent } from "../lib/ical";
 import {
   buildRenderedAssignmentMap,
+  buildShiftInterval,
   FREE_POOL_ID,
+  intervalsOverlap,
+  MANUAL_POOL_ID,
+  REST_DAY_POOL_ID,
   VACATION_POOL_ID,
 } from "../lib/schedule";
 import {
@@ -68,7 +76,6 @@ const CLASS_COLORS = [
   "bg-sky-500",
   "bg-lime-500",
 ];
-const MANUAL_POOL_ID = "pool-manual";
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => {
@@ -191,6 +198,10 @@ export default function WeeklySchedulePage({
     })),
   );
   const [editingClinicianId, setEditingClinicianId] = useState<string>("");
+  const [editingClinicianSection, setEditingClinicianSection] = useState<
+    "vacations" | null
+  >(null);
+  const [vacationOverviewOpen, setVacationOverviewOpen] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [loadedUserId, setLoadedUserId] = useState<string>("");
   const [solverNotice, setSolverNotice] = useState<string | null>(null);
@@ -198,15 +209,40 @@ export default function WeeklySchedulePage({
     current: number;
     total: number;
   } | null>(null);
+  const [autoPlanStartedAt, setAutoPlanStartedAt] = useState<number | null>(null);
+  const [autoPlanLastRunStats, setAutoPlanLastRunStats] = useState<{
+    totalDays: number;
+    durationMs: number;
+  } | null>(null);
   const [autoPlanError, setAutoPlanError] = useState<string | null>(null);
   const [autoPlanRunning, setAutoPlanRunning] = useState(false);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [holidayCountry, setHolidayCountry] = useState("DE");
   const [holidayYear, setHolidayYear] = useState(currentYear);
   const [publishedWeekStartISOs, setPublishedWeekStartISOs] = useState<string[]>([]);
+  const [solverSettings, setSolverSettings] =
+    useState<SolverSettings>(defaultSolverSettings);
   const [locationsEnabled, setLocationsEnabled] = useState(defaultLocationsEnabled);
+  const [ruleViolationsOpen, setRuleViolationsOpen] = useState(false);
+  const [activeRuleViolationId, setActiveRuleViolationId] = useState<string | null>(null);
+  const ruleViolationsRef = useRef<HTMLDivElement | null>(null);
 
   const isMobile = useMediaQuery("(max-width: 640px)");
+  useEffect(() => {
+    if (!ruleViolationsOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!ruleViolationsRef.current || ruleViolationsRef.current.contains(target)) return;
+      setRuleViolationsOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [ruleViolationsOpen]);
+  useEffect(() => {
+    if (!ruleViolationsOpen) {
+      setActiveRuleViolationId(null);
+    }
+  }, [ruleViolationsOpen]);
   const weekStart = useMemo(() => startOfWeek(anchorDate, 1), [anchorDate]);
   const currentWeekStartISO = useMemo(() => toISODate(weekStart), [weekStart]);
   const fullWeekDays = useMemo(
@@ -441,6 +477,16 @@ export default function WeeklySchedulePage({
     setWebPublishLoading(false);
   };
 
+  const openClinicianEditor = (clinicianId: string, section?: "vacations") => {
+    setEditingClinicianSection(section ?? null);
+    setEditingClinicianId(clinicianId);
+  };
+
+  const closeClinicianEditor = () => {
+    setEditingClinicianId("");
+    setEditingClinicianSection(null);
+  };
+
   const handlePublishSubscription = async () => {
     setIcalPublishError(null);
     setIcalPublishLoading(true);
@@ -552,8 +598,12 @@ export default function WeeklySchedulePage({
   };
 
   const renderAssignmentMap = useMemo(
-    () => buildRenderedAssignmentMap(assignmentMap, clinicians, displayDays),
-    [assignmentMap, clinicians, displayDays],
+    () =>
+      buildRenderedAssignmentMap(assignmentMap, clinicians, displayDays, {
+        scheduleRows,
+        solverSettings,
+      }),
+    [assignmentMap, clinicians, displayDays, scheduleRows, solverSettings],
   );
 
   const isOnVacation = (clinicianId: string, dateISO: string) => {
@@ -609,35 +659,46 @@ export default function WeeklySchedulePage({
   }) => {
     if (autoPlanRunning) return;
     setAutoPlanError(null);
-    const dateISOs = buildDateRange(args.startISO, args.endISO);
-    if (dateISOs.length === 0) {
+    const dateRange = buildDateRange(args.startISO, args.endISO);
+    if (dateRange.length === 0) {
       setAutoPlanError("Select a valid timeframe to run the solver.");
       return;
     }
     setAutoPlanRunning(true);
-    setAutoPlanProgress({ current: 0, total: dateISOs.length });
-    for (let index = 0; index < dateISOs.length; index += 1) {
-      const dateISO = dateISOs[index];
-      try {
-        const result = await solveDay(dateISO, {
-          onlyFillRequired: args.onlyFillRequired,
-        });
-        if (result.notes.length > 0) {
-          setSolverNotice(result.notes[0]);
-          window.setTimeout(() => setSolverNotice(null), 4000);
-        }
-        applySolverAssignments(result.assignments);
-      } catch {
-        setAutoPlanError(`Solver failed on ${formatEuropeanDate(dateISO)}.`);
-        setSolverNotice("Solver service is not responding.");
+    const startedAt = Date.now();
+    setAutoPlanStartedAt(startedAt);
+    setAutoPlanProgress({ current: 0, total: dateRange.length });
+    try {
+      const result = await solveWeek(args.startISO, {
+        endISO: args.endISO,
+        onlyFillRequired: args.onlyFillRequired,
+      });
+      if (result.notes.length > 0) {
+        setSolverNotice(result.notes.join(" "));
         window.setTimeout(() => setSolverNotice(null), 4000);
-        break;
-      } finally {
-        setAutoPlanProgress({ current: index + 1, total: dateISOs.length });
       }
+      const filtered = result.assignments.filter(
+        (a) => a.dateISO >= args.startISO && a.dateISO <= args.endISO,
+      );
+      applySolverAssignments(filtered);
+      setAutoPlanProgress({ current: dateRange.length, total: dateRange.length });
+      setAutoPlanLastRunStats({
+        totalDays: dateRange.length,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch {
+      setAutoPlanError(
+        `Solver failed for the selected timeframe starting ${formatEuropeanDate(
+          args.startISO,
+        )}.`,
+      );
+      setSolverNotice("Solver service is not responding.");
+      window.setTimeout(() => setSolverNotice(null), 4000);
+    } finally {
+      setAutoPlanRunning(false);
+      setAutoPlanProgress(null);
+      setAutoPlanStartedAt(null);
     }
-    setAutoPlanRunning(false);
-    setAutoPlanProgress(null);
   };
 
   const handleResetAutomatedRange = (args: { startISO: string; endISO: string }) => {
@@ -794,6 +855,237 @@ export default function WeeklySchedulePage({
     holidayDates,
   ]);
 
+  const ruleAssignmentContext = useMemo(() => {
+    const dateISOs = fullWeekDays.map(toISODate);
+    const dateSet = new Set(dateISOs);
+    const rowKindById = new Map(scheduleRows.map((row) => [row.id, row.kind]));
+    const assignmentsByClinicianDate = new Map<string, Map<string, Set<string>>>();
+    for (const [key, list] of assignmentMap.entries()) {
+      const [rowId, dateISO] = key.split("__");
+      if (!rowId || !dateISO || !dateSet.has(dateISO)) continue;
+      if (rowKindById.get(rowId) !== "class") continue;
+      for (const assignment of list) {
+        if (isOnVacation(assignment.clinicianId, dateISO)) continue;
+        let clinicianDates = assignmentsByClinicianDate.get(assignment.clinicianId);
+        if (!clinicianDates) {
+          clinicianDates = new Map();
+          assignmentsByClinicianDate.set(assignment.clinicianId, clinicianDates);
+        }
+        let rowSet = clinicianDates.get(dateISO);
+        if (!rowSet) {
+          rowSet = new Set();
+          clinicianDates.set(dateISO, rowSet);
+        }
+        rowSet.add(rowId);
+      }
+    }
+    return { dateISOs, dateSet, rowKindById, assignmentsByClinicianDate };
+  }, [fullWeekDays, scheduleRows, assignmentMap, clinicians]);
+
+  const ruleViolations = useMemo(() => {
+    const { dateISOs, dateSet, assignmentsByClinicianDate } = ruleAssignmentContext;
+    const classLabelById = new Map(classRows.map((row) => [row.id, row.name]));
+    const violations: Array<{
+      id: string;
+      clinicianId: string;
+      clinicianName: string;
+      summary: string;
+      assignmentKeys: string[];
+    }> = [];
+    const buildAssignmentKeys = (
+      clinicianId: string,
+      dateISO: string,
+      filterRows?: Set<string>,
+    ) => {
+      const rowSet = assignmentsByClinicianDate.get(clinicianId)?.get(dateISO);
+      if (!rowSet) return [];
+      const keys: string[] = [];
+      for (const rowId of rowSet) {
+        if (filterRows && !filterRows.has(rowId)) continue;
+        keys.push(`${rowId}__${dateISO}__${clinicianId}`);
+      }
+      return keys;
+    };
+
+    const restBefore = Math.max(0, solverSettings.onCallRestDaysBefore ?? 0);
+    const restAfter = Math.max(0, solverSettings.onCallRestDaysAfter ?? 0);
+    const onCallClassId = solverSettings.onCallRestClassId;
+    const onCallShiftRowIds = new Set(
+      scheduleRows
+        .filter(
+          (row) =>
+            row.kind === "class" && (row.parentId ?? row.id) === onCallClassId,
+        )
+        .map((row) => row.id),
+    );
+    const onCallLabel = onCallClassId
+      ? classLabelById.get(onCallClassId) ?? "On call"
+      : "On call";
+
+    if (
+      solverSettings.onCallRestEnabled &&
+      onCallShiftRowIds.size > 0 &&
+      (restBefore > 0 || restAfter > 0)
+    ) {
+      for (const clinician of clinicians) {
+        const clinicianDates = assignmentsByClinicianDate.get(clinician.id);
+        if (!clinicianDates) continue;
+        for (const dateISO of dateISOs) {
+          const assigned = clinicianDates.get(dateISO);
+          if (!assigned) continue;
+          const hasOnCall = Array.from(assigned).some((rowId) =>
+            onCallShiftRowIds.has(rowId),
+          );
+          if (!hasOnCall) continue;
+          for (let offset = 1; offset <= restBefore; offset += 1) {
+            const targetISO = shiftDateISO(dateISO, -offset);
+            if (!dateSet.has(targetISO)) continue;
+            const targetAssigned = clinicianDates.get(targetISO);
+            if (!targetAssigned || targetAssigned.size === 0) continue;
+            const assignmentKeys = [
+              ...buildAssignmentKeys(clinician.id, dateISO, onCallShiftRowIds),
+              ...buildAssignmentKeys(clinician.id, targetISO),
+            ];
+            if (assignmentKeys.length === 0) continue;
+            violations.push({
+              id: `rest-${clinician.id}-${dateISO}-${targetISO}-before-${offset}`,
+              clinicianId: clinician.id,
+              clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
+              summary: `Rest day required ${offset} day${offset === 1 ? "" : "s"} before ${onCallLabel} on ${formatEuropeanDate(
+                dateISO,
+              )}; assignment found on ${formatEuropeanDate(targetISO)}.`,
+              assignmentKeys,
+            });
+          }
+          for (let offset = 1; offset <= restAfter; offset += 1) {
+            const targetISO = shiftDateISO(dateISO, offset);
+            if (!dateSet.has(targetISO)) continue;
+            const targetAssigned = clinicianDates.get(targetISO);
+            if (!targetAssigned || targetAssigned.size === 0) continue;
+            const assignmentKeys = [
+              ...buildAssignmentKeys(clinician.id, dateISO, onCallShiftRowIds),
+              ...buildAssignmentKeys(clinician.id, targetISO),
+            ];
+            if (assignmentKeys.length === 0) continue;
+            violations.push({
+              id: `rest-${clinician.id}-${dateISO}-${targetISO}-after-${offset}`,
+              clinicianId: clinician.id,
+              clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
+              summary: `Rest day required ${offset} day${offset === 1 ? "" : "s"} after ${onCallLabel} on ${formatEuropeanDate(
+                dateISO,
+              )}; assignment found on ${formatEuropeanDate(targetISO)}.`,
+              assignmentKeys,
+            });
+          }
+        }
+      }
+    }
+
+    if (!solverSettings.allowMultipleShiftsPerDay) {
+      for (const clinician of clinicians) {
+        const clinicianDates = assignmentsByClinicianDate.get(clinician.id);
+        if (!clinicianDates) continue;
+        for (const [dateISO, rowSet] of clinicianDates.entries()) {
+          if (rowSet.size <= 1) continue;
+          const assignmentKeys = buildAssignmentKeys(clinician.id, dateISO);
+          if (assignmentKeys.length === 0) continue;
+          violations.push({
+            id: `multi-${clinician.id}-${dateISO}`,
+            clinicianId: clinician.id,
+            clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
+            summary: `Multiple shifts assigned on ${formatEuropeanDate(
+              dateISO,
+            )} while Allow multiple shifts per day is off.`,
+            assignmentKeys,
+          });
+        }
+      }
+    }
+
+    if (solverSettings.enforceSameLocationPerDay) {
+      for (const clinician of clinicians) {
+        const clinicianDates = assignmentsByClinicianDate.get(clinician.id);
+        if (!clinicianDates) continue;
+        for (const [dateISO, rowSet] of clinicianDates.entries()) {
+          if (rowSet.size <= 1) continue;
+          const locationIds = new Set<string>();
+          for (const rowId of rowSet) {
+            const row = rowById.get(rowId);
+            locationIds.add(row?.locationId ?? DEFAULT_LOCATION_ID);
+          }
+          if (locationIds.size <= 1) continue;
+          const assignmentKeys = buildAssignmentKeys(clinician.id, dateISO);
+          if (assignmentKeys.length === 0) continue;
+          violations.push({
+            id: `location-${clinician.id}-${dateISO}`,
+            clinicianId: clinician.id,
+            clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
+            summary: `Same-location rule violated on ${formatEuropeanDate(dateISO)}.`,
+            assignmentKeys,
+          });
+        }
+      }
+    }
+
+    const shiftIntervalsByRowId = new Map(
+      scheduleRows
+        .filter((row) => row.kind === "class")
+        .map((row) => [row.id, buildShiftInterval(row)]),
+    );
+    for (const clinician of clinicians) {
+      const clinicianDates = assignmentsByClinicianDate.get(clinician.id);
+      if (!clinicianDates) continue;
+      for (const [dateISO, rowSet] of clinicianDates.entries()) {
+        if (rowSet.size <= 1) continue;
+        const rowIds = Array.from(rowSet);
+        const overlapping = new Set<string>();
+        for (let i = 0; i < rowIds.length; i += 1) {
+          const intervalA = shiftIntervalsByRowId.get(rowIds[i]) ?? null;
+          if (!intervalA) continue;
+          for (let j = i + 1; j < rowIds.length; j += 1) {
+            const intervalB = shiftIntervalsByRowId.get(rowIds[j]) ?? null;
+            if (!intervalB) continue;
+            if (intervalsOverlap(intervalA, intervalB)) {
+              overlapping.add(rowIds[i]);
+              overlapping.add(rowIds[j]);
+            }
+          }
+        }
+        if (overlapping.size === 0) continue;
+        const assignmentKeys = Array.from(overlapping).map(
+          (rowId) => `${rowId}__${dateISO}__${clinician.id}`,
+        );
+        violations.push({
+          id: `overlap-${clinician.id}-${dateISO}`,
+          clinicianId: clinician.id,
+          clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
+          summary: `Overlapping shift times on ${formatEuropeanDate(dateISO)}.`,
+          assignmentKeys,
+        });
+      }
+    }
+
+    return violations;
+  }, [
+    solverSettings,
+    scheduleRows,
+    classRows,
+    clinicians,
+    clinicianNameById,
+    rowById,
+    ruleAssignmentContext,
+  ]);
+
+  const violatingAssignmentKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const violation of ruleViolations) {
+      for (const key of violation.assignmentKeys) {
+        keys.add(key);
+      }
+    }
+    return keys;
+  }, [ruleViolations]);
+
   const editingClinician = useMemo(
     () => clinicians.find((clinician) => clinician.id === editingClinicianId),
     [clinicians, editingClinicianId],
@@ -813,27 +1105,30 @@ export default function WeeklySchedulePage({
           const filteredRows = normalized.rows.filter(
             (row) => row.id !== "pool-not-working",
           );
-          const hasManualPool = filteredRows.some((row) => row.id === MANUAL_POOL_ID);
-          const nextRows = hasManualPool
-            ? filteredRows
-            : filteredRows.reduce<WorkplaceRow[]>((acc, row) => {
-                acc.push(row);
-                if (row.id === "pool-not-allocated") {
-                  acc.push({
-                    id: MANUAL_POOL_ID,
-                    name: "Pool",
-                    kind: "pool",
-                    dotColorClass: "bg-slate-300",
-                  });
-                }
-                return acc;
-              }, []);
-          if (!hasManualPool && nextRows.length === filteredRows.length) {
-            nextRows.unshift({
+          const insertAfter = (rows: WorkplaceRow[], afterId: string, row: WorkplaceRow) => {
+            const index = rows.findIndex((item) => item.id === afterId);
+            if (index === -1) return [...rows, row];
+            const next = [...rows];
+            next.splice(index + 1, 0, row);
+            return next;
+          };
+          let nextRows = filteredRows;
+          const hasManualPool = nextRows.some((row) => row.id === MANUAL_POOL_ID);
+          if (!hasManualPool) {
+            nextRows = insertAfter(nextRows, FREE_POOL_ID, {
               id: MANUAL_POOL_ID,
-              name: "Pool",
+              name: "Reserve Pool",
               kind: "pool",
               dotColorClass: "bg-slate-300",
+            });
+          }
+          const hasRestDayPool = nextRows.some((row) => row.id === REST_DAY_POOL_ID);
+          if (!hasRestDayPool) {
+            nextRows = insertAfter(nextRows, MANUAL_POOL_ID, {
+              id: REST_DAY_POOL_ID,
+              name: "Rest Day",
+              kind: "pool",
+              dotColorClass: "bg-slate-200",
             });
           }
           setRows(nextRows);
@@ -857,6 +1152,9 @@ export default function WeeklySchedulePage({
         if (normalized.minSlotsByRowId) setMinSlotsByRowId(normalized.minSlotsByRowId);
         if (normalized.slotOverridesByKey) {
           setSlotOverridesByKey(normalized.slotOverridesByKey);
+        }
+        if (normalized.solverSettings) {
+          setSolverSettings(normalized.solverSettings as SolverSettings);
         }
         if (normalized.holidays) setHolidays(normalized.holidays);
         if (normalized.holidayCountry) setHolidayCountry(normalized.holidayCountry);
@@ -891,6 +1189,7 @@ export default function WeeklySchedulePage({
       holidayCountry,
       holidayYear,
       publishedWeekStartISOs,
+      solverSettings,
     });
     const handle = window.setTimeout(() => {
       saveState(normalized).catch(() => {
@@ -910,6 +1209,7 @@ export default function WeeklySchedulePage({
     holidayCountry,
     holidayYear,
     publishedWeekStartISOs,
+    solverSettings,
     hasLoaded,
     currentUser.username,
   ]);
@@ -928,6 +1228,7 @@ export default function WeeklySchedulePage({
         holidayCountry,
         holidayYear,
         publishedWeekStartISOs,
+        solverSettings,
       });
       saveState(normalized).catch(() => {
         /* Backend optional during local-only dev */
@@ -1333,6 +1634,11 @@ export default function WeeklySchedulePage({
       ),
     );
   };
+
+  const handleChangeSolverSettings = (settings: SolverSettings) => {
+    setSolverSettings(settings);
+  };
+
   const handleAddHoliday = (holiday: Holiday) => {
     const trimmedName = holiday.name.trim();
     if (!holiday.dateISO || !trimmedName) return;
@@ -1392,6 +1698,57 @@ export default function WeeklySchedulePage({
       {openSlotsCount} Open Slots
     </span>
   );
+  const ruleViolationsCount = ruleViolations.length;
+  const ruleViolationsBadge =
+    ruleViolationsCount > 0 ? (
+      <div ref={ruleViolationsRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setRuleViolationsOpen((open) => !open)}
+          className={cx(
+            "inline-flex items-center self-start rounded-full px-2.5 py-1 text-[11px] font-normal ring-1 ring-inset sm:self-auto sm:px-3",
+            "bg-amber-50 text-amber-700 ring-amber-200 hover:bg-amber-100 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-500/40",
+          )}
+          aria-expanded={ruleViolationsOpen}
+        >
+          {ruleViolationsCount} Rule Violations
+        </button>
+        {ruleViolationsOpen ? (
+          <div className="absolute right-0 z-50 mt-2 w-80 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <div className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Rule violations in view
+            </div>
+            <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+              {ruleViolations.map((violation) => (
+                <button
+                  key={violation.id}
+                  type="button"
+                  onClick={() =>
+                    setActiveRuleViolationId((current) =>
+                      current === violation.id ? null : violation.id,
+                    )
+                  }
+                  className={cx(
+                    "w-full rounded-lg border px-2 py-1 text-left transition-colors",
+                    activeRuleViolationId === violation.id
+                      ? "border-rose-200 bg-rose-50 dark:border-rose-500/40 dark:bg-rose-900/30"
+                      : "border-slate-100 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900/70",
+                  )}
+                  aria-pressed={activeRuleViolationId === violation.id}
+                >
+                <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                  {violation.clinicianName}
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                  {violation.summary}
+                </div>
+              </button>
+            ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    ) : null;
   const publishToggle = (
     <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
       <span>Publish</span>
@@ -1446,8 +1803,10 @@ export default function WeeklySchedulePage({
             weekDays={displayDays}
             rows={scheduleRows}
             assignmentMap={renderAssignmentMap}
+            violatingAssignmentKeys={violatingAssignmentKeys}
             holidayDates={holidayDates}
             holidayNameByDate={holidayNameByDate}
+            solverSettings={solverSettings}
             header={
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1471,6 +1830,7 @@ export default function WeeklySchedulePage({
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {openSlotsBadge}
+                  {ruleViolationsBadge}
                   {publishToggle}
                 </div>
               </div>
@@ -1495,7 +1855,7 @@ export default function WeeklySchedulePage({
             onRemoveEmptySlot={({ rowId, dateISO }) => {
               adjustSlotOverride(rowId, dateISO, -1);
             }}
-            onClinicianClick={(clinicianId) => setEditingClinicianId(clinicianId)}
+            onClinicianClick={(clinicianId) => openClinicianEditor(clinicianId)}
             onCellClick={({ row, date }) => {
               if (row.kind !== "class") return;
               adjustSlotOverride(row.id, toISODate(date), 1);
@@ -1552,9 +1912,14 @@ export default function WeeklySchedulePage({
                   }
                 }
                 if (toRow.kind === "pool") {
-                  const isManualPool = toRow.id === MANUAL_POOL_ID;
+                  const isManualPool =
+                    toRow.id === MANUAL_POOL_ID || toRow.id === REST_DAY_POOL_ID;
                   if (isManualPool) {
-                    if (fromRow.kind === "class" || fromRow.id === MANUAL_POOL_ID) {
+                    if (
+                      fromRow.kind === "class" ||
+                      fromRow.id === MANUAL_POOL_ID ||
+                      fromRow.id === REST_DAY_POOL_ID
+                    ) {
                       const fromList = next.get(fromKey) ?? [];
                       const moving = fromList.find((a) => a.id === assignmentId);
                       if (!moving) return prev;
@@ -1581,23 +1946,32 @@ export default function WeeklySchedulePage({
                     return next;
                   }
 
-                  if (fromRow.kind === "class" || fromRow.id === MANUAL_POOL_ID) {
+                  if (
+                    fromRow.kind === "class" ||
+                    fromRow.id === MANUAL_POOL_ID ||
+                    fromRow.id === REST_DAY_POOL_ID
+                  ) {
                     removeAssignment(fromKey, assignmentId);
                   }
                   return next;
                 }
 
                 if (fromRow.kind === "pool") {
-                  if (fromRow.id === MANUAL_POOL_ID) {
+                  if (fromRow.id === MANUAL_POOL_ID || fromRow.id === REST_DAY_POOL_ID) {
                     removeAssignment(fromKey, assignmentId);
                   }
+                  const toList = next.get(toKey) ?? [];
+                  const alreadyInTarget = toList.some(
+                    (item) => item.clinicianId === clinicianId,
+                  );
+                  if (alreadyInTarget) return prev;
                   const alreadyAssigned = Array.from(next.entries()).some(([key, list]) => {
-                    const keyDate = key.split("__")[1];
+                    const [keyRowId, keyDate] = key.split("__");
                     if (keyDate !== dateISO) return false;
+                    const targetRow = rowById.get(keyRowId);
+                    if (!targetRow || targetRow.kind !== "class") return false;
                     return list.some((a) => a.clinicianId === clinicianId);
                   });
-                  if (alreadyAssigned) return prev;
-                  const toList = next.get(toKey) ?? [];
                   const newItem: Assignment = {
                     id: `as-${Date.now().toString(36)}-${clinicianId}`,
                     rowId: toRowId,
@@ -1615,6 +1989,10 @@ export default function WeeklySchedulePage({
                 if (nextFrom.length === 0) next.delete(fromKey);
                 else next.set(fromKey, nextFrom);
                 const toList = next.get(toKey) ?? [];
+                const alreadyInTarget = toList.some(
+                  (item) => item.clinicianId === clinicianId,
+                );
+                if (alreadyInTarget) return prev;
                 next.set(toKey, [...toList, { ...moving, rowId: toRowId, dateISO }]);
                 return next;
               });
@@ -1627,11 +2005,36 @@ export default function WeeklySchedulePage({
                 weekEndISO={toISODate(weekEndInclusive)}
                 isRunning={autoPlanRunning}
                 progress={autoPlanProgress}
+                startedAt={autoPlanStartedAt}
+                lastRunTotalDays={autoPlanLastRunStats?.totalDays ?? null}
+                lastRunDurationMs={autoPlanLastRunStats?.durationMs ?? null}
                 error={autoPlanError}
                 onRun={handleRunAutomatedPlanning}
                 onReset={handleResetAutomatedRange}
               />
-              <div className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-sm sm:px-6">
+              <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
+                <div className="flex flex-col gap-4">
+                  <div className="-mt-7 inline-flex self-start rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-normal text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                    Vacation Planner
+                  </div>
+                  <div className="text-sm text-slate-600 dark:text-slate-300">
+                    Review vacations across the year and jump into clinician edits.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setVacationOverviewOpen(true)}
+                    className={cx(
+                      "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-normal text-slate-900 shadow-sm",
+                      "hover:bg-slate-50 active:bg-slate-100",
+                      "disabled:cursor-not-allowed disabled:opacity-70",
+                      "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+                    )}
+                  >
+                    Open Vacation Planner
+                  </button>
+                </div>
+              </div>
+              <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
                 <div className="flex flex-col gap-4">
                   <div className="-mt-7 inline-flex self-start rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-normal text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
                     Export
@@ -1793,6 +2196,8 @@ export default function WeeklySchedulePage({
             onAddLocation={handleAddLocation}
             onRenameLocation={handleRenameLocation}
             onRemoveLocation={handleRemoveLocation}
+            solverSettings={solverSettings}
+            onChangeSolverSettings={handleChangeSolverSettings}
             onToggleLocationsEnabled={handleToggleLocationsEnabled}
             onAddClinician={(name, workingHoursPerWeek) => {
               const slug = name
@@ -1812,7 +2217,7 @@ export default function WeeklySchedulePage({
                 },
               ]);
             }}
-            onEditClinician={(clinicianId) => setEditingClinicianId(clinicianId)}
+            onEditClinician={(clinicianId) => openClinicianEditor(clinicianId)}
             onRemoveClinician={(clinicianId) => {
               setClinicians((prev) =>
                 prev.filter((clinician) => clinician.id !== clinicianId),
@@ -1827,9 +2232,9 @@ export default function WeeklySchedulePage({
                 }
                 return next;
               });
-              setEditingClinicianId((current) =>
-                current === clinicianId ? "" : current,
-              );
+              if (editingClinicianId === clinicianId) {
+                closeClinicianEditor();
+              }
             }}
             onChangeHolidayCountry={setHolidayCountry}
             onChangeHolidayYear={setHolidayYear}
@@ -1845,11 +2250,19 @@ export default function WeeklySchedulePage({
         <HelpView />
       )}
 
+      <VacationOverviewModal
+        open={vacationOverviewOpen}
+        onClose={() => setVacationOverviewOpen(false)}
+        clinicians={clinicians}
+        onSelectClinician={(clinicianId) => openClinicianEditor(clinicianId, "vacations")}
+      />
+
       <ClinicianEditModal
         open={editingClinicianId !== ""}
-        onClose={() => setEditingClinicianId("")}
+        onClose={closeClinicianEditor}
         clinician={editingClinician ?? null}
         classRows={classRows}
+        initialSection={editingClinicianSection ?? undefined}
         onToggleQualification={handleToggleQualification}
         onReorderQualification={handleReorderQualification}
         onAddVacation={handleAddVacation}

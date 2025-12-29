@@ -6,6 +6,7 @@ import {
   Assignment,
   buildAssignmentMap,
   Clinician,
+  defaultSolverSettings,
   WorkplaceRow,
   locations as defaultLocations,
 } from "../data/mockData";
@@ -91,6 +92,7 @@ export default function PublicWeekPage({ token, theme }: PublicWeekPageProps) {
       minSlotsByRowId: data.minSlotsByRowId ?? {},
       slotOverridesByKey: data.slotOverridesByKey ?? {},
       holidays: data.holidays ?? [],
+      solverSettings: data.solverSettings ?? defaultSolverSettings,
       publishedWeekStartISOs: [],
     });
     return normalizedState.state;
@@ -112,8 +114,12 @@ export default function PublicWeekPage({ token, theme }: PublicWeekPageProps) {
     return buildAssignmentMap(normalized.assignments as Assignment[]);
   }, [normalized]);
   const renderAssignmentMap = useMemo(
-    () => buildRenderedAssignmentMap(assignmentMap, clinicians, weekDays),
-    [assignmentMap, clinicians, weekDays],
+    () =>
+      buildRenderedAssignmentMap(assignmentMap, clinicians, weekDays, {
+        scheduleRows,
+        solverSettings: normalized?.solverSettings ?? defaultSolverSettings,
+      }),
+    [assignmentMap, clinicians, weekDays, scheduleRows, normalized?.solverSettings],
   );
   const holidayDates = useMemo(
     () => new Set((normalized?.holidays ?? []).map((holiday) => holiday.dateISO)),
@@ -183,6 +189,7 @@ export default function PublicWeekPage({ token, theme }: PublicWeekPageProps) {
           assignmentMap={renderAssignmentMap}
           holidayDates={holidayDates}
           holidayNameByDate={holidayNameByDate}
+          solverSettings={normalized?.solverSettings ?? defaultSolverSettings}
           readOnly
           header={null}
           separatorBeforeRowIds={poolSeparatorId ? [poolSeparatorId] : []}

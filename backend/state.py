@@ -19,6 +19,8 @@ from .models import (
     Holiday,
     Location,
     MinSlots,
+    SolverRule,
+    SolverSettings,
     SubShift,
     UserStateExport,
     VacationRange,
@@ -165,6 +167,7 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
 
     class_rows: List[WorkplaceRow] = []
     sub_shift_ids_by_class: Dict[str, set[str]] = {}
+    row_ids = {row.id for row in state.rows}
     for row in state.rows:
         if row.kind != "class":
             continue
@@ -184,15 +187,41 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
         sub_shift_ids_by_class[row.id] = {shift.id for shift in row.subShifts}
 
     class_row_ids = {row.id for row in class_rows}
+    fallback_shift_id_by_class = {
+        row.id: (row.subShifts[0].id if row.subShifts else "s1") for row in class_rows
+    }
 
     next_assignments: List[Assignment] = []
     for assignment in state.assignments:
-        if assignment.rowId in class_row_ids and SHIFT_ROW_SEPARATOR not in assignment.rowId:
+        row_id = assignment.rowId
+        if row_id in class_row_ids and SHIFT_ROW_SEPARATOR not in row_id:
+            fallback = fallback_shift_id_by_class.get(row_id, "s1")
             assignment = assignment.model_copy(
-                update={"rowId": _build_shift_row_id(assignment.rowId, "s1")}
+                update={"rowId": _build_shift_row_id(row_id, fallback)}
             )
+            row_id = assignment.rowId
             changed = True
-        next_assignments.append(assignment)
+        if SHIFT_ROW_SEPARATOR in row_id:
+            class_id, sub_shift_id = _parse_shift_row_id(row_id)
+            if class_id in class_row_ids:
+                class_shift_ids = sub_shift_ids_by_class.get(class_id, set())
+                if not sub_shift_id or sub_shift_id not in class_shift_ids:
+                    fallback = fallback_shift_id_by_class.get(class_id)
+                    if not fallback:
+                        changed = True
+                        continue
+                    assignment = assignment.model_copy(
+                        update={"rowId": _build_shift_row_id(class_id, fallback)}
+                    )
+                    changed = True
+                next_assignments.append(assignment)
+                continue
+            changed = True
+            continue
+        if row_id in class_row_ids or row_id.startswith("pool-") or row_id in row_ids:
+            next_assignments.append(assignment)
+        else:
+            changed = True
     state.assignments = next_assignments
 
     min_slots = dict(state.minSlotsByRowId)
@@ -250,6 +279,63 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
         next_overrides[next_key] = next_overrides.get(next_key, 0) + int(value)
     if overrides != next_overrides:
         state.slotOverridesByKey = next_overrides
+        changed = True
+
+    # Solver settings defaults
+    solver_settings = state.solverSettings or {}
+    default_settings = SolverSettings().model_dump()
+    merged_settings = {**default_settings, **solver_settings}
+    merged_settings["allowMultipleShiftsPerDay"] = bool(
+        merged_settings.get("allowMultipleShiftsPerDay", False)
+    )
+    merged_settings["enforceSameLocationPerDay"] = bool(
+        merged_settings.get("enforceSameLocationPerDay", False)
+    )
+    merged_settings["onCallRestEnabled"] = bool(
+        merged_settings.get("onCallRestEnabled", False)
+    )
+    on_call_class_id = merged_settings.get("onCallRestClassId")
+    if not isinstance(on_call_class_id, str) or on_call_class_id not in class_row_ids:
+        merged_settings["onCallRestClassId"] = class_rows[0].id if class_rows else None
+
+    def _clamp_days(value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 1
+        return max(0, min(7, parsed))
+
+    merged_settings["onCallRestDaysBefore"] = _clamp_days(
+        merged_settings.get("onCallRestDaysBefore", 1)
+    )
+    merged_settings["onCallRestDaysAfter"] = _clamp_days(
+        merged_settings.get("onCallRestDaysAfter", 1)
+    )
+    if merged_settings != solver_settings:
+        state.solverSettings = merged_settings
+        changed = True
+
+    # Solver rules validation
+    valid_shift_row_ids = {
+        _build_shift_row_id(row.id, shift.id) for row in class_rows for shift in row.subShifts
+    }
+    normalized_rules: List[Dict[str, Any]] = []
+    for raw_rule in state.solverRules or []:
+        try:
+            rule = SolverRule.model_validate(raw_rule)
+        except Exception:
+            changed = True
+            continue
+        enabled = rule.enabled
+        if rule.ifShiftRowId not in valid_shift_row_ids:
+            enabled = False
+        if rule.thenType == "shiftRow" and rule.thenShiftRowId not in valid_shift_row_ids:
+            enabled = False
+        normalized_rules.append({**rule.model_dump(), "enabled": enabled})
+        if enabled != rule.enabled:
+            changed = True
+    if normalized_rules != (state.solverRules or []):
+        state.solverRules = normalized_rules
         changed = True
 
     return state, changed
@@ -367,6 +453,12 @@ def _default_state() -> AppState:
             dotColorClass="bg-slate-300",
         ),
         WorkplaceRow(
+            id="pool-rest-day",
+            name="Rest Day",
+            kind="pool",
+            dotColorClass="bg-slate-200",
+        ),
+        WorkplaceRow(
             id="pool-vacation",
             name="Vacation",
             kind="pool",
@@ -436,6 +528,8 @@ def _default_state() -> AppState:
     return AppState(
         locations=[default_location],
         locationsEnabled=True,
+        solverSettings=SolverSettings().model_dump(),
+        solverRules=[],
         rows=rows,
         clinicians=clinicians,
         assignments=[],

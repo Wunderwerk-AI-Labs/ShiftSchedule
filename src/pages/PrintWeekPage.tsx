@@ -6,6 +6,7 @@ import {
   buildAssignmentMap,
   Clinician,
   defaultMinSlotsByRowId,
+  defaultSolverSettings,
   WorkplaceRow,
   locations as defaultLocations,
 } from "../data/mockData";
@@ -35,6 +36,7 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
   const [minSlotsByRowId, setMinSlotsByRowId] = useState(defaultMinSlotsByRowId);
   const [slotOverridesByKey, setSlotOverridesByKey] = useState<Record<string, number>>({});
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [solverSettings, setSolverSettings] = useState(defaultSolverSettings);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,8 +82,12 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
   };
 
   const renderAssignmentMap = useMemo(
-    () => buildRenderedAssignmentMap(assignmentMap, clinicians, weekDays),
-    [assignmentMap, clinicians, weekDays],
+    () =>
+      buildRenderedAssignmentMap(assignmentMap, clinicians, weekDays, {
+        scheduleRows,
+        solverSettings,
+      }),
+    [assignmentMap, clinicians, weekDays, scheduleRows, solverSettings],
   );
 
   useEffect(() => {
@@ -111,6 +117,15 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
         }
         if (normalized.minSlotsByRowId) setMinSlotsByRowId(normalized.minSlotsByRowId);
         if (normalized.slotOverridesByKey) setSlotOverridesByKey(normalized.slotOverridesByKey);
+        if (normalized.solverSettings) {
+          setSolverSettings({
+            ...defaultSolverSettings,
+            ...normalized.solverSettings,
+            onCallRestClassId:
+              normalized.solverSettings.onCallRestClassId ??
+              defaultSolverSettings.onCallRestClassId,
+          });
+        }
         if (normalized.holidays) setHolidays(normalized.holidays);
       })
       .catch(() => {
@@ -162,6 +177,8 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
         assignmentMap={renderAssignmentMap}
         holidayDates={holidayDates}
         holidayNameByDate={holidayNameByDate}
+        solverSettings={solverSettings}
+        readOnly
         header={
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">

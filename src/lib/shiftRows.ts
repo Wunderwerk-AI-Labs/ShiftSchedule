@@ -1,5 +1,6 @@
 import type {
   AppState,
+  Assignment,
   Location,
   MinSlots,
   SubShift,
@@ -9,6 +10,9 @@ import type {
 export const SHIFT_ROW_SEPARATOR = "::";
 export const DEFAULT_LOCATION_ID = "loc-default";
 export const DEFAULT_LOCATION_NAME = "Default";
+const FREE_POOL_ID = "pool-not-allocated";
+const MANUAL_POOL_ID = "pool-manual";
+const REST_DAY_POOL_ID = "pool-rest-day";
 const DEFAULT_SUB_SHIFT_MINUTES = 8 * 60;
 const DEFAULT_SUB_SHIFT_START_MINUTES = 8 * 60;
 
@@ -155,13 +159,66 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
   if (state.locationsEnabled !== locationsEnabled) {
     changed = true;
   }
+  const insertAfter = (rows: WorkplaceRow[], afterId: string, row: WorkplaceRow) => {
+    const index = rows.findIndex((item) => item.id === afterId);
+    if (index === -1) return [...rows, row];
+    const next = [...rows];
+    next.splice(index + 1, 0, row);
+    return next;
+  };
+  let baseRows = [...(state.rows ?? [])];
+  const hasRestDayPool = baseRows.some((row) => row.id === REST_DAY_POOL_ID);
+  if (!hasRestDayPool) {
+    const restDayRow: WorkplaceRow = {
+      id: REST_DAY_POOL_ID,
+      name: "Rest Day",
+      kind: "pool",
+      dotColorClass: "bg-slate-200",
+    };
+    if (baseRows.some((row) => row.id === MANUAL_POOL_ID)) {
+      baseRows = insertAfter(baseRows, MANUAL_POOL_ID, restDayRow);
+    } else if (baseRows.some((row) => row.id === FREE_POOL_ID)) {
+      baseRows = insertAfter(baseRows, FREE_POOL_ID, restDayRow);
+    } else {
+      baseRows = [...baseRows, restDayRow];
+    }
+    changed = true;
+  }
+  const defaultSolverSettings = {
+    allowMultipleShiftsPerDay: false,
+    enforceSameLocationPerDay: false,
+    onCallRestEnabled: false,
+    onCallRestClassId: "",
+    onCallRestDaysBefore: 1,
+    onCallRestDaysAfter: 1,
+  };
+  const solverSettings = {
+    ...defaultSolverSettings,
+    ...(state.solverSettings ?? {}),
+  };
+  const classIds = (state.rows ?? [])
+    .filter((row) => row.kind === "class")
+    .map((row) => row.id);
+  if (!solverSettings.onCallRestClassId || !classIds.includes(solverSettings.onCallRestClassId)) {
+    solverSettings.onCallRestClassId = classIds[0] ?? "";
+  }
+  const clampDays = (value: unknown) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 1;
+    return Math.max(0, Math.min(7, Math.trunc(parsed)));
+  };
+  solverSettings.onCallRestDaysBefore = clampDays(solverSettings.onCallRestDaysBefore);
+  solverSettings.onCallRestDaysAfter = clampDays(solverSettings.onCallRestDaysAfter);
+  if (JSON.stringify(solverSettings) !== JSON.stringify(state.solverSettings ?? {})) {
+    changed = true;
+  }
   const locations = ensureLocations(state.locations);
   if (!state.locations || state.locations.length !== locations.length) {
     changed = true;
   }
   const locationIdSet = new Set(locations.map((loc) => loc.id));
 
-  const rows = (state.rows ?? []).map((row) => {
+  const rows = baseRows.map((row) => {
     if (row.kind !== "class") return row;
     const normalizedShifts = normalizeSubShifts(row.subShifts);
     const usedSubShiftIds = new Set<string>();
@@ -196,6 +253,10 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
 
   const classRows = rows.filter((row) => row.kind === "class");
   const classRowIds = new Set(classRows.map((row) => row.id));
+  const rowIds = new Set(rows.map((row) => row.id));
+  const fallbackShiftIdByClass = new Map(
+    classRows.map((row) => [row.id, (row.subShifts ?? [])[0]?.id ?? "s1"]),
+  );
   const subShiftIdsByClass = new Map(
     classRows.map((row) => [
       row.id,
@@ -203,16 +264,39 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
     ]),
   );
 
-  const assignments = (state.assignments ?? []).map((assignment) => {
-    if (classRowIds.has(assignment.rowId) && !assignment.rowId.includes(SHIFT_ROW_SEPARATOR)) {
+  const assignments: Assignment[] = [];
+  for (const assignment of state.assignments ?? []) {
+    let rowId = assignment.rowId;
+    if (classRowIds.has(rowId) && !rowId.includes(SHIFT_ROW_SEPARATOR)) {
+      const fallback = fallbackShiftIdByClass.get(rowId) ?? "s1";
+      rowId = buildShiftRowId(rowId, fallback);
       changed = true;
-      return {
-        ...assignment,
-        rowId: buildShiftRowId(assignment.rowId, "s1"),
-      };
     }
-    return assignment;
-  });
+    if (rowId.includes(SHIFT_ROW_SEPARATOR)) {
+      const { classId, subShiftId } = parseShiftRowId(rowId);
+      if (!classId || !classRowIds.has(classId)) {
+        changed = true;
+        continue;
+      }
+      const classShiftIds = subShiftIdsByClass.get(classId);
+      if (!subShiftId || !classShiftIds?.has(subShiftId)) {
+        const fallback = classShiftIds ? Array.from(classShiftIds)[0] : undefined;
+        if (!fallback) {
+          changed = true;
+          continue;
+        }
+        rowId = buildShiftRowId(classId, fallback);
+        changed = true;
+      }
+      assignments.push({ ...assignment, rowId });
+      continue;
+    }
+    if (classRowIds.has(rowId) || rowId.startsWith("pool-") || rowIds.has(rowId)) {
+      assignments.push({ ...assignment, rowId });
+    } else {
+      changed = true;
+    }
+  }
 
   const minSlotsByRowId: Record<string, MinSlots> = {
     ...(state.minSlotsByRowId ?? {}),
@@ -284,6 +368,8 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
       assignments,
       minSlotsByRowId,
       slotOverridesByKey,
+      solverSettings,
+      solverRules: state.solverRules ?? [],
     },
     changed,
   };
