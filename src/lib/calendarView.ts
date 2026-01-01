@@ -1,5 +1,4 @@
-import type { WeeklyCalendarTemplate } from "../api/client";
-import type { DayType } from "../data/mockData";
+import type { DayType, WeeklyCalendarTemplate } from "../api/client";
 import type { ScheduleRow } from "./shiftRows";
 import { getDayType } from "./dayTypes";
 import { buildShiftInterval, formatTimeRangeLabel } from "./schedule";

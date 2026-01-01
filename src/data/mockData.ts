@@ -1,4 +1,4 @@
-import type { WeeklyCalendarTemplate } from "../api/client";
+import type { PreferredWorkingTimes, WeeklyCalendarTemplate } from "../api/client";
 import { addDays, startOfWeek, toISODate } from "../lib/date";
 
 export type WorkplaceRow = {
@@ -45,15 +45,7 @@ export type Clinician = {
   qualifiedClassIds: string[];
   preferredClassIds: string[];
   vacations: VacationPeriod[];
-  preferredWorkingTimes?: {
-    mon: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-    tue: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-    wed: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-    thu: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-    fri: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-    sat: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-    sun: { startTime: string; endTime: string; requirement: "none" | "preference" | "mandatory" };
-  };
+  preferredWorkingTimes?: PreferredWorkingTimes;
   workingHoursPerWeek?: number;
 };
 

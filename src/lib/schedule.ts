@@ -431,7 +431,7 @@ export function buildRenderedAssignmentMap(
           const { intervals, mixed } = getColumnIntervalsForDayType(dayType);
           if (!mixed && intervals.length > 0) {
             const coversAll = intervals.every((interval) =>
-              (clinicianAssignments ?? []).some((assignedInterval) =>
+              (clinicianAssignments ?? []).some((assignedInterval: TimeRange) =>
                 intervalsOverlap(interval, assignedInterval),
               ),
             );

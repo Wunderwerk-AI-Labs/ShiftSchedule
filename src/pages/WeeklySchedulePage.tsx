@@ -2093,7 +2093,7 @@ export default function WeeklySchedulePage({
             slotOverridesByKey={slotOverridesByKey}
             enableSlotOverrides={false}
             onClinicianClick={(clinicianId) => openClinicianEditor(clinicianId)}
-            onMoveWithinDay={({
+            onMoveWithinDay={({ 
               dateISO,
               fromRowId,
               toRowId,
@@ -2132,11 +2132,11 @@ export default function WeeklySchedulePage({
                 const isToVacation = toRow.id === VACATION_POOL_ID;
                 const isFromVacation = fromRow.id === VACATION_POOL_ID;
 
-                if (isToVacation) {
-                  addVacationDay(clinicianId, dateISO);
-                  removeAssignmentsForDate(clinicianId, dateISO);
-                  return next;
-                }
+              if (isToVacation) {
+                addVacationDay(clinicianId, dateISO);
+                removeAssignmentsForDate(clinicianId, dateISO);
+                return next;
+              }
 
                 if (isFromVacation) {
                   removeVacationDay(clinicianId, dateISO);
@@ -2231,6 +2231,7 @@ export default function WeeklySchedulePage({
                 return next;
               });
             }}
+            onCellClick={() => {}}
           />
           <div className="mx-auto w-full max-w-7xl px-4 pb-8 sm:px-6 sm:pb-10">
             <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-start">

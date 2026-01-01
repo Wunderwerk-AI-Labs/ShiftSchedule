@@ -998,8 +998,8 @@ function RowSection({
                                 assignedIntervals.some((interval) =>
                                   intervalsOverlap(interval, segment.interval),
                                 )
-                                  ? "taken"
-                                  : "free",
+                                  ? ("taken" as const)
+                                  : ("free" as const),
                             }))
                           : undefined;
                       const violationKey = `${assignment.rowId}__${assignment.dateISO}__${assignment.clinicianId}`;
