@@ -156,11 +156,17 @@ export function buildRenderedAssignmentMap(
       .map(([rowId]) => rowId),
   );
   const shiftIntervalsByRowId = new Map<string, TimeRange>();
+  const shiftIntervalsByDayType = new Map<string, TimeRange[]>();
   for (const row of scheduleRows) {
     if (row.kind !== "class") continue;
     const interval = buildShiftInterval(row);
     if (!interval) continue;
     shiftIntervalsByRowId.set(row.id, interval);
+    if (row.dayType) {
+      const list = shiftIntervalsByDayType.get(row.dayType) ?? [];
+      list.push(interval);
+      shiftIntervalsByDayType.set(row.dayType, list);
+    }
   }
   const allShiftIntervals = Array.from(shiftIntervalsByRowId.values());
   const daySpan = allShiftIntervals.length
@@ -336,10 +342,31 @@ export function buildRenderedAssignmentMap(
     for (const [key, list] of next.entries()) {
       const [rowId, dateISO] = key.split("__");
       if (!rowId || !dateISO) continue;
+      const rowKind =
+        rowKindById.get(rowId) ?? (rowId.startsWith("pool-") ? "pool" : "class");
+      if (rowKind !== "pool") continue;
       const offSet = offByDate.get(dateISO);
       if (!offSet || offSet.size === 0) continue;
       if (rowId === REST_DAY_POOL_ID || rowId === VACATION_POOL_ID) continue;
       const filtered = list.filter((item) => !offSet.has(item.clinicianId));
+      if (filtered.length !== list.length) {
+        const restKey = `${REST_DAY_POOL_ID}__${dateISO}`;
+        const restList = next.get(restKey) ?? [];
+        const restSet = new Set(restList.map((item) => item.clinicianId));
+        for (const item of list) {
+          if (!offSet.has(item.clinicianId)) continue;
+          if (restSet.has(item.clinicianId)) continue;
+          restList.push({
+            ...item,
+            id: `pool-${REST_DAY_POOL_ID}-${item.clinicianId}-${dateISO}`,
+            rowId: REST_DAY_POOL_ID,
+          });
+          restSet.add(item.clinicianId);
+        }
+        if (restList.length > 0) {
+          next.set(restKey, restList);
+        }
+      }
       if (filtered.length === 0) {
         next.delete(key);
       } else if (filtered.length !== list.length) {
@@ -414,12 +441,14 @@ export function buildRenderedAssignmentMap(
         const hasAnyAssignment = assignedSet.has(clinician.id);
         const clinicianAssignments = assigned.get(clinician.id);
         const hasAssignments = Boolean(clinicianAssignments?.length);
+        const dayIntervals =
+          shiftIntervalsByDayType.get(dayType) ?? allShiftIntervals;
         if (!solverSettings.allowMultipleShiftsPerDay && hasAnyAssignment) continue;
         if (
           solverSettings.allowMultipleShiftsPerDay &&
           hasAnyAssignment &&
           (unknownSet.has(clinician.id) ||
-            !hasFreeShift(clinicianAssignments ?? [], allShiftIntervals))
+            !hasFreeShift(clinicianAssignments ?? [], dayIntervals))
         ) {
           continue;
         }

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { expect, test } from "./fixtures";
 import { attachStepScreenshot } from "./utils/screenshots";
 import { fetchAuthToken, seedAuthToken } from "./utils/auth";
@@ -41,6 +42,26 @@ const getDayTypeForISO = (dateISO: string) => {
 
 const slotRowIdForDate = (baseRowId: string, dateISO: string) =>
   `${baseRowId}__${getDayTypeForISO(dateISO)}`;
+
+const countPdfPages = (buffer: Buffer) => {
+  const text = buffer.toString("latin1");
+  const matches = text.match(/\/Type\s*\/Page\b(?!s)/g);
+  return matches ? matches.length : 0;
+};
+
+const PRINT_DPI = 96;
+const MM_TO_PX = PRINT_DPI / 25.4;
+const PRINT_PAGE_WIDTH_MM = 297;
+const PRINT_PAGE_HEIGHT_MM = 210;
+const PRINT_PAGE_MARGIN_MM = 6;
+const getPrintableAreaPx = () => {
+  const longEdge = (PRINT_PAGE_WIDTH_MM - PRINT_PAGE_MARGIN_MM * 2) * MM_TO_PX;
+  const shortEdge = (PRINT_PAGE_HEIGHT_MM - PRINT_PAGE_MARGIN_MM * 2) * MM_TO_PX;
+  return {
+    landscape: { width: longEdge, height: shortEdge },
+    portrait: { width: shortEdge, height: longEdge },
+  };
+};
 
 type TestClassRow = {
   id: string;
@@ -291,6 +312,23 @@ test.describe.serial("app flows", () => {
       page.getByRole("button", { name: "Open Vacation Planner" }),
     ).toBeVisible();
     await expect(page.locator('[data-schedule-grid="true"]')).toBeVisible();
+    const shell = page.locator('[data-schedule-shell="true"]');
+    await expect(shell).toBeVisible();
+    const cornersAreClipped = await shell.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const inset = 2;
+      const points = [
+        [rect.left + inset, rect.top + inset],
+        [rect.right - inset, rect.top + inset],
+        [rect.left + inset, rect.bottom - inset],
+        [rect.right - inset, rect.bottom - inset],
+      ];
+      return points.every(([x, y]) => {
+        const element = document.elementFromPoint(x, y);
+        return element ? !element.closest('[data-schedule-grid="true"]') : true;
+      });
+    });
+    expect(cornersAreClipped).toBe(true);
   });
 
   test("settings view opens from top bar", async ({ page }, testInfo) => {
@@ -299,6 +337,52 @@ test.describe.serial("app flows", () => {
     await attachStepScreenshot(page, testInfo, "settings-open");
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await expect(page.getByText("Weekly Calendar Template")).toBeVisible();
+  });
+
+  test("template delete buttons appear on hover (row + column)", async ({
+    page,
+    request,
+  }, testInfo) => {
+    const locationId = "loc-default";
+    const rowBandId = "row-1";
+    const colBandId = `${locationId}-col-mon-1`;
+    const state = buildTemplateState({
+      dateISO: testDateISO,
+      classRows: [{ id: primaryClassId, name: "MRI" }],
+      blocks: [{ id: "block-1", sectionId: primaryClassId }],
+      rowBands: [{ id: rowBandId, label: "Row 1", order: 1 }],
+      slots: [
+        {
+          id: "slot-1",
+          locationId,
+          rowBandId,
+          colBandId,
+          blockId: "block-1",
+          requiredSlots: 1,
+          startTime: "08:00",
+          endTime: "16:00",
+          endDayOffset: 0,
+        },
+      ],
+      columnCounts: { mon: 1 },
+    });
+    await request.post(`${API_BASE}/v1/state`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: state,
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Settings" }).click();
+    const rowCell = page.locator(`[data-row-band-id="${rowBandId}"]`).first();
+    const deleteRow = page.getByTestId(`delete-row-${locationId}-${rowBandId}`);
+    await expect(deleteRow).toBeHidden();
+    await rowCell.hover();
+    await expect(deleteRow).toBeVisible();
+    const columnCell = page.locator('[data-column-key="mon-0"]').first();
+    const deleteColumn = page.getByTestId("delete-column-mon-0");
+    await expect(deleteColumn).toBeHidden();
+    await columnCell.hover();
+    await expect(deleteColumn).toBeVisible();
+    await attachStepScreenshot(page, testInfo, "template-delete-hover");
   });
 
   test("vacation overview modal opens", async ({ page }, testInfo) => {
@@ -909,5 +993,119 @@ test.describe.serial("ui login flows", () => {
     await expect(
       secondCell.locator('[data-assignment-pill="true"]'),
     ).toHaveClass(/border-rose-300/);
+  });
+
+  test("pdf export fits the full weekly table on one page", async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.setTimeout(60000);
+    const locationId = "loc-default";
+    const dayType = getDayTypeForISO(testDateISO);
+    const colBandId = `${locationId}-col-${dayType}-1`;
+    const rowBands = Array.from({ length: 12 }, (_, index) => ({
+      id: `${locationId}-row-${index + 1}`,
+      label: `Row ${index + 1}`,
+      order: index + 1,
+    }));
+    const slots = rowBands.map((rowBand, index) => ({
+      id: `slot-${index + 1}`,
+      locationId,
+      rowBandId: rowBand.id,
+      colBandId,
+      blockId: "block-1",
+      requiredSlots: 1,
+      startTime: "08:00",
+      endTime: "16:00",
+      endDayOffset: 0,
+    }));
+    await request.post(`${API_BASE}/v1/state`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: buildTemplateState({
+        dateISO: testDateISO,
+        classRows: [{ id: primaryClassId, name: "MRI" }],
+        blocks: [{ id: "block-1", sectionId: primaryClassId }],
+        rowBands,
+        slots,
+      }),
+    });
+    await seedAuthToken(page, token);
+    await page.emulateMedia({ media: "print" });
+    await page.goto(`/print/week?start=${encodeURIComponent(testDateISO)}`);
+    await page.waitForFunction("window.__PDF_READY__ === true");
+    await attachStepScreenshot(page, testInfo, "print-week-preview");
+    const response = await request.get(
+      `${API_BASE}/v1/pdf/week?start=${encodeURIComponent(testDateISO)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    expect(response.ok()).toBeTruthy();
+    const buffer = Buffer.from(await response.body());
+    expect(buffer.toString("ascii", 0, 4)).toBe("%PDF");
+    await testInfo.attach("week.pdf", {
+      body: buffer,
+      contentType: "application/pdf",
+    });
+    const pageCount = countPdfPages(buffer);
+    expect(pageCount).toBe(1);
+  });
+
+  test("print layout fits within one A4 page and fills at least one dimension", async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.setTimeout(60000);
+    const locationId = "loc-default";
+    const dayType = getDayTypeForISO(testDateISO);
+    const colBandId = `${locationId}-col-${dayType}-1`;
+    const rowBands = Array.from({ length: 12 }, (_, index) => ({
+      id: `${locationId}-row-${index + 1}`,
+      label: `Row ${index + 1}`,
+      order: index + 1,
+    }));
+    const slots = rowBands.map((rowBand, index) => ({
+      id: `slot-${index + 1}`,
+      locationId,
+      rowBandId: rowBand.id,
+      colBandId,
+      blockId: "block-1",
+      requiredSlots: 1,
+      startTime: "08:00",
+      endTime: "16:00",
+      endDayOffset: 0,
+    }));
+    await request.post(`${API_BASE}/v1/state`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: buildTemplateState({
+        dateISO: testDateISO,
+        classRows: [{ id: primaryClassId, name: "MRI" }],
+        blocks: [{ id: "block-1", sectionId: primaryClassId }],
+        rowBands,
+        slots,
+      }),
+    });
+    await seedAuthToken(page, token);
+    await page.emulateMedia({ media: "print" });
+    await page.goto(`/print/week?start=${encodeURIComponent(testDateISO)}`);
+    await page.waitForFunction("window.__PDF_READY__ === true");
+    await attachStepScreenshot(page, testInfo, "print-layout");
+    const layoutBox = await page
+      .locator(".print-page > div.relative")
+      .first()
+      .boundingBox();
+    expect(layoutBox).not.toBeNull();
+    const printable = getPrintableAreaPx();
+    const landscapeFit =
+      layoutBox!.width <= printable.landscape.width + 1 &&
+      layoutBox!.height <= printable.landscape.height + 1;
+    const portraitFit =
+      layoutBox!.width <= printable.portrait.width + 1 &&
+      layoutBox!.height <= printable.portrait.height + 1;
+    expect(layoutBox!.width).toBeGreaterThan(0);
+    expect(layoutBox!.height).toBeGreaterThan(0);
+    expect(landscapeFit || portraitFit).toBeTruthy();
+    const target = landscapeFit ? printable.landscape : printable.portrait;
+    const coverageWidth = layoutBox!.width / target.width;
+    const coverageHeight = layoutBox!.height / target.height;
+    expect(Math.max(coverageWidth, coverageHeight)).toBeGreaterThanOrEqual(0.7);
   });
 });

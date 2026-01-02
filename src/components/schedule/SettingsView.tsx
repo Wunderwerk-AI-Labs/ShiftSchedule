@@ -67,6 +67,13 @@ export default function SettingsView({
   const [newHolidayDate, setNewHolidayDate] = useState("");
   const [newHolidayName, setNewHolidayName] = useState("");
   const [showNewHoliday, setShowNewHoliday] = useState(false);
+  const [showSectionOrder, setShowSectionOrder] = useState(false);
+  const [draggingSectionBlockId, setDraggingSectionBlockId] = useState<string | null>(
+    null,
+  );
+  const [dragOverSectionBlockId, setDragOverSectionBlockId] = useState<string | null>(
+    null,
+  );
   const [isFetchingHolidays, setIsFetchingHolidays] = useState(false);
   const [holidayError, setHolidayError] = useState<string | null>(null);
   const [holidayInputError, setHolidayInputError] = useState<string | null>(null);
@@ -170,6 +177,8 @@ export default function SettingsView({
     "pool-vacation":
       "People on vacation. Drag in or out of this row to update vacations.",
   };
+  const sectionBlocks = weeklyTemplate?.blocks ?? [];
+  const sectionNameById = new Map(classRows.map((row) => [row.id, row.name]));
   const solverSectionRows = (() => {
     const blockSectionIds = new Set(
       (weeklyTemplate?.blocks ?? [])
@@ -177,7 +186,16 @@ export default function SettingsView({
         .filter((id): id is string => Boolean(id)),
     );
     if (blockSectionIds.size === 0) return classRows;
-    return classRows.filter((row) => blockSectionIds.has(row.id));
+    const blockOrder = new Map<string, number>();
+    (weeklyTemplate?.blocks ?? []).forEach((block, index) => {
+      if (!block.sectionId || blockOrder.has(block.sectionId)) return;
+      blockOrder.set(block.sectionId, index);
+    });
+    return classRows
+      .filter((row) => blockSectionIds.has(row.id))
+      .sort(
+        (a, b) => (blockOrder.get(a.id) ?? 0) - (blockOrder.get(b.id) ?? 0),
+      );
   })();
   const onCallRestClassId =
     solverSettings.onCallRestClassId &&
@@ -193,6 +211,16 @@ export default function SettingsView({
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return 5;
     return Math.max(0, Math.min(40, Math.trunc(parsed)));
+  };
+  const reorderSectionBlocks = (fromId: string, toId: string) => {
+    if (!weeklyTemplate || fromId === toId) return;
+    const fromIndex = sectionBlocks.findIndex((block) => block.id === fromId);
+    const toIndex = sectionBlocks.findIndex((block) => block.id === toId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const nextBlocks = [...sectionBlocks];
+    const [moved] = nextBlocks.splice(fromIndex, 1);
+    nextBlocks.splice(toIndex, 0, moved);
+    onChangeWeeklyTemplate({ ...weeklyTemplate, blocks: nextBlocks });
   };
 
   return (
@@ -369,6 +397,29 @@ export default function SettingsView({
                 }
                 className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
               />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
+              <div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Section priority order
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Drag to reorder. Top blocks get higher solver priority.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSectionOrder(true)}
+                disabled={sectionBlocks.length === 0}
+                className={cx(
+                  "rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600",
+                  "hover:bg-slate-50 hover:text-slate-900",
+                  "disabled:cursor-not-allowed disabled:opacity-60",
+                  "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800",
+                )}
+              >
+                Order sections
+              </button>
             </div>
           </div>
 
@@ -845,6 +896,108 @@ export default function SettingsView({
             </div>
           ) : null}
       </div>
+
+      {showSectionOrder ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowSectionOrder(false);
+              setDraggingSectionBlockId(null);
+              setDragOverSectionBlockId(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Section priority order
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Drag to reorder. Top blocks get higher solver priority.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSectionOrder(false);
+                  setDraggingSectionBlockId(null);
+                  setDragOverSectionBlockId(null);
+                }}
+                className="rounded-full border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 flex flex-col gap-2">
+              {sectionBlocks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 px-3 py-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-300">
+                  No section blocks yet.
+                </div>
+              ) : (
+                sectionBlocks.map((block, index) => {
+                  const sectionName =
+                    sectionNameById.get(block.sectionId) ?? "Section";
+                  return (
+                    <div
+                      key={block.id}
+                      className={cx(
+                        "flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm",
+                        "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+                        dragOverSectionBlockId === block.id &&
+                          "border-sky-300 bg-sky-50",
+                      )}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData(
+                          "application/x-block-id",
+                          block.id,
+                        );
+                        setDraggingSectionBlockId(block.id);
+                        setDragOverSectionBlockId(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingSectionBlockId(null);
+                        setDragOverSectionBlockId(null);
+                      }}
+                      onDragOver={(event) => {
+                        const activeId =
+                          draggingSectionBlockId ||
+                          event.dataTransfer.getData("application/x-block-id");
+                        if (!activeId || activeId === block.id) return;
+                        event.preventDefault();
+                        setDragOverSectionBlockId(block.id);
+                      }}
+                      onDragLeave={() => {
+                        setDragOverSectionBlockId((prev) =>
+                          prev === block.id ? null : prev,
+                        );
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const activeId =
+                          draggingSectionBlockId ||
+                          event.dataTransfer.getData("application/x-block-id");
+                        if (!activeId || activeId === block.id) return;
+                        reorderSectionBlocks(activeId, block.id);
+                        setDraggingSectionBlockId(null);
+                        setDragOverSectionBlockId(null);
+                      }}
+                    >
+                      <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+                        {index + 1}
+                      </span>
+                      <span>{sectionName}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

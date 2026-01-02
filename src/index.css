@@ -18,7 +18,7 @@
 @media print {
   @page {
     size: A4 landscape;
-    margin: 10mm;
+    margin: 0;
   }
   html,
   body {
@@ -40,6 +40,11 @@
     overflow: visible !important;
     height: auto !important;
   }
+  .schedule-grid,
+  .calendar-scroll {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
   .sticky,
   .fixed {
     position: static !important;
@@ -54,7 +59,7 @@
     break-after: page;
     page-break-after: always;
   }
-  .print-page:last-child {
+  .print-page:last-of-type {
     break-after: auto;
     page-break-after: auto;
   }

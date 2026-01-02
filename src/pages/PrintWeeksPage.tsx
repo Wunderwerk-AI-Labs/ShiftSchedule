@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ScheduleGrid from "../components/schedule/ScheduleGrid";
 import { getState, type Holiday, type WeeklyCalendarTemplate } from "../api/client";
 import {
@@ -23,6 +23,195 @@ import {
 
 type PrintWeeksPageProps = {
   theme: "light" | "dark";
+};
+
+const PRINT_DPI = 96;
+const MM_TO_PX = PRINT_DPI / 25.4;
+const PRINT_PAGE_WIDTH_MM = 297;
+const PRINT_PAGE_HEIGHT_MM = 210;
+const PRINT_PAGE_MARGIN_MM = 6;
+const PRINT_SAFETY_SCALE = 0.97;
+
+const getPrintAreaPx = () => ({
+  width: (PRINT_PAGE_WIDTH_MM - PRINT_PAGE_MARGIN_MM * 2) * MM_TO_PX,
+  height: (PRINT_PAGE_HEIGHT_MM - PRINT_PAGE_MARGIN_MM * 2) * MM_TO_PX,
+});
+
+type PrintableWeekProps = {
+  weekIndex: number;
+  totalWeeks: number;
+  weekDays: Date[];
+  scheduleRows: WorkplaceRow[];
+  calendarRows: ReturnType<typeof buildCalendarRows>;
+  assignmentMap: Map<string, Assignment[]>;
+  clinicians: Clinician[];
+  holidayDates: Set<string>;
+  holidayNameByDate: Record<string, string>;
+  weeklyTemplate?: WeeklyCalendarTemplate;
+  solverSettings: typeof defaultSolverSettings;
+  locationSeparatorRowIds: string[];
+  minSlotsByRowId: Record<string, number>;
+  poolId?: string;
+  rowById: Map<string, WorkplaceRow>;
+  slotOverridesByKey: Record<string, number>;
+  columnTimeMetaByKey: ReturnType<typeof buildColumnTimeMetaByKey>;
+  rangeLabel: string;
+  onReady?: (weekIndex: number) => void;
+};
+
+const PrintableWeek = ({
+  weekIndex,
+  totalWeeks,
+  weekDays,
+  scheduleRows,
+  calendarRows,
+  assignmentMap,
+  clinicians,
+  holidayDates,
+  holidayNameByDate,
+  weeklyTemplate,
+  solverSettings,
+  locationSeparatorRowIds,
+  minSlotsByRowId,
+  poolId,
+  rowById,
+  slotOverridesByKey,
+  columnTimeMetaByKey,
+  rangeLabel,
+  onReady,
+}: PrintableWeekProps) => {
+  const [printLayout, setPrintLayout] = useState({
+    scale: 1,
+    width: 0,
+    height: 0,
+    offsetX: 0,
+    offsetY: 0,
+  });
+  const printContentRef = useRef<HTMLDivElement | null>(null);
+  const printArea = useMemo(() => getPrintAreaPx(), []);
+  const weekAssignments = useMemo(
+    () =>
+      buildRenderedAssignmentMap(assignmentMap, clinicians, weekDays, {
+        scheduleRows,
+        solverSettings,
+        holidayDates,
+      }),
+    [assignmentMap, clinicians, weekDays, scheduleRows, solverSettings, holidayDates],
+  );
+  const dayColumns = useMemo(
+    () => buildDayColumns(weekDays, weeklyTemplate, holidayDates, columnTimeMetaByKey),
+    [weekDays, weeklyTemplate, holidayDates, columnTimeMetaByKey],
+  );
+
+  useLayoutEffect(() => {
+    const content = printContentRef.current;
+    if (!content) return;
+    const updateScale = () => {
+      const available = printArea;
+      const contentRect = content.getBoundingClientRect();
+      const contentWidth = Math.max(content.scrollWidth, contentRect.width);
+      const contentHeight = Math.max(content.scrollHeight, contentRect.height);
+      if (!contentWidth || !contentHeight) return;
+      const scale = Math.min(available.width / contentWidth, available.height / contentHeight);
+      const safeScale = Number.isFinite(scale) ? scale * PRINT_SAFETY_SCALE : 1;
+      const nextScale = safeScale > 0 ? safeScale : 1;
+      const scaledWidth = contentWidth * nextScale;
+      const scaledHeight = contentHeight * nextScale;
+      setPrintLayout({
+        scale: nextScale,
+        width: scaledWidth,
+        height: scaledHeight,
+        offsetX: Math.max(0, (available.width - scaledWidth) / 2),
+        offsetY: Math.max(0, (available.height - scaledHeight) / 2),
+      });
+    };
+    const frame = window.requestAnimationFrame(updateScale);
+    return () => window.cancelAnimationFrame(frame);
+  }, [weekIndex, scheduleRows, calendarRows, assignmentMap, clinicians, holidayDates, printArea]);
+
+  useEffect(() => {
+    if (printLayout.width > 0 && printLayout.height > 0) {
+      onReady?.(weekIndex);
+    }
+  }, [printLayout.height, printLayout.width, weekIndex, onReady]);
+
+  return (
+    <div
+      className="print-page"
+      style={{
+        breakInside: "avoid",
+        pageBreakInside: "avoid",
+        breakAfter: weekIndex === totalWeeks - 1 ? "auto" : "page",
+        pageBreakAfter: weekIndex === totalWeeks - 1 ? "auto" : "always",
+      }}
+    >
+      <div
+        className="relative overflow-hidden"
+        style={{
+          width: printArea.width,
+          height: printArea.height,
+        }}
+      >
+        <div
+          className="absolute left-0 top-0"
+          style={{
+            transform: `translate(${printLayout.offsetX}px, ${printLayout.offsetY}px)`,
+            transformOrigin: "top left",
+          }}
+        >
+          <div
+            ref={printContentRef}
+            style={{
+              transform: `scale(${printLayout.scale})`,
+              transformOrigin: "top left",
+            }}
+          >
+            <ScheduleGrid
+              leftHeaderTitle=""
+              weekDays={weekDays}
+              dayColumns={dayColumns}
+              rows={calendarRows}
+              assignmentMap={weekAssignments}
+              holidayDates={holidayDates}
+              holidayNameByDate={holidayNameByDate}
+              solverSettings={solverSettings}
+              locationSeparatorRowIds={locationSeparatorRowIds}
+              readOnly
+              header={
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                    {rangeLabel}
+                  </div>
+                </div>
+              }
+              separatorBeforeRowIds={poolId ? [poolId] : []}
+              minSlotsByRowId={minSlotsByRowId}
+              getClinicianName={(id) =>
+                clinicians.find((c) => c.id === id)?.name ?? "Unknown"
+              }
+              getHasEligibleClasses={(id) => {
+                const clinician = clinicians.find((item) => item.id === id);
+                return clinician ? clinician.qualifiedClassIds.length > 0 : false;
+              }}
+              getIsQualified={(clinicianId, rowId) => {
+                const scheduleRow = rowById.get(rowId);
+                const classId =
+                  scheduleRow?.kind === "class"
+                    ? scheduleRow.sectionId ?? scheduleRow.id
+                    : rowId;
+                const clinician = clinicians.find((item) => item.id === clinicianId);
+                return clinician ? clinician.qualifiedClassIds.includes(classId) : false;
+              }}
+              slotOverridesByKey={slotOverridesByKey}
+              onRemoveEmptySlot={() => {}}
+              onMoveWithinDay={() => {}}
+              onCellClick={() => {}}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const parseISODate = (value: string | null) => {
@@ -54,6 +243,7 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
   const [solverSettings, setSolverSettings] = useState(defaultSolverSettings);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [printReadyWeeks, setPrintReadyWeeks] = useState<Set<number>>(new Set());
 
   const searchParams =
     typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
@@ -103,6 +293,7 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
     if (typeof window !== "undefined") {
       window.__PDF_READY__ = false;
     }
+    setPrintReadyWeeks(new Set());
     let alive = true;
     setLoading(true);
     setError(null);
@@ -154,13 +345,32 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
   useEffect(() => {
     if (loading) return;
     if (typeof window === "undefined") return;
+    if (printReadyWeeks.size < totalWeeks) return;
     const markReady = () => {
       window.__PDF_READY__ = true;
     };
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(markReady);
     });
-  }, [loading, rows, clinicians, assignmentMap, minSlotsByRowId, slotOverridesByKey, totalWeeks]);
+  }, [
+    loading,
+    printReadyWeeks,
+    totalWeeks,
+    rows,
+    clinicians,
+    assignmentMap,
+    minSlotsByRowId,
+    slotOverridesByKey,
+  ]);
+
+  const handleWeekReady = useCallback((weekIndex: number) => {
+    setPrintReadyWeeks((prev) => {
+      if (prev.has(weekIndex)) return prev;
+      const next = new Set(prev);
+      next.add(weekIndex);
+      return next;
+    });
+  }, []);
 
   if (loading) {
     return (
@@ -186,61 +396,29 @@ export default function PrintWeeksPage({ theme }: PrintWeeksPageProps) {
           const days = getWeekDays(index);
           const rangeStart = days[0];
           const rangeEnd = days[6];
-          const weekAssignments = buildRenderedAssignmentMap(assignmentMap, clinicians, days, {
-            scheduleRows,
-            solverSettings,
-            holidayDates,
-          });
-          const dayColumns = buildDayColumns(
-            days,
-            weeklyTemplate,
-            holidayDates,
-            columnTimeMetaByKey,
-          );
           return (
-            <div key={index} className="print-page">
-              <ScheduleGrid
-                leftHeaderTitle=""
-                weekDays={days}
-                dayColumns={dayColumns}
-                rows={calendarRows}
-                assignmentMap={weekAssignments}
-                holidayDates={holidayDates}
-                holidayNameByDate={holidayNameByDate}
-                solverSettings={solverSettings}
-                locationSeparatorRowIds={locationSeparatorRowIds}
-                readOnly
-                header={
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-                      {formatRangeLabel(rangeStart, rangeEnd)}
-                    </div>
-                  </div>
-                }
-                separatorBeforeRowIds={poolId ? [poolId] : []}
-                minSlotsByRowId={minSlotsByRowId}
-                getClinicianName={(id) =>
-                  clinicians.find((c) => c.id === id)?.name ?? "Unknown"
-                }
-                getHasEligibleClasses={(id) => {
-                  const clinician = clinicians.find((item) => item.id === id);
-                  return clinician ? clinician.qualifiedClassIds.length > 0 : false;
-                }}
-                getIsQualified={(clinicianId, rowId) => {
-                  const scheduleRow = rowById.get(rowId);
-                  const classId =
-                    scheduleRow?.kind === "class"
-                      ? scheduleRow.sectionId ?? scheduleRow.id
-                      : rowId;
-                  const clinician = clinicians.find((item) => item.id === clinicianId);
-                  return clinician ? clinician.qualifiedClassIds.includes(classId) : false;
-                }}
-                slotOverridesByKey={slotOverridesByKey}
-                onRemoveEmptySlot={() => {}}
-                onMoveWithinDay={() => {}}
-                onCellClick={() => {}}
-              />
-            </div>
+            <PrintableWeek
+              key={index}
+              weekIndex={index}
+              totalWeeks={totalWeeks}
+              weekDays={days}
+              scheduleRows={scheduleRows}
+              calendarRows={calendarRows}
+              assignmentMap={assignmentMap}
+              clinicians={clinicians}
+              holidayDates={holidayDates}
+              holidayNameByDate={holidayNameByDate}
+              weeklyTemplate={weeklyTemplate}
+              solverSettings={solverSettings}
+              locationSeparatorRowIds={locationSeparatorRowIds}
+              minSlotsByRowId={minSlotsByRowId}
+              poolId={poolId}
+              rowById={rowById}
+              slotOverridesByKey={slotOverridesByKey}
+              columnTimeMetaByKey={columnTimeMetaByKey}
+              rangeLabel={formatRangeLabel(rangeStart, rangeEnd)}
+              onReady={handleWeekReady}
+            />
           );
         });
       })()}

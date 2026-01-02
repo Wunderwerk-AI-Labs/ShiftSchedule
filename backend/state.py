@@ -590,8 +590,6 @@ def _normalize_preferred_working_time_entry(raw: Any) -> PreferredWorkingTime:
     )
     requirement = _normalize_working_time_requirement(requirement_raw)
     if invalid_window:
-        if requirement != "none":
-            requirement = "none"
         start_minutes_raw = None
         end_minutes_raw = None
     start_minutes = (
@@ -876,6 +874,16 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
     slot_ids = {
         slot.id for location in weekly_template.locations for slot in location.slots
     }
+    free_pool_id = "pool-not-allocated"
+    block_by_id = {block.id: block for block in weekly_template.blocks}
+    slot_meta_by_id: Dict[str, Dict[str, Any]] = {}
+    for location in weekly_template.locations:
+        col_band_by_id = {band.id: band for band in location.colBands}
+        for slot in location.slots:
+            block = block_by_id.get(slot.blockId)
+            valid = bool(block and block.sectionId in class_row_ids)
+            day_type = col_band_by_id.get(slot.colBandId).dayType if col_band_by_id.get(slot.colBandId) else None
+            slot_meta_by_id[slot.id] = {"valid": valid, "dayType": day_type}
     pool_row_ids = {row.id for row in state.rows if row.kind == "pool"}
 
     slot_id_map_by_legacy: Dict[str, Dict[str, str]] = {
@@ -911,6 +919,17 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
             next_row_id = mapped
             changed = True
         if next_row_id not in slot_ids:
+            changed = True
+            continue
+        meta = slot_meta_by_id.get(next_row_id)
+        if not meta or not meta.get("valid", False):
+            mapped_assignments.append(assignment.model_copy(update={"rowId": free_pool_id}))
+            changed = True
+            continue
+        assignment_day_type = _get_day_type(assignment.dateISO, state.holidays or [])
+        slot_day_type = meta.get("dayType")
+        if slot_day_type and slot_day_type != assignment_day_type:
+            mapped_assignments.append(assignment.model_copy(update={"rowId": free_pool_id}))
             changed = True
             continue
         if next_row_id != assignment.rowId:

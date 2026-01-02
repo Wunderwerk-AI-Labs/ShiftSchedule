@@ -153,6 +153,11 @@ export default function WeeklyTemplateBuilder({
     dayType: DayType;
     index: number;
   } | null>(null);
+  const [hoveredRowBandId, setHoveredRowBandId] = useState<string | null>(null);
+  const [hoveredDeleteRowBand, setHoveredDeleteRowBand] = useState<{
+    locationId: string;
+    rowBandId: string;
+  } | null>(null);
   const [activeAddCell, setActiveAddCell] = useState<{
     locationId: string;
     rowBandId: string;
@@ -165,6 +170,12 @@ export default function WeeklyTemplateBuilder({
   } | null>(null);
   const addCellRef = useRef<HTMLDivElement | null>(null);
   const [activeBlockColorId, setActiveBlockColorId] = useState<string | null>(null);
+  const [blockColorPopoverPosition, setBlockColorPopoverPosition] = useState({
+    top: 0,
+    left: 0,
+  });
+  const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
+  const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null);
   const [activeDayType, setActiveDayType] = useState<DayType>("mon");
   const visibleDayTypes = useMemo(() => DAY_TYPES, []);
   const gridScrollRef = useRef<HTMLDivElement | null>(null);
@@ -377,6 +388,19 @@ export default function WeeklyTemplateBuilder({
     const nextBlocks = updater(blocks);
     if (nextBlocks === blocks) return;
     onChange({ ...template, blocks: nextBlocks });
+  };
+
+  const reorderBlocks = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    updateBlocks((prev) => {
+      const fromIndex = prev.findIndex((block) => block.id === fromId);
+      const toIndex = prev.findIndex((block) => block.id === toId);
+      if (fromIndex < 0 || toIndex < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
   };
 
   const handleUpdateBlockColor = (blockId: string, color: string | null) => {
@@ -1068,20 +1092,28 @@ export default function WeeklyTemplateBuilder({
               const columnEl = target.closest("[data-column-key]") as HTMLElement | null;
               if (!columnEl) {
                 if (hoveredColumn) setHoveredColumn(null);
-                return;
+              } else {
+                const dayType = columnEl.dataset.dayType as DayType | undefined;
+                const colIndex = columnEl.dataset.colIndex;
+                if (!dayType || colIndex === undefined) return;
+                const next = { dayType, index: Number(colIndex) };
+                if (
+                  hoveredColumn?.dayType !== next.dayType ||
+                  hoveredColumn?.index !== next.index
+                ) {
+                  setHoveredColumn(next);
+                }
               }
-              const dayType = columnEl.dataset.dayType as DayType | undefined;
-              const colIndex = columnEl.dataset.colIndex;
-              if (!dayType || colIndex === undefined) return;
-              const next = { dayType, index: Number(colIndex) };
-              if (
-                hoveredColumn?.dayType !== next.dayType ||
-                hoveredColumn?.index !== next.index
-              ) {
-                setHoveredColumn(next);
+              const rowEl = target.closest("[data-row-band-id]") as HTMLElement | null;
+              const rowBandId = rowEl?.dataset.rowBandId ?? null;
+              if (rowBandId !== hoveredRowBandId) {
+                setHoveredRowBandId(rowBandId);
               }
             }}
-            onMouseLeave={() => setHoveredColumn(null)}
+            onMouseLeave={() => {
+              setHoveredColumn(null);
+              setHoveredRowBandId(null);
+            }}
           >
             <div className="border-b border-r border-slate-200 bg-slate-50 p-2 text-slate-500 dark:border-slate-800 dark:bg-slate-900/60">
               <button
@@ -1182,7 +1214,7 @@ export default function WeeklyTemplateBuilder({
                         ))}
                       </select>
                       <input
-                        className="w-40 rounded border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                        className="w-40 rounded border border-slate-200 px-2 py-1 text-[11px] font-normal text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                         value={location.name}
                         onChange={(event) =>
                           onRenameLocation(location.id, event.target.value)
@@ -1221,13 +1253,21 @@ export default function WeeklyTemplateBuilder({
                   </div>
                   {rowBands.map((band, rowIndex) => (
                     <Fragment key={`${location.id}-${band.id}`}>
+                      {(() => {
+                        const isRowHighlighted =
+                          hoveredDeleteRowBand?.locationId === location.id &&
+                          hoveredDeleteRowBand?.rowBandId === band.id;
+                        const isRowHovered = hoveredRowBandId === band.id;
+                        return (
                       <div
                         className={cx(
-                          "group border-b border-r border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-950",
+                          "group relative z-10 flex items-center overflow-visible border-b border-r border-slate-200 bg-white p-2 pl-12 pr-3 dark:border-slate-800 dark:bg-slate-950",
                           isLocationHighlighted && "ring-2 ring-rose-400 ring-inset",
+                          isRowHighlighted && "ring-2 ring-rose-400 ring-inset",
                         )}
+                        data-row-band-id={band.id}
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex w-full items-center gap-2">
                           <input
                             value={band.label ?? ""}
                             onChange={(event) =>
@@ -1238,31 +1278,47 @@ export default function WeeklyTemplateBuilder({
                               )
                             }
                             placeholder="Row label"
-                            className="flex-1 rounded border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 placeholder:text-slate-400 focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            className="flex-1 w-full min-w-0 rounded border border-slate-200 px-2 py-1 text-[11px] font-normal text-slate-700 placeholder:text-slate-400 focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const hasSlots = templateLocation.slots.some(
-                                (slot) => slot.rowBandId === band.id,
-                              );
-                              if (
-                                hasSlots &&
-                                !window.confirm(
-                                  "Delete this row? Any slots in this row will be removed.",
-                                )
-                              ) {
-                                return;
+                          <div className="absolute left-0 top-0 bottom-0 z-20 flex items-center justify-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const hasSlots = templateLocation.slots.some(
+                                  (slot) => slot.rowBandId === band.id,
+                                );
+                                if (
+                                  hasSlots &&
+                                  !window.confirm(
+                                    "Delete this row? Any slots in this row will be removed.",
+                                  )
+                                ) {
+                                  return;
+                                }
+                                handleDeleteRowBand(location.id, band.id);
+                              }}
+                              onMouseEnter={() =>
+                                setHoveredDeleteRowBand({
+                                  locationId: location.id,
+                                  rowBandId: band.id,
+                                })
                               }
-                              handleDeleteRowBand(location.id, band.id);
-                            }}
-                            className="ml-auto text-rose-400 opacity-0 transition-opacity hover:text-rose-500 group-hover:opacity-100"
-                            aria-label="Delete row"
-                          >
-                            x
-                          </button>
+                              onMouseLeave={() => setHoveredDeleteRowBand(null)}
+                              data-testid={`delete-row-${location.id}-${band.id}`}
+                              className={cx(
+                                "rounded-full border border-slate-200 bg-white px-1 py-1 text-[10px] font-semibold text-rose-500 shadow-sm transition-opacity hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900 dark:text-rose-300",
+                                isRowHovered ? "opacity-100" : "opacity-0",
+                              )}
+                              style={{ writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)" }}
+                              aria-label="Delete row"
+                            >
+                              Delete row
+                            </button>
+                          </div>
                         </div>
                       </div>
+                        );
+                      })()}
 
                     {visibleDayTypes.map((dayType) => {
                         const targetCount = Math.max(
@@ -1285,6 +1341,9 @@ export default function WeeklyTemplateBuilder({
                               pendingDeleteColumn.index === colIndex) ||
                             (hoveredDeleteColumn?.dayType === dayType &&
                               hoveredDeleteColumn.index === colIndex);
+                          const isRowHighlighted =
+                            hoveredDeleteRowBand?.locationId === location.id &&
+                            hoveredDeleteRowBand?.rowBandId === band.id;
                           const showColumnDeleteButton =
                             locationIndex === 0 && rowIndex === 0 && !!colBand;
                           const isColumnHovered =
@@ -1301,10 +1360,13 @@ export default function WeeklyTemplateBuilder({
                                   "ring-2 ring-emerald-300 ring-inset",
                                 isLocationHighlighted &&
                                   "ring-2 ring-rose-400 ring-inset",
+                                isRowHighlighted &&
+                                  "ring-2 ring-rose-400 ring-inset",
                                 isHighlightedColumn &&
                                   "ring-2 ring-rose-400 ring-inset",
                               )}
                               data-column-key={`${dayType}-${colIndex}`}
+                              data-row-band-id={band.id}
                               data-day-type={dayType}
                               data-col-index={colIndex}
                               data-add-block-trigger={!slot ? "true" : undefined}
@@ -1381,6 +1443,7 @@ export default function WeeklyTemplateBuilder({
                                       "rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-rose-500 shadow-sm transition-opacity hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900",
                                       isColumnHovered ? "opacity-100" : "opacity-0",
                                     )}
+                                    data-testid={`delete-column-${dayType}-${colIndex}`}
                                     onMouseEnter={() =>
                                       setHoveredDeleteColumn({
                                         dayType,
@@ -1550,6 +1613,7 @@ export default function WeeklyTemplateBuilder({
                                   "rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-rose-500 shadow-sm transition-opacity hover:text-rose-600 dark:border-slate-700 dark:bg-slate-900",
                                   isColumnHovered ? "opacity-100" : "opacity-0",
                                 )}
+                                data-testid={`delete-column-${dayType}-${colIndex}`}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   const dayBands =
@@ -1597,7 +1661,7 @@ export default function WeeklyTemplateBuilder({
         </div>
       </div>
 
-      <div className="w-full rounded-3xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-950 lg:min-w-56 lg:w-fit lg:max-w-[22rem] lg:self-start lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
+      <div className="w-full rounded-3xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-950 lg:min-w-56 lg:w-fit lg:max-w-[22rem] self-start sticky top-4 max-h-[calc(100vh-8rem)] overflow-y-auto">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold text-slate-700 dark:text-slate-100">
             Section blocks
@@ -1640,23 +1704,57 @@ export default function WeeklyTemplateBuilder({
             </button>
           </div>
         ) : null}
+        <div className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+          Drag to reorder. Top blocks get higher solver priority.
+        </div>
         <div className="mt-2 flex flex-col gap-1.5">
           {blocks.map((block) => {
             const sectionName = sectionNameById.get(block.sectionId) ?? "Section";
             const blockColor = sectionColorById.get(block.sectionId) ?? block.color;
             const customColorValue = blockColor ?? "#ffffff";
             return (
-              <div key={block.id} className="group relative">
+              <div
+                key={block.id}
+                className="group relative"
+                onDragOver={(event) => {
+                  const activeId =
+                    draggingBlockId ||
+                    event.dataTransfer.getData("application/x-block-id");
+                  if (!activeId || activeId === block.id) return;
+                  event.preventDefault();
+                  setDragOverBlockId(block.id);
+                }}
+                onDragLeave={() => {
+                  setDragOverBlockId((prev) => (prev === block.id ? null : prev));
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const activeId =
+                    draggingBlockId ||
+                    event.dataTransfer.getData("application/x-block-id");
+                  if (!activeId || activeId === block.id) return;
+                  reorderBlocks(activeId, block.id);
+                  setDraggingBlockId(null);
+                  setDragOverBlockId(null);
+                }}
+              >
                 <div
                   className={cx(
                     "flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold shadow-sm",
                     "border-slate-200 bg-white text-slate-600",
                     "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+                    dragOverBlockId === block.id && "border-sky-300 bg-sky-50",
                   )}
                   draggable
                   onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.effectAllowed = "copyMove";
                     event.dataTransfer.setData("application/x-block-id", block.id);
+                    setDraggingBlockId(block.id);
+                    setDragOverBlockId(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingBlockId(null);
+                    setDragOverBlockId(null);
                   }}
                 >
                   <button
@@ -1664,6 +1762,21 @@ export default function WeeklyTemplateBuilder({
                     data-block-color-trigger={block.id}
                     onClick={(event) => {
                       event.stopPropagation();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const padding = 8;
+                      const panelWidth = 180;
+                      const panelHeight = 120;
+                      let nextLeft = rect.left;
+                      let nextTop = rect.bottom + 8;
+                      if (nextLeft + panelWidth + padding > window.innerWidth) {
+                        nextLeft = window.innerWidth - panelWidth - padding;
+                      }
+                      if (nextTop + panelHeight + padding > window.innerHeight) {
+                        nextTop = rect.top - panelHeight - 8;
+                      }
+                      nextLeft = Math.max(padding, nextLeft);
+                      nextTop = Math.max(padding, nextTop);
+                      setBlockColorPopoverPosition({ top: nextTop, left: nextLeft });
                       setActiveBlockColorId((prev) =>
                         prev === block.id ? null : block.id,
                       );
@@ -1684,7 +1797,11 @@ export default function WeeklyTemplateBuilder({
                 {activeBlockColorId === block.id ? (
                   <div
                     data-block-color-picker={block.id}
-                    className="absolute left-2 top-full z-50 mt-2 rounded-lg border border-slate-200 bg-white p-2 text-[10px] shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                    className="fixed z-50 rounded-lg border border-slate-200 bg-white p-2 text-[10px] shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                    style={{
+                      top: blockColorPopoverPosition.top,
+                      left: blockColorPopoverPosition.left,
+                    }}
                   >
                     <div className="grid grid-cols-4 gap-1">
                       {BLOCK_COLOR_OPTIONS.map((option) => (

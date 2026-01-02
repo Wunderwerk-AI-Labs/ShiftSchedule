@@ -79,9 +79,9 @@ def export_week_pdf(
                 page.add_init_script(
                     "localStorage.setItem('authToken', %s);" % json.dumps(token)
                 )
+                page.emulate_media(media="print")
                 page.goto(print_url, wait_until="networkidle", timeout=20000)
                 page.wait_for_function("window.__PDF_READY__ === true", timeout=20000)
-                page.emulate_media(media="print")
                 width, height = _measure_schedule_dimensions(page, include_all_pages=False)
                 dpi = 96.0
                 a4_width = 11.69 * dpi
@@ -140,9 +140,9 @@ def export_weeks_pdf(
                 page.add_init_script(
                     "localStorage.setItem('authToken', %s);" % json.dumps(token)
                 )
+                page.emulate_media(media="print")
                 page.goto(print_url, wait_until="networkidle", timeout=20000)
                 page.wait_for_function("window.__PDF_READY__ === true", timeout=20000)
-                page.emulate_media(media="print")
                 width, height = _measure_schedule_dimensions(page, include_all_pages=True)
                 dpi = 96.0
                 a4_width = 11.69 * dpi

@@ -121,6 +121,7 @@ def _collect_slot_contexts(state) -> List[Dict[str, Any]]:
     location_order = {loc.id: idx for idx, loc in enumerate(state.locations)}
     day_order = {day_type: idx for idx, day_type in enumerate(["mon", "tue", "wed", "thu", "fri", "sat", "sun", "holiday"])}
     block_by_id = {block.id: block for block in template.blocks or []}
+    block_order = {block.id: idx for idx, block in enumerate(template.blocks or [])}
     contexts: List[Dict[str, Any]] = []
     for template_location in template.locations:
         row_band_by_id = {band.id: band.order for band in template_location.rowBands}
@@ -144,6 +145,7 @@ def _collect_slot_contexts(state) -> List[Dict[str, Any]]:
                     "slot_id": slot.id,
                     "section_id": block.sectionId,
                     "location_id": location_id,
+                    "block_order": block_order.get(block.id, len(block_order)),
                     "row_order": row_band_by_id.get(slot.rowBandId, 0),
                     "col_order": col_band.order,
                     "day_type": col_band.dayType,
@@ -155,6 +157,7 @@ def _collect_slot_contexts(state) -> List[Dict[str, Any]]:
             )
     contexts.sort(
         key=lambda item: (
+            item["block_order"],
             item["location_order"],
             item["row_order"],
             item["day_order"],

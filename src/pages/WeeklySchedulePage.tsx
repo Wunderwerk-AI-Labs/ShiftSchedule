@@ -2437,6 +2437,13 @@ export default function WeeklySchedulePage({
         open={vacationOverviewOpen}
         onClose={() => setVacationOverviewOpen(false)}
         clinicians={clinicians}
+        sections={eligibleClassRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          color: row.blockColor ?? null,
+        }))}
+        assignments={toAssignments()}
+        weeklyTemplate={weeklyTemplate}
         onSelectClinician={(clinicianId) => openClinicianEditor(clinicianId, "vacations")}
       />
 

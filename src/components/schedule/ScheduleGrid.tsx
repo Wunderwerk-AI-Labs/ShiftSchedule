@@ -364,15 +364,16 @@ export default function ScheduleGrid({
   return (
     <div className="schedule-grid mx-auto w-full max-w-7xl px-4 pb-8 sm:px-6 sm:pb-10 print:max-w-none print:px-0 print:pb-0">
       <div
+        data-schedule-shell="true"
         className="relative mt-4 rounded-2xl border-2 border-slate-900/80 bg-white p-[2px] shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:mt-6 sm:rounded-3xl"
       >
-        <div className="relative rounded-[calc(1.5rem-2px)] bg-white dark:bg-slate-900">
+        <div className="relative rounded-[calc(1.5rem-2px)] bg-white dark:bg-slate-900 overflow-hidden">
           {header ? (
             <div className="relative z-20 rounded-t-[calc(1.5rem-2px)] bg-white px-4 py-3 dark:bg-slate-900 sm:px-6 sm:py-4">
               {header}
             </div>
           ) : null}
-          <div className="relative overflow-visible rounded-b-[calc(1.5rem-2px)]">
+          <div className="relative overflow-hidden rounded-b-[calc(1.5rem-2px)]">
             <div
               className="calendar-scroll relative z-10 h-auto max-h-none overflow-x-auto overflow-y-hidden touch-pan-x [-webkit-overflow-scrolling:touch]"
             >

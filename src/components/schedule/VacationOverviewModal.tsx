@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
 import { toISODate } from "../../lib/date";
+import type { Assignment, WeeklyCalendarTemplate } from "../../api/client";
 
 type VacationRange = { id: string; startISO: string; endISO: string };
 
@@ -13,6 +14,9 @@ type VacationOverviewModalProps = {
     name: string;
     vacations: VacationRange[];
   }>;
+  sections: Array<{ id: string; name: string; color?: string | null }>;
+  assignments: Assignment[];
+  weeklyTemplate?: WeeklyCalendarTemplate;
   onSelectClinician: (clinicianId: string) => void;
 };
 
@@ -99,12 +103,20 @@ export default function VacationOverviewModal({
   open,
   onClose,
   clinicians,
+  sections,
+  assignments,
+  weeklyTemplate,
   onSelectClinician,
 }: VacationOverviewModalProps) {
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [visibleYear, setVisibleYear] = useState(currentYear);
   const [pendingScrollToToday, setPendingScrollToToday] = useState(false);
+  const [activeSectionIds, setActiveSectionIds] = useState<string[]>([]);
+  const [sectionColorsById, setSectionColorsById] = useState<Record<string, string>>(
+    {},
+  );
+  const [referencePanelOpen, setReferencePanelOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -198,6 +210,91 @@ export default function VacationOverviewModal({
     return map;
   }, [clinicians, rangeStartYear, rangeEndYear]);
 
+  const slotSectionById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!weeklyTemplate) return map;
+    const blockSectionById = new Map(
+      (weeklyTemplate.blocks ?? []).map((block) => [block.id, block.sectionId]),
+    );
+    for (const location of weeklyTemplate.locations ?? []) {
+      for (const slot of location.slots ?? []) {
+        const sectionId = blockSectionById.get(slot.blockId);
+        if (sectionId) map.set(slot.id, sectionId);
+      }
+    }
+    return map;
+  }, [weeklyTemplate]);
+
+  const activeSections = useMemo(
+    () => sections.filter((section) => activeSectionIds.includes(section.id)),
+    [sections, activeSectionIds],
+  );
+
+  const sectionSegmentsByClinician = useMemo(() => {
+    if (activeSectionIds.length === 0) return new Map();
+    const activeSet = new Set(activeSectionIds);
+    const dayIndexByClinicianSection = new Map<
+      string,
+      Map<string, Set<number>>
+    >();
+    for (const assignment of assignments) {
+      const slotSectionId =
+        slotSectionById.get(assignment.rowId) ??
+        assignment.rowId.split("::")[0];
+      if (!activeSet.has(slotSectionId)) continue;
+      const dayIndex = dateToDayIndexInTimeline(
+        assignment.dateISO,
+        rangeStartYear,
+        rangeEndYear,
+      );
+      if (dayIndex === null) continue;
+      const clinicianMap =
+        dayIndexByClinicianSection.get(assignment.clinicianId) ?? new Map();
+      const set = clinicianMap.get(slotSectionId) ?? new Set();
+      set.add(dayIndex);
+      clinicianMap.set(slotSectionId, set);
+      dayIndexByClinicianSection.set(assignment.clinicianId, clinicianMap);
+    }
+    const segmentsByClinician = new Map<
+      string,
+      Map<string, Array<{ id: string; left: number; width: number }>>
+    >();
+    for (const [clinicianId, sectionMap] of dayIndexByClinicianSection.entries()) {
+      const segmentsBySection = new Map<
+        string,
+        Array<{ id: string; left: number; width: number }>
+      >();
+      for (const [sectionId, indicesSet] of sectionMap.entries()) {
+        const indices = Array.from(indicesSet).sort((a, b) => a - b);
+        if (indices.length === 0) continue;
+        const segments: Array<{ id: string; left: number; width: number }> = [];
+        let runStart = indices[0];
+        let previous = indices[0];
+        for (let i = 1; i <= indices.length; i += 1) {
+          const current = indices[i];
+          if (current !== undefined && current === previous + 1) {
+            previous = current;
+            continue;
+          }
+          const left = runStart * DAY_WIDTH;
+          const width = (previous - runStart + 1) * DAY_WIDTH;
+          segments.push({
+            id: `${clinicianId}-${sectionId}-${runStart}-${previous}`,
+            left,
+            width,
+          });
+          runStart = current ?? 0;
+          previous = current ?? 0;
+        }
+        segmentsBySection.set(sectionId, segments);
+      }
+      if (segmentsBySection.size) {
+        segmentsByClinician.set(clinicianId, segmentsBySection);
+      }
+    }
+    return segmentsByClinician;
+  }, [activeSectionIds, assignments, rangeStartYear, rangeEndYear, slotSectionById]);
+
   const handleJumpToToday = () => {
     if (selectedYear !== currentYear) {
       setSelectedYear(currentYear);
@@ -259,6 +356,85 @@ export default function VacationOverviewModal({
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setReferencePanelOpen((prev) => !prev)}
+                  className={cx(
+                    "rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-600",
+                    "hover:bg-slate-100 active:bg-slate-200",
+                    "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800",
+                  )}
+                >
+                  Reference bands
+                </button>
+                {referencePanelOpen ? (
+                  <div className="absolute right-0 top-full z-40 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                    <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Choose sections
+                    </div>
+                    <div className="space-y-2">
+                      {sections.map((section) => {
+                        const isActive = activeSectionIds.includes(section.id);
+                        const swatch =
+                          sectionColorsById[section.id] ??
+                          section.color ??
+                          "#D9F0FF";
+                        return (
+                          <div
+                            key={section.id}
+                            className="flex items-center justify-between gap-2"
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setActiveSectionIds((prev) =>
+                                  prev.includes(section.id)
+                                    ? prev.filter((id) => id !== section.id)
+                                    : [...prev, section.id],
+                                )
+                              }
+                              className={cx(
+                                "flex flex-1 items-center gap-2 rounded-full border px-2 py-1 text-[11px] font-semibold",
+                                isActive
+                                  ? "border-slate-400 bg-slate-900 text-white dark:border-slate-600 dark:bg-slate-100 dark:text-slate-900"
+                                  : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+                              )}
+                            >
+                              <span
+                                className="h-3 w-3 rounded-full border border-slate-200"
+                                style={{ backgroundColor: swatch }}
+                              />
+                              {section.name}
+                            </button>
+                            <input
+                              type="color"
+                              value={swatch}
+                              onChange={(event) =>
+                                setSectionColorsById((prev) => ({
+                                  ...prev,
+                                  [section.id]: event.target.value,
+                                }))
+                              }
+                              className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-transparent"
+                              aria-label={`${section.name} color`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setReferencePanelOpen(false)}
+                        className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={handleJumpToToday}
@@ -322,9 +498,9 @@ export default function VacationOverviewModal({
                 ) : null}
 
                 <div className="sticky top-0 z-30 bg-white dark:bg-slate-900">
-                  <div className="flex border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                     <div
-                      className="sticky left-0 z-40 border-r border-slate-200 bg-white px-3 py-2 text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+                      className="sticky left-0 z-50 border-r border-slate-200 bg-white px-3 py-2 text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
                       style={{ width: LEFT_COLUMN_WIDTH }}
                     >
                       <div className="text-[10px] uppercase tracking-wide">Year</div>
@@ -347,7 +523,7 @@ export default function VacationOverviewModal({
                       ))}
                     </div>
                   </div>
-                  <div className="flex border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                     <div
                       className="sticky left-0 z-40 border-r border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
                       style={{ width: LEFT_COLUMN_WIDTH }}
@@ -366,7 +542,7 @@ export default function VacationOverviewModal({
                       ))}
                     </div>
                   </div>
-                  <div className="flex border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
                     <div
                       className="sticky left-0 z-40 border-r border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-400 dark:border-slate-800 dark:bg-slate-900"
                       style={{ width: LEFT_COLUMN_WIDTH }}
@@ -395,13 +571,19 @@ export default function VacationOverviewModal({
                   {clinicians.map((clinician) => {
                     const segments =
                       vacationSegmentsByClinician.get(clinician.id) ?? [];
+                    const sectionSegments =
+                      sectionSegmentsByClinician.get(clinician.id) ?? new Map();
+                    const bandCount = 1 + activeSections.length;
+                    const bandGap = 4;
+                    const rowHeight =
+                      bandCount * BAR_HEIGHT + (bandCount - 1) * bandGap + 8;
                     return (
                       <div
                         key={clinician.id}
                         className="flex items-center border-b border-slate-100 dark:border-slate-800"
                       >
                         <div
-                          className="sticky left-0 z-10 border-r border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                          className="sticky left-0 z-40 border-r border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
                           style={{ width: LEFT_COLUMN_WIDTH }}
                         >
                           <span className="block truncate">{clinician.name}</span>
@@ -409,17 +591,25 @@ export default function VacationOverviewModal({
                         <button
                           type="button"
                           onClick={() => onSelectClinician(clinician.id)}
-                          className="relative flex h-10 flex-shrink-0 items-center px-2"
-                          style={{ width: totalWidth }}
+                          className="relative flex flex-shrink-0 flex-col gap-1 px-2"
+                          style={{ width: totalWidth, height: rowHeight }}
                         >
                           <div
-                            className="relative w-full rounded-full bg-slate-200 dark:bg-slate-800"
+                            className="relative w-full overflow-visible rounded-full bg-slate-200 dark:bg-slate-800"
                             style={{ height: BAR_HEIGHT }}
                           >
+                            <div
+                              className="pointer-events-none sticky h-0 w-0"
+                              style={{ left: LEFT_COLUMN_WIDTH + 6 }}
+                            >
+                              <div className="absolute left-0 top-1/2 z-30 -translate-y-1/2 whitespace-nowrap px-2 text-[11px] font-normal text-slate-900">
+                                Vacation
+                              </div>
+                            </div>
                             {segments.map((segment) => (
                               <div
                                 key={segment.id}
-                                className="absolute top-0 rounded-full bg-emerald-500"
+                                className="absolute top-0 rounded-full bg-emerald-400"
                                 style={{
                                   left: segment.left,
                                   width: segment.width,
@@ -428,6 +618,42 @@ export default function VacationOverviewModal({
                               />
                             ))}
                           </div>
+                          {activeSections.map((section) => {
+                            const sectionSegmentRows =
+                              sectionSegments.get(section.id) ?? [];
+                            const bandColor =
+                              sectionColorsById[section.id] ??
+                              section.color ??
+                              "#D9F0FF";
+                            return (
+                              <div
+                                key={`${clinician.id}-${section.id}`}
+                                className="relative w-full overflow-visible rounded-full bg-slate-200 dark:bg-slate-800"
+                                style={{ height: BAR_HEIGHT }}
+                              >
+                                <div
+                                  className="pointer-events-none sticky h-0 w-0"
+                                  style={{ left: LEFT_COLUMN_WIDTH + 6 }}
+                                >
+                                  <div className="absolute left-0 top-1/2 z-30 -translate-y-1/2 whitespace-nowrap px-2 text-[11px] font-normal text-slate-900">
+                                    {section.name}
+                                  </div>
+                                </div>
+                                {sectionSegmentRows.map((segment) => (
+                                  <div
+                                    key={segment.id}
+                                    className="absolute top-0 rounded-full"
+                                    style={{
+                                      left: segment.left,
+                                      width: segment.width,
+                                      height: BAR_HEIGHT,
+                                      backgroundColor: bandColor,
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            );
+                          })}
                         </button>
                       </div>
                     );

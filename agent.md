@@ -108,7 +108,7 @@ Weekly Calendar Template
 - Single calendar with locations stacked; day-type columns are shared across locations (Mon..Sun + Holiday).
 - Per-day columns: add columns for a specific day; delete via a hover-only "Delete Column" button at the top of the first row (confirm only if the column has slots; column outlines red on hover/confirm).
 - Row bands are simple rows with an editable row label in the left header cell; Add row is a full-width dashed button below each location; row delete confirms only if the row has slots.
-- Section blocks sidebar stays visible while scrolling the template grid (sticky on large screens).
+- Section blocks sidebar stays visible while scrolling the template grid (sticky at all sizes; scrolls with the template grid container).
 - Blocks live in `weeklyTemplate.blocks` and slots reference `blockId`.
 - Slots define time range, end-day offset, and required slots (single value); blocks carry only the section reference.
 - Holiday day type always overrides weekdays at runtime (no fallback).
@@ -122,6 +122,13 @@ Locations
 Pools
 - Rename pool rows (Distribution Pool, Reserve Pool, Rest Day, Vacation). No deletion.
 - Rest Day pool is used to park clinicians before/after on-call duty when the setting is enabled.
+- Pool visibility is a UI filter only: class assignments are never hidden by rest-day/vacation logic.
+- If a clinician is marked off on a date, any pool assignment for that date is re-routed to the Rest Day pool in the UI (so they stay visible).
+
+Slots / Template integrity
+- Invalid slot assignments are repaired on load:
+  - If a slot references a block/section that no longer exists or the slot dayType does not match the assignment date’s dayType, the assignment is moved to the Distribution Pool.
+  - This is enforced in both frontend normalization (`src/lib/shiftRows.ts`) and backend normalization (`backend/state.py`).
 
 Clinicians
 - List with Add Clinician and Edit buttons (Add uses a dashed, full-width button below the list).
@@ -166,13 +173,18 @@ Testing
   - Defaults to `testuser` / `sdjhfl34-wfsdfwsd2` when `E2E_USERNAME`/`E2E_PASSWORD` are unset.
   - `test:e2e` script includes `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=mac15-arm64` for Apple Silicon.
   - Default non-admin test user for local E2E: `testuser` / `sdjhfl34-wfsdfwsd2` (set `ENABLE_E2E_TEST_USER=0` to disable creation, do not use in production).
+  - In sandboxed runs, Playwright may need escalated permissions to access `localhost:8000` and launch Chromium (otherwise EPERM/permission-denied errors).
   - Diagnostics on failure: console, page errors, failed requests, >=400 responses, screenshot, HTML snapshot, and trace (see `e2e/fixtures.ts`).
+  - PDF export test calls `/v1/pdf/week` and asserts the generated PDF has exactly one page.
+  - Print layout test opens `/print/week` in print media and asserts the scaled schedule fits within one A4 page (portrait or landscape) and fills at least 70% of one dimension.
 
-Dev restart script
-- `scripts/restart-dev.sh` stops dev servers and restarts backend + frontend.
-- Logs: `logs/dev-backend.log`, `logs/dev-frontend.log`.
-- Binds backend/frontend to `127.0.0.1` (`uvicorn --host 127.0.0.1`, `vite --host 127.0.0.1`).
-- Requires elevated permissions in this sandbox to bind ports 8000/5173.
+Dev server restart
+- Kill existing servers via `lsof -nP -iTCP:8000 -sTCP:LISTEN` and `lsof -nP -iTCP:5173 -sTCP:LISTEN`, then `kill <pid>`.
+- Start backend: `python3 -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000 > logs/dev-backend.log 2>&1 &`
+- Start frontend: `npm run dev -- --host 127.0.0.1 --port 5173 > logs/dev-frontend.log 2>&1 &`
+- In this sandbox, use `setopt NO_BG_NICE` when starting background jobs to avoid `nice(5) failed` errors.
+- Health checks from within the sandbox can fail with “Operation not permitted”; verify from the browser instead.
+- Reason: background jobs may be auto-niced; the sandbox blocks `nice(5)`, so disable background niceness before launching servers.
 
 Vacation Overview
 - Open via the Vacation Planner panel in the main schedule view.
@@ -196,6 +208,7 @@ PDF export (server-side, Playwright)
 - Print-only routes:
   - `/print/week?start=YYYY-MM-DD`
   - `/print/weeks?start=YYYY-MM-DD&weeks=N` (multiple pages in one PDF)
+- Print pages (`src/pages/PrintWeekPage.tsx`, `src/pages/PrintWeeksPage.tsx`) scale the full schedule table to fit one A4 landscape page using a fixed 6mm margin + safety factor; multi-week export waits for each page layout before `__PDF_READY__`.
 - Backend endpoints:
   - `GET /v1/pdf/week?start=YYYY-MM-DD` (single week)
   - `GET /v1/pdf/weeks?start=YYYY-MM-DD&weeks=N` (combined PDF)
@@ -664,6 +677,7 @@ Backend
 - After deploy, always verify:
   - `curl -s -o /dev/null -w "%{http_code}" https://shiftplanner.wunderwerk.ai` (expect 200)
   - `curl -s -o /dev/null -w "%{http_code}" https://shiftplanner.wunderwerk.ai/api/health` (expect 200)
+- Before deploy, run `npm run build` locally to catch TypeScript build errors that unit/E2E tests may not cover.
 
 ## 13) IP-only Deployment (optional)
 - Stack: `docker compose -f docker-compose.ip.yml up -d --build`

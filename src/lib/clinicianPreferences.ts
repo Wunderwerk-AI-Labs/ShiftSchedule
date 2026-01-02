@@ -48,16 +48,16 @@ const normalizeDay = (
   const endCandidate = raw?.endTime ?? DEFAULT_END;
   const startMinutes = parseTimeToMinutes(startCandidate);
   const endMinutes = parseTimeToMinutes(endCandidate);
-  const startTime = startMinutes === null ? DEFAULT_START : startCandidate;
-  const endTime = endMinutes === null ? DEFAULT_END : endCandidate;
-  let requirement = normalizeRequirement(raw?.requirement);
+  let startTime = startMinutes === null ? DEFAULT_START : startCandidate;
+  let endTime = endMinutes === null ? DEFAULT_END : endCandidate;
+  const requirement = normalizeRequirement(raw?.requirement);
   if (
-    requirement !== "none" &&
-    (startMinutes === null ||
-      endMinutes === null ||
-      (startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes))
+    startMinutes === null ||
+    endMinutes === null ||
+    (startMinutes !== null && endMinutes !== null && endMinutes <= startMinutes)
   ) {
-    requirement = "none";
+    startTime = DEFAULT_START;
+    endTime = DEFAULT_END;
   }
   return { startTime, endTime, requirement };
 };

@@ -908,6 +908,24 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
       location.slots.map((slot) => slot.id),
     ),
   );
+  const blockById = new Map(
+    (templateState.template.blocks ?? []).map((block) => [block.id, block]),
+  );
+  const slotMetaById = new Map<
+    string,
+    { dayType?: DayType; valid: boolean }
+  >();
+  for (const location of templateState.template.locations ?? []) {
+    const colBandById = new Map(
+      (location.colBands ?? []).map((band) => [band.id, band]),
+    );
+    for (const slot of location.slots ?? []) {
+      const block = blockById.get(slot.blockId);
+      const valid = Boolean(block && classRowIds.has(block.sectionId));
+      const dayType = colBandById.get(slot.colBandId)?.dayType;
+      slotMetaById.set(slot.id, { dayType, valid });
+    }
+  }
   const slotIdMapByLegacyKey: Record<string, Record<DayType, string>> = {
     ...templateState.legacySlotIdMap,
   };
@@ -947,6 +965,18 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
       changed = true;
     }
     if (!slotIds.has(nextRowId)) {
+      changed = true;
+      continue;
+    }
+    const meta = slotMetaById.get(nextRowId);
+    if (!meta?.valid) {
+      mappedAssignments.push({ ...assignment, rowId: FREE_POOL_ID });
+      changed = true;
+      continue;
+    }
+    const assignmentDayType = getDayType(assignment.dateISO, holidaySet);
+    if (meta.dayType && meta.dayType !== assignmentDayType) {
+      mappedAssignments.push({ ...assignment, rowId: FREE_POOL_ID });
       changed = true;
       continue;
     }
