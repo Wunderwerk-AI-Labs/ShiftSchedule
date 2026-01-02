@@ -1107,5 +1107,22 @@ test.describe.serial("ui login flows", () => {
     const coverageWidth = layoutBox!.width / target.width;
     const coverageHeight = layoutBox!.height / target.height;
     expect(Math.max(coverageWidth, coverageHeight)).toBeGreaterThanOrEqual(0.7);
+
+    // Verify top alignment and horizontal centering
+    const pageBox = await page.locator(".print-page").first().boundingBox();
+    expect(pageBox).not.toBeNull();
+    const contentBox = await page
+      .locator(".print-page > div.relative > div.absolute")
+      .first()
+      .boundingBox();
+    expect(contentBox).not.toBeNull();
+    // Top alignment: content should start near the top of the page (small margin tolerance)
+    const topOffset = contentBox!.y - pageBox!.y;
+    expect(topOffset).toBeLessThanOrEqual(10); // Within 10px of top
+    // Horizontal centering: left and right margins should be approximately equal
+    const leftMargin = contentBox!.x - pageBox!.x;
+    const rightMargin = (pageBox!.x + pageBox!.width) - (contentBox!.x + contentBox!.width);
+    const marginDifference = Math.abs(leftMargin - rightMargin);
+    expect(marginDifference).toBeLessThanOrEqual(5); // Within 5px of center
   });
 });

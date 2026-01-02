@@ -112,17 +112,21 @@ const PrintableWeek = ({
       const contentWidth = Math.max(content.scrollWidth, contentRect.width);
       const contentHeight = Math.max(content.scrollHeight, contentRect.height);
       if (!contentWidth || !contentHeight) return;
-      const scale = Math.min(available.width / contentWidth, available.height / contentHeight);
-      const safeScale = Number.isFinite(scale) ? scale * PRINT_SAFETY_SCALE : 1;
-      const nextScale = safeScale > 0 ? safeScale : 1;
+      // Calculate scale to fit within printable area, but never scale up above 1
+      const fitScale = Math.min(available.width / contentWidth, available.height / contentHeight);
+      const safeScale = Number.isFinite(fitScale) ? fitScale * PRINT_SAFETY_SCALE : 1;
+      // Never scale above 1 (only scale down, not up)
+      const nextScale = Math.min(Math.max(safeScale, 0.01), 1);
       const scaledWidth = contentWidth * nextScale;
       const scaledHeight = contentHeight * nextScale;
       setPrintLayout({
         scale: nextScale,
         width: scaledWidth,
         height: scaledHeight,
+        // Horizontally centered
         offsetX: Math.max(0, (available.width - scaledWidth) / 2),
-        offsetY: Math.max(0, (available.height - scaledHeight) / 2),
+        // Top-aligned (no vertical centering)
+        offsetY: 0,
       });
     };
     const frame = window.requestAnimationFrame(updateScale);
