@@ -51,6 +51,17 @@ SECTION_BLOCK_COLORS = [
 ]
 
 
+def _is_valid_date_iso(value: str) -> bool:
+    """Check if value looks like a valid YYYY-MM-DD date string."""
+    if not value or len(value) != 10:
+        return False
+    try:
+        datetime.fromisoformat(f"{value}T00:00:00")
+        return True
+    except ValueError:
+        return False
+
+
 def _get_day_type(date_iso: str, holidays: List[Holiday]) -> str:
     if any(holiday.dateISO == date_iso for holiday in holidays):
         return "holiday"
@@ -962,6 +973,10 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
     for key, value in (state.slotOverridesByKey or {}).items():
         row_id, date_iso = key.rsplit("__", 1) if "__" in key else (key, "")
         if not row_id or not date_iso:
+            continue
+        # Skip malformed keys where date_iso is not a valid date (e.g., day type like "mon")
+        if not _is_valid_date_iso(date_iso):
+            changed = True
             continue
         next_row_id = row_id
         if next_row_id not in slot_ids:
