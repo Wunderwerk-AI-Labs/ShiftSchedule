@@ -1,4 +1,11 @@
 import { useState } from "react";
+import {
+  buttonAdd,
+  buttonDanger,
+  buttonPrimary,
+  buttonSecondary,
+  buttonSmall,
+} from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import { Location, WorkplaceRow } from "../../data/mockData";
 import type { Holiday, SolverSettings, WeeklyCalendarTemplate } from "../../api/client";
@@ -517,22 +524,14 @@ export default function SettingsView({
                   <button
                     type="button"
                     onClick={() => onEditClinician(clinician.id)}
-                    className={cx(
-                      "rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600",
-                      "hover:bg-slate-50 hover:text-slate-900",
-                      "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
-                    )}
+                    className={buttonSmall.base}
                   >
                     Edit
                   </button>
                   <button
                     type="button"
                     onClick={() => onRemoveClinician(clinician.id)}
-                    className={cx(
-                      "rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600",
-                      "hover:bg-rose-50 hover:text-rose-700",
-                      "dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-900/30",
-                    )}
+                    className={buttonDanger.base}
                   >
                     Remove
                   </button>
@@ -544,11 +543,7 @@ export default function SettingsView({
             <button
               type="button"
               onClick={() => setShowNewClinician(true)}
-              className={cx(
-                "w-full rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700",
-                "hover:bg-slate-50 active:bg-slate-100",
-                "dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100 dark:hover:bg-slate-800",
-              )}
+              className={buttonAdd.base}
             >
               Add Person
             </button>
@@ -596,11 +591,7 @@ export default function SettingsView({
                     setNewClinicianHours("");
                     setShowNewClinician(false);
                   }}
-                  className={cx(
-                    "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm",
-                    "hover:bg-slate-50 active:bg-slate-100",
-                    "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                  )}
+                  className={buttonPrimary.base}
                 >
                   Save
                 </button>
@@ -611,11 +602,7 @@ export default function SettingsView({
                     setNewClinicianName("");
                     setNewClinicianHours("");
                   }}
-                  className={cx(
-                    "rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600",
-                    "hover:bg-slate-50 hover:text-slate-900",
-                    "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
-                  )}
+                  className={buttonSecondary.base}
                 >
                   Cancel
                 </button>
@@ -757,11 +744,7 @@ export default function SettingsView({
                   <button
                     type="button"
                     onClick={() => onRemoveHoliday(holiday)}
-                    className={cx(
-                      "rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600",
-                      "hover:bg-slate-50 hover:text-slate-900",
-                      "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
-                    )}
+                    className={buttonSmall.base}
                   >
                     Remove
                   </button>
@@ -774,11 +757,7 @@ export default function SettingsView({
             <button
               type="button"
               onClick={() => setShowNewHoliday(true)}
-              className={cx(
-                "w-full rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700",
-                "hover:bg-slate-50 active:bg-slate-100",
-                "dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100 dark:hover:bg-slate-800",
-              )}
+              className={buttonAdd.base}
             >
               Add Holiday
             </button>
@@ -833,11 +812,7 @@ export default function SettingsView({
                     setHolidayInputError(null);
                     setShowNewHoliday(false);
                   }}
-                  className={cx(
-                    "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm",
-                    "hover:bg-slate-50 active:bg-slate-100",
-                    "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                  )}
+                  className={buttonPrimary.base}
                 >
                   Save
                 </button>
@@ -849,11 +824,7 @@ export default function SettingsView({
                     setNewHolidayName("");
                     setHolidayInputError(null);
                   }}
-                  className={cx(
-                    "rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600",
-                    "hover:bg-slate-50 hover:text-slate-900",
-                    "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
-                  )}
+                  className={buttonSecondary.base}
                 >
                   Cancel
                 </button>

@@ -51,9 +51,6 @@ export default function ClinicianEditor({
 }: ClinicianEditorProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [vacationDrafts, setVacationDrafts] = useState<Record<string, string>>(
-    {},
-  );
   const [showPastVacations, setShowPastVacations] = useState(false);
   const [preferredWorkingTimes, setPreferredWorkingTimes] = useState(() =>
     normalizePreferredWorkingTimes(clinician.preferredWorkingTimes),
@@ -138,62 +135,6 @@ export default function ClinicianEditor({
     }
     clearTimeWarning(dayId);
     commitPreferredWorkingTimes();
-  };
-
-  const formatEuropeanDate = (dateISO: string) => {
-    const [year, month, day] = dateISO.split("-");
-    if (!year || !month || !day) return dateISO;
-    return `${day}.${month}.${year}`;
-  };
-
-  const parseEuropeanDateInput = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (isoMatch) {
-      const [, year, month, day] = isoMatch;
-      const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-      if (
-        date.getUTCFullYear() === Number(year) &&
-        date.getUTCMonth() + 1 === Number(month) &&
-        date.getUTCDate() === Number(day)
-      ) {
-        return `${year}-${month}-${day}`;
-      }
-      return null;
-    }
-    const match = trimmed.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-    if (!match) return null;
-    const [, day, month, year] = match;
-    const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-    if (
-      date.getUTCFullYear() !== Number(year) ||
-      date.getUTCMonth() + 1 !== Number(month) ||
-      date.getUTCDate() !== Number(day)
-    ) {
-      return null;
-    }
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  };
-
-  const getDraftKey = (vacationId: string, field: "startISO" | "endISO") =>
-    `${vacationId}-${field}`;
-
-  const getVacationInputValue = (
-    vacationId: string,
-    field: "startISO" | "endISO",
-    dateISO: string,
-  ) => {
-    const key = getDraftKey(vacationId, field);
-    return vacationDrafts[key] ?? formatEuropeanDate(dateISO);
-  };
-
-  const clearVacationDraft = (key: string) => {
-    setVacationDrafts((prev) => {
-      if (!(key in prev)) return prev;
-      const { [key]: _unused, ...rest } = prev;
-      return rest;
-    });
   };
 
   useEffect(() => {
@@ -398,86 +339,75 @@ export default function ClinicianEditor({
               No upcoming vacations.
             </div>
           ) : (
-            upcomingVacations.map((vacation) => (
-              <div
-                key={vacation.id}
-                className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
-              >
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="DD.MM.YYYY"
-                  value={getVacationInputValue(
-                    vacation.id,
-                    "startISO",
-                    vacation.startISO,
-                  )}
-                  onChange={(e) => {
-                    const nextValue = e.target.value;
-                    const key = getDraftKey(vacation.id, "startISO");
-                    setVacationDrafts((prev) => ({
-                      ...prev,
-                      [key]: nextValue,
-                    }));
-                    const parsed = parseEuropeanDateInput(nextValue);
-                    if (parsed) {
-                      onUpdateVacation(clinician.id, vacation.id, {
-                        startISO: parsed,
-                      });
-                    }
-                  }}
-                  onBlur={() =>
-                    clearVacationDraft(getDraftKey(vacation.id, "startISO"))
-                  }
+            upcomingVacations.map((vacation) => {
+              const isInvalid = vacation.endISO < vacation.startISO;
+              return (
+                <div
+                  key={vacation.id}
                   className={cx(
-                    "rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-900",
-                    "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
-                  )}
-                />
-                <span className="text-xs font-semibold text-slate-400">–</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="DD.MM.YYYY"
-                  value={getVacationInputValue(
-                    vacation.id,
-                    "endISO",
-                    vacation.endISO,
-                  )}
-                  onChange={(e) => {
-                    const nextValue = e.target.value;
-                    const key = getDraftKey(vacation.id, "endISO");
-                    setVacationDrafts((prev) => ({
-                      ...prev,
-                      [key]: nextValue,
-                    }));
-                    const parsed = parseEuropeanDateInput(nextValue);
-                    if (parsed) {
-                      onUpdateVacation(clinician.id, vacation.id, {
-                        endISO: parsed,
-                      });
-                    }
-                  }}
-                  onBlur={() =>
-                    clearVacationDraft(getDraftKey(vacation.id, "endISO"))
-                  }
-                  className={cx(
-                    "rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-900",
-                    "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
-                  )}
-                />
-                <button
-                  type="button"
-                  onClick={() => onRemoveVacation(clinician.id, vacation.id)}
-                  className={cx(
-                    "ml-auto rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600",
-                    "hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                    "flex flex-wrap items-center gap-2 rounded-2xl border bg-white px-3 py-2 dark:bg-slate-900",
+                    isInvalid
+                      ? "border-rose-300 dark:border-rose-500/60"
+                      : "border-slate-200 dark:border-slate-700",
                   )}
                 >
-                  Remove
-                </button>
-              </div>
-            ))
+                  <input
+                    type="date"
+                    value={vacation.startISO}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value) {
+                        onUpdateVacation(clinician.id, vacation.id, {
+                          startISO: value,
+                        });
+                      }
+                    }}
+                    className={cx(
+                      "rounded-lg border px-2 py-1 text-xs font-medium",
+                      isInvalid
+                        ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
+                        : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
+                      "focus:border-sky-300 dark:bg-slate-900",
+                    )}
+                  />
+                  <span className="text-xs font-semibold text-slate-400">–</span>
+                  <input
+                    type="date"
+                    value={vacation.endISO}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value) {
+                        onUpdateVacation(clinician.id, vacation.id, {
+                          endISO: value,
+                        });
+                      }
+                    }}
+                    className={cx(
+                      "rounded-lg border px-2 py-1 text-xs font-medium",
+                      isInvalid
+                        ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
+                        : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
+                      "focus:border-sky-300 dark:bg-slate-900",
+                    )}
+                  />
+                  {isInvalid && (
+                    <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                      End must be after start
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemoveVacation(clinician.id, vacation.id)}
+                    className={cx(
+                      "ml-auto rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600",
+                      "hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                    )}
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
 
@@ -494,86 +424,75 @@ export default function ClinicianEditor({
               Past vacations are hidden by default. Expand to view or edit.
             </div>
             <div className="mt-3 space-y-2">
-              {pastVacations.map((vacation) => (
-                <div
-                  key={vacation.id}
-                  className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
-                >
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="DD.MM.YYYY"
-                    value={getVacationInputValue(
-                      vacation.id,
-                      "startISO",
-                      vacation.startISO,
-                    )}
-                    onChange={(e) => {
-                      const nextValue = e.target.value;
-                      const key = getDraftKey(vacation.id, "startISO");
-                      setVacationDrafts((prev) => ({
-                        ...prev,
-                        [key]: nextValue,
-                      }));
-                      const parsed = parseEuropeanDateInput(nextValue);
-                      if (parsed) {
-                        onUpdateVacation(clinician.id, vacation.id, {
-                          startISO: parsed,
-                        });
-                      }
-                    }}
-                    onBlur={() =>
-                      clearVacationDraft(getDraftKey(vacation.id, "startISO"))
-                    }
+              {pastVacations.map((vacation) => {
+                const isInvalid = vacation.endISO < vacation.startISO;
+                return (
+                  <div
+                    key={vacation.id}
                     className={cx(
-                      "rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-900",
-                      "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
-                    )}
-                  />
-                  <span className="text-xs font-semibold text-slate-400">–</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="DD.MM.YYYY"
-                    value={getVacationInputValue(
-                      vacation.id,
-                      "endISO",
-                      vacation.endISO,
-                    )}
-                    onChange={(e) => {
-                      const nextValue = e.target.value;
-                      const key = getDraftKey(vacation.id, "endISO");
-                      setVacationDrafts((prev) => ({
-                        ...prev,
-                        [key]: nextValue,
-                      }));
-                      const parsed = parseEuropeanDateInput(nextValue);
-                      if (parsed) {
-                        onUpdateVacation(clinician.id, vacation.id, {
-                          endISO: parsed,
-                        });
-                      }
-                    }}
-                    onBlur={() =>
-                      clearVacationDraft(getDraftKey(vacation.id, "endISO"))
-                    }
-                    className={cx(
-                      "rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-900",
-                      "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
-                    )}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => onRemoveVacation(clinician.id, vacation.id)}
-                    className={cx(
-                      "ml-auto rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600",
-                      "hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                      "flex flex-wrap items-center gap-2 rounded-2xl border bg-slate-50 px-3 py-2 dark:bg-slate-800",
+                      isInvalid
+                        ? "border-rose-300 dark:border-rose-500/60"
+                        : "border-slate-200 dark:border-slate-700",
                     )}
                   >
-                    Remove
-                  </button>
-                </div>
-              ))}
+                    <input
+                      type="date"
+                      value={vacation.startISO}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value) {
+                          onUpdateVacation(clinician.id, vacation.id, {
+                            startISO: value,
+                          });
+                        }
+                      }}
+                      className={cx(
+                        "rounded-lg border px-2 py-1 text-xs font-medium",
+                        isInvalid
+                          ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
+                          : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
+                        "focus:border-sky-300 dark:bg-slate-900",
+                      )}
+                    />
+                    <span className="text-xs font-semibold text-slate-400">–</span>
+                    <input
+                      type="date"
+                      value={vacation.endISO}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value) {
+                          onUpdateVacation(clinician.id, vacation.id, {
+                            endISO: value,
+                          });
+                        }
+                      }}
+                      className={cx(
+                        "rounded-lg border px-2 py-1 text-xs font-medium",
+                        isInvalid
+                          ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
+                          : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
+                        "focus:border-sky-300 dark:bg-slate-900",
+                      )}
+                    />
+                    {isInvalid && (
+                      <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
+                        End must be after start
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onRemoveVacation(clinician.id, vacation.id)}
+                      className={cx(
+                        "ml-auto rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600",
+                        "hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                      )}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </details>
         ) : null}

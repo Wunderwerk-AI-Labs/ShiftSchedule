@@ -149,7 +149,8 @@ Clinician Editor (modal)
 - Panel order: Eligible Sections → Vacations → Preferred Working Times.
 - Eligible sections list is ordered. Drag to set priority (this order is also the preference list).
 - Add eligible sections via dropdown + Add button; remove via per-row Remove button.
-- Vacation management uses compact DD.MM.YYYY inputs with a dash between start and end.
+- Vacation management uses native date pickers; start date is unrestricted, end date has min=startISO.
+- Invalid date ranges (end before start) show red styling with "End must be after start" warning but are allowed for editing flexibility.
 - Past vacations collapsed in a <details>.
 - Modal body is scrollable for long vacation lists.
 - Preferred working times persist per clinician as `preferredWorkingTimes` (mon..sun with startTime/endTime + requirement none/preference/mandatory).
@@ -619,7 +620,21 @@ Deployment note
 
 ---
 
-## 10) Key Files
+## 10) UI Styling
+Centralized button styles
+- All button styles are defined in `src/lib/buttonStyles.ts` for consistency.
+- `pillToggle` / `getPillToggleClasses(isActive)`: toggle buttons with sky-blue active state.
+- `buttonPrimary`: main action buttons (Save, Close, Run).
+- `buttonSecondary`: secondary actions (Cancel, Reset, Today).
+- `buttonSmall`: inline action buttons (Edit, Remove in lists).
+- `buttonDanger`: destructive actions (Remove with rose color).
+- `buttonAdd`: dashed border add buttons (Add Person, Add Holiday).
+- `pillLabel`: non-interactive label pills.
+- When adding new buttons, use these centralized styles instead of inline classes.
+
+---
+
+## 11) Key Files
 Frontend
 - `src/pages/WeeklySchedulePage.tsx` (main state + logic)
 - `src/components/schedule/ScheduleGrid.tsx`
@@ -653,7 +668,7 @@ Backend
 
 ---
 
-## 11) Notes for New Agents
+## 12) Notes for New Agents
 - The calendar is the source of truth for edits; Settings manages section priority + min slots + pool names + clinician list.
 - Pool ids: Distribution Pool = `pool-not-allocated`, Reserve Pool = `pool-manual`, Rest Day = `pool-rest-day`, Vacation = `pool-vacation`.
 - Keep drag restricted to same day; manual overrides are allowed even if they violate solver rules.
@@ -666,7 +681,7 @@ Backend
 
 ---
 
-## 12) Current Hetzner Deployment (Domain, default)
+## 13) Current Hetzner Deployment (Domain, default)
 - Server IP: `46.224.114.183`
 - SSH user: `root`
 - Path: `/opt/shiftschedule`
@@ -694,7 +709,7 @@ Backend
   - `curl -s -o /dev/null -w "%{http_code}" https://shiftplanner.wunderwerk.ai/api/health` (expect 200)
 - Before deploy, run `npm run build` locally to catch TypeScript build errors that unit/E2E tests may not cover.
 
-## 13) IP-only Deployment (optional)
+## 14) IP-only Deployment (optional)
 - Stack: `docker compose -f docker-compose.ip.yml up -d --build`
 - Frontend: `http://46.224.114.183`
 - Backend: `http://46.224.114.183:8000`

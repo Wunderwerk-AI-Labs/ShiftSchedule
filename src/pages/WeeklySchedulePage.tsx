@@ -2596,6 +2596,15 @@ export default function WeeklySchedulePage({
             ),
           );
         }}
+        onUpdateName={(clinicianId, name) => {
+          setClinicians((prev) =>
+            prev.map((clinician) =>
+              clinician.id === clinicianId
+                ? { ...clinician, name }
+                : clinician,
+            ),
+          );
+        }}
       />
 
       <IcalExportModal

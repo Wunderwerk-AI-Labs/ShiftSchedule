@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getPillToggleClasses } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 
 type TopBarProps = {
@@ -56,13 +57,7 @@ export default function TopBar({
               onSetViewMode(viewMode === "settings" ? "calendar" : "settings")
             }
             aria-pressed={viewMode === "settings"}
-            className={cx(
-              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
-              "hover:bg-slate-100 active:bg-slate-200/80",
-              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
-              viewMode === "settings" &&
-                "border-sky-300 bg-sky-100 text-sky-800 shadow-sm dark:border-sky-400/50 dark:bg-sky-900/60 dark:text-sky-100",
-            )}
+            className={getPillToggleClasses(viewMode === "settings")}
           >
             {viewMode === "settings" ? "Back" : "Settings"}
           </button>
@@ -70,13 +65,7 @@ export default function TopBar({
             type="button"
             onClick={() => onSetViewMode(viewMode === "help" ? "calendar" : "help")}
             aria-pressed={viewMode === "help"}
-            className={cx(
-              "inline-flex items-center rounded-full border border-slate-300 bg-transparent px-3 py-2 text-xs font-medium text-slate-700 sm:px-4 sm:text-sm",
-              "hover:bg-slate-100 active:bg-slate-200/80",
-              "dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800/60",
-              viewMode === "help" &&
-                "border-sky-300 bg-sky-100 text-sky-800 shadow-sm dark:border-sky-400/50 dark:bg-sky-900/60 dark:text-sky-100",
-            )}
+            className={getPillToggleClasses(viewMode === "help")}
           >
             {viewMode === "help" ? "Back" : "Help"}
           </button>

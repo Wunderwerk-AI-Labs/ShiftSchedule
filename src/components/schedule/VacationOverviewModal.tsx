@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buttonPrimary, buttonSecondary } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import { toISODate } from "../../lib/date";
 import type { Assignment, WeeklyCalendarTemplate } from "../../api/client";
@@ -477,11 +478,7 @@ export default function VacationOverviewModal({
               <button
                 type="button"
                 onClick={handleJumpToToday}
-                className={cx(
-                  "rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700",
-                  "hover:bg-slate-50 active:bg-slate-100",
-                  "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                )}
+                className={buttonSecondary.base}
               >
                 Today
               </button>
@@ -509,11 +506,7 @@ export default function VacationOverviewModal({
               <button
                 type="button"
                 onClick={onClose}
-                className={cx(
-                  "rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900",
-                  "hover:bg-slate-50 active:bg-slate-100",
-                  "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                )}
+                className={buttonPrimary.base}
               >
                 Close
               </button>

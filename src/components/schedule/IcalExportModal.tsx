@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
+import { getPillToggleClasses } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import type { IcalPublishStatus } from "../../api/client";
 
@@ -247,36 +248,21 @@ export default function IcalExportModal({
               <button
                 type="button"
                 onClick={() => setTab("pdf")}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                  tab === "pdf"
-                    ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                )}
+                className={getPillToggleClasses(tab === "pdf")}
               >
                 PDF
               </button>
               <button
                 type="button"
                 onClick={() => setTab("ical")}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                  tab === "ical"
-                    ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                )}
+                className={getPillToggleClasses(tab === "ical")}
               >
                 iCal
               </button>
               <button
                 type="button"
                 onClick={() => setTab("web")}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                  tab === "web"
-                    ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                )}
+                className={getPillToggleClasses(tab === "web")}
               >
                 Web
               </button>
@@ -287,24 +273,14 @@ export default function IcalExportModal({
                 <button
                   type="button"
                   onClick={() => setIcalTab("subscribe")}
-                  className={cx(
-                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                    icalTab === "subscribe"
-                      ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                  )}
+                  className={getPillToggleClasses(icalTab === "subscribe")}
                 >
                   Subscription
                 </button>
                 <button
                   type="button"
                   onClick={() => setIcalTab("download")}
-                  className={cx(
-                    "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                    icalTab === "download"
-                      ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                  )}
+                  className={getPillToggleClasses(icalTab === "download")}
                 >
                   Download
                 </button>
@@ -460,24 +436,14 @@ export default function IcalExportModal({
                   <button
                     type="button"
                     onClick={() => setPdfMode("combined")}
-                    className={cx(
-                      "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                      pdfMode === "combined"
-                        ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                    )}
+                    className={getPillToggleClasses(pdfMode === "combined")}
                   >
                     Export as one large PDF file
                   </button>
                   <button
                     type="button"
                     onClick={() => setPdfMode("individual")}
-                    className={cx(
-                      "rounded-full border px-3 py-1.5 text-xs font-semibold",
-                      pdfMode === "individual"
-                        ? "border-slate-300 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                    )}
+                    className={getPillToggleClasses(pdfMode === "individual")}
                   >
                     Export PDF as individual files
                   </button>

@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import {
+  buttonPrimary,
+  buttonSecondary,
+  getPillToggleClasses,
+  pillLabel,
+} from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import { toISODate } from "../../lib/date";
 
@@ -176,7 +182,7 @@ export default function AutomatedPlanningPanel({
   return (
     <div className="w-fit max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:px-6">
       <div className="flex flex-col gap-4">
-        <div className="-mt-7 inline-flex self-start rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-normal text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+        <div className={cx("-mt-7 inline-flex self-start", pillLabel.base)}>
           Automated Shift Planning
         </div>
         <div className="flex flex-col gap-4">
@@ -219,13 +225,7 @@ export default function AutomatedPlanningPanel({
                 type="button"
                 onClick={handleUseVisibleWeek}
                 disabled={isRunning}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-[11px] font-normal",
-                  visibleWeekActive
-                    ? "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-400/60 dark:bg-sky-900/30 dark:text-sky-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
-                )}
+                className={getPillToggleClasses(visibleWeekActive)}
               >
                 Use visible week
               </button>
@@ -233,13 +233,7 @@ export default function AutomatedPlanningPanel({
                 type="button"
                 onClick={handleUseToday}
                 disabled={isRunning}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-[11px] font-normal",
-                  todayActive
-                    ? "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-400/60 dark:bg-sky-900/30 dark:text-sky-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
-                )}
+                className={getPillToggleClasses(todayActive)}
               >
                 Today
               </button>
@@ -254,13 +248,7 @@ export default function AutomatedPlanningPanel({
                 type="button"
                 onClick={() => setStrategy("fill")}
                 disabled={isRunning}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-xs font-normal",
-                  strategy === "fill"
-                    ? "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
-                )}
+                className={getPillToggleClasses(strategy === "fill")}
               >
                 Fill open slots only
               </button>
@@ -268,13 +256,7 @@ export default function AutomatedPlanningPanel({
                 type="button"
                 onClick={() => setStrategy("distribute")}
                 disabled={isRunning}
-                className={cx(
-                  "rounded-full border px-3 py-1.5 text-xs font-normal",
-                  strategy === "distribute"
-                    ? "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-100"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-                  "disabled:cursor-not-allowed disabled:opacity-60",
-                )}
+                className={getPillToggleClasses(strategy === "distribute")}
               >
                 Distribute all people from Distribution Pool
               </button>
@@ -287,12 +269,7 @@ export default function AutomatedPlanningPanel({
               type="button"
               onClick={handleRun}
               disabled={isRunning}
-              className={cx(
-                "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-normal text-slate-900 shadow-sm",
-                "hover:bg-slate-50 active:bg-slate-100",
-                "disabled:cursor-not-allowed disabled:opacity-70",
-                "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-              )}
+              className={buttonPrimary.base}
             >
               {isRunning ? "Planning..." : "Run automated planning"}
             </button>
@@ -307,12 +284,7 @@ export default function AutomatedPlanningPanel({
               type="button"
               onClick={handleReset}
               disabled={isRunning}
-              className={cx(
-                "rounded-xl border border-slate-200 px-4 py-2 text-sm font-normal text-slate-700",
-                "hover:bg-slate-50 active:bg-slate-100",
-                "disabled:cursor-not-allowed disabled:opacity-60",
-                "dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800",
-              )}
+              className={buttonSecondary.base}
             >
               Reset to Distribution Pool...
             </button>
