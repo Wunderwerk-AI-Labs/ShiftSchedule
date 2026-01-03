@@ -21,6 +21,8 @@ type PillPosition = {
   y: number;
   width: number;
   height: number;
+  centerX: number;
+  centerY: number;
 };
 
 type Line = {
@@ -32,90 +34,60 @@ type Line = {
 };
 
 /**
- * Determines if a violation is an on-call rest violation
- * Format: rest-{clinicianId}-{dateISO}-{targetISO}-(before|after)-{offset}
+ * Calculate the intersection point of a line from center to target with a rounded rectangle border.
+ * This makes lines appear to start/end at the pill edge instead of center.
  */
-function isOnCallRestViolation(id: string): boolean {
-  return id.startsWith("rest-");
-}
+function getEdgePoint(
+  pill: PillPosition,
+  targetX: number,
+  targetY: number,
+): { x: number; y: number } {
+  const { centerX, centerY, width, height } = pill;
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
 
-/**
- * Determines if a violation is a same-location violation
- * Format: location-{clinicianId}-{dateISO}
- */
-function isSameLocationViolation(id: string): boolean {
-  return id.startsWith("location-");
-}
+  // Direction from pill center to target
+  const dx = targetX - centerX;
+  const dy = targetY - centerY;
 
-/**
- * Determines if a violation is an overlapping times violation
- * Format: overlap-{clinicianId}-{dateISO}
- */
-function isOverlapViolation(id: string): boolean {
-  return id.startsWith("overlap-");
-}
-
-/**
- * For on-call rest violations, the first key(s) are on-call assignments,
- * and the remaining keys are conflicting assignments.
- * We want to connect each on-call pill to each conflicting pill.
- */
-function getOnCallLines(
-  violation: Violation,
-  positions: Map<string, PillPosition>,
-): Line[] {
-  const lines: Line[] = [];
-  const keys = violation.assignmentKeys;
-
-  // Find the on-call keys (same dateISO as in the violation id)
-  // On-call keys come first, then target date keys
-  // Parse the violation id to get the on-call date
-  const parts = violation.id.split("-");
-  // rest-{clinicianId}-{dateISO}-{targetISO}-(before|after)-{offset}
-  // The dateISO is the on-call date
-  const onCallDateISO = parts[2]; // e.g., "2025-01-06"
-
-  const onCallKeys: string[] = [];
-  const conflictKeys: string[] = [];
-
-  for (const key of keys) {
-    // Key format: ${rowId}__${dateISO}__${clinicianId}
-    const keyParts = key.split("__");
-    const keyDateISO = keyParts[1];
-    if (keyDateISO === onCallDateISO) {
-      onCallKeys.push(key);
-    } else {
-      conflictKeys.push(key);
-    }
+  // Handle case where target is at the same position
+  if (dx === 0 && dy === 0) {
+    return { x: centerX, y: centerY };
   }
 
-  // Draw line from each on-call pill to each conflict pill
-  for (const onCallKey of onCallKeys) {
-    const onCallPos = positions.get(onCallKey);
-    if (!onCallPos) continue;
+  // Calculate intersection with rectangle edges
+  // We'll use parametric form: point = center + t * direction
+  let t = Infinity;
 
-    for (const conflictKey of conflictKeys) {
-      const conflictPos = positions.get(conflictKey);
-      if (!conflictPos) continue;
-
-      lines.push({
-        id: `${violation.id}-${onCallKey}-${conflictKey}`,
-        x1: onCallPos.x + onCallPos.width / 2,
-        y1: onCallPos.y + onCallPos.height / 2,
-        x2: conflictPos.x + conflictPos.width / 2,
-        y2: conflictPos.y + conflictPos.height / 2,
-      });
-    }
+  // Check intersection with left/right edges
+  if (dx !== 0) {
+    const tRight = halfWidth / Math.abs(dx);
+    const tLeft = halfWidth / Math.abs(dx);
+    t = Math.min(t, dx > 0 ? tRight : tLeft);
   }
 
-  return lines;
+  // Check intersection with top/bottom edges
+  if (dy !== 0) {
+    const tBottom = halfHeight / Math.abs(dy);
+    const tTop = halfHeight / Math.abs(dy);
+    t = Math.min(t, dy > 0 ? tBottom : tTop);
+  }
+
+  // Add small padding to be slightly outside the border
+  const padding = 4;
+  const paddingT = t + padding / Math.sqrt(dx * dx + dy * dy);
+
+  return {
+    x: centerX + dx * paddingT,
+    y: centerY + dy * paddingT,
+  };
 }
 
 /**
- * For same-location violations, draw chain lines A → B → C
- * Sort keys by row order (if available) to ensure consistent ordering
+ * For each violation, connect all assignment keys in a chain.
+ * Sort by position to ensure consistent visual ordering.
  */
-function getChainLines(
+function getViolationLines(
   violation: Violation,
   positions: Map<string, PillPosition>,
 ): Line[] {
@@ -123,32 +95,43 @@ function getChainLines(
   const keys = violation.assignmentKeys;
 
   // Get positions for all keys that exist
-  const orderedPositions: Array<{ key: string; pos: PillPosition }> = [];
+  const foundPositions: Array<{ key: string; pos: PillPosition }> = [];
   for (const key of keys) {
     const pos = positions.get(key);
     if (pos) {
-      orderedPositions.push({ key, pos });
+      foundPositions.push({ key, pos });
     }
   }
 
+  // Need at least 2 pills to draw a line
+  if (foundPositions.length < 2) {
+    return lines;
+  }
+
   // Sort by vertical position (row) first, then horizontal (date)
-  orderedPositions.sort((a, b) => {
+  foundPositions.sort((a, b) => {
     if (Math.abs(a.pos.y - b.pos.y) > 10) {
       return a.pos.y - b.pos.y;
     }
     return a.pos.x - b.pos.x;
   });
 
-  // Draw chain: A → B → C
-  for (let i = 0; i < orderedPositions.length - 1; i++) {
-    const from = orderedPositions[i];
-    const to = orderedPositions[i + 1];
+  // Draw chain: first → second → third → ...
+  // This ensures each violation gets at least one line connecting its pills
+  for (let i = 0; i < foundPositions.length - 1; i++) {
+    const from = foundPositions[i];
+    const to = foundPositions[i + 1];
+
+    // Calculate edge points so lines start/end at pill borders
+    const fromEdge = getEdgePoint(from.pos, to.pos.centerX, to.pos.centerY);
+    const toEdge = getEdgePoint(to.pos, from.pos.centerX, from.pos.centerY);
+
     lines.push({
-      id: `${violation.id}-chain-${i}`,
-      x1: from.pos.x + from.pos.width / 2,
-      y1: from.pos.y + from.pos.height / 2,
-      x2: to.pos.x + to.pos.width / 2,
-      y2: to.pos.y + to.pos.height / 2,
+      id: `${violation.id}-${i}-${from.key}-${to.key}`,
+      x1: fromEdge.x,
+      y1: fromEdge.y,
+      x2: toEdge.x,
+      y2: toEdge.y,
     });
   }
 
@@ -193,6 +176,8 @@ export default function ViolationLinesOverlay({
           y: rect.top,
           width: rect.width,
           height: rect.height,
+          centerX: rect.left + rect.width / 2,
+          centerY: rect.top + rect.height / 2,
         });
       }
     }
@@ -200,19 +185,7 @@ export default function ViolationLinesOverlay({
     // Calculate lines for each violation
     const newLines: Line[] = [];
     for (const violation of violations) {
-      if (isOnCallRestViolation(violation.id)) {
-        // On-call rest: connect on-call pill to each conflicting pill
-        newLines.push(...getOnCallLines(violation, positions));
-      } else if (isSameLocationViolation(violation.id)) {
-        // Same-location: draw chain lines A → B → C
-        newLines.push(...getChainLines(violation, positions));
-      } else if (isOverlapViolation(violation.id)) {
-        // Overlapping times: draw chain lines A → B → C
-        newLines.push(...getChainLines(violation, positions));
-      } else {
-        // Default: chain lines
-        newLines.push(...getChainLines(violation, positions));
-      }
+      newLines.push(...getViolationLines(violation, positions));
     }
 
     setLines(newLines);
@@ -244,19 +217,6 @@ export default function ViolationLinesOverlay({
       className="pointer-events-none fixed inset-0 z-[1000]"
       style={{ width: "100vw", height: "100vh", overflow: "visible" }}
     >
-      <defs>
-        <marker
-          id="violation-line-end"
-          viewBox="0 0 10 10"
-          refX="5"
-          refY="5"
-          markerWidth="4"
-          markerHeight="4"
-          orient="auto-start-reverse"
-        >
-          <circle cx="5" cy="5" r="3" fill="#ef4444" />
-        </marker>
-      </defs>
       {lines.map((line) => (
         <line
           key={line.id}
@@ -268,8 +228,6 @@ export default function ViolationLinesOverlay({
           strokeWidth="2"
           strokeDasharray="6 4"
           strokeLinecap="round"
-          markerEnd="url(#violation-line-end)"
-          markerStart="url(#violation-line-end)"
         />
       ))}
     </svg>,
