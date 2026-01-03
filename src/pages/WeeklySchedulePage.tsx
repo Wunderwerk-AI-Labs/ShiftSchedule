@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
 import AutomatedPlanningPanel from "../components/schedule/AutomatedPlanningPanel";
 import HelpView from "../components/schedule/HelpView";
@@ -2061,59 +2062,82 @@ export default function WeeklySchedulePage({
     </span>
   );
   const ruleViolationsCount = ruleViolations.length;
+  // Get popover position from button ref
+  const getPopoverPosition = useCallback(() => {
+    if (!ruleViolationsRef.current) return { top: 0, right: 0 };
+    const rect = ruleViolationsRef.current.getBoundingClientRect();
+    return {
+      top: rect.bottom + 8,
+      right: window.innerWidth - rect.right,
+    };
+  }, []);
+  const [popoverPosition, setPopoverPosition] = useState({ top: 0, right: 0 });
+  useEffect(() => {
+    if (ruleViolationsOpen) {
+      setPopoverPosition(getPopoverPosition());
+    }
+  }, [ruleViolationsOpen, getPopoverPosition]);
   const ruleViolationsBadge =
     ruleViolationsCount > 0 ? (
-      <div ref={ruleViolationsRef} className="relative z-[1100]">
-        <button
-          type="button"
-          onClick={() => setRuleViolationsOpen((open) => !open)}
-          onMouseEnter={() => setIsRuleViolationsHovered(true)}
-          onMouseLeave={() => setIsRuleViolationsHovered(false)}
-          className={cx(
-            "inline-flex items-center self-start rounded-full px-2.5 py-1 text-[11px] font-normal ring-1 ring-inset sm:self-auto sm:px-3",
-            "bg-red-50 text-red-700 ring-red-200 hover:bg-red-100 dark:bg-red-900/40 dark:text-red-200 dark:ring-red-500/40",
-          )}
-          aria-expanded={ruleViolationsOpen}
-        >
-          {ruleViolationsCount} Rule Violations
-        </button>
-        {ruleViolationsOpen ? (
-          <div className="absolute right-0 z-[1100] mt-2 w-80 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-            <div className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-              Rule violations in view
-            </div>
-            <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-              {ruleViolations.map((violation) => (
-                <button
-                  key={violation.id}
-                  type="button"
-                  onClick={() =>
-                    setActiveRuleViolationId((current) =>
-                      current === violation.id ? null : violation.id,
-                    )
-                  }
-                  onMouseEnter={() => setHoveredRuleViolationId(violation.id)}
-                  onMouseLeave={() => setHoveredRuleViolationId(null)}
-                  className={cx(
-                    "w-full rounded-lg border px-2 py-1 text-left transition-colors",
-                    activeRuleViolationId === violation.id
-                      ? "border-rose-200 bg-rose-50 dark:border-rose-500/40 dark:bg-rose-900/30"
-                      : "border-slate-100 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900/70",
-                  )}
-                  aria-pressed={activeRuleViolationId === violation.id}
-                >
-                <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                  {violation.clinicianName}
+      <>
+        <div ref={ruleViolationsRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setRuleViolationsOpen((open) => !open)}
+            onMouseEnter={() => setIsRuleViolationsHovered(true)}
+            onMouseLeave={() => setIsRuleViolationsHovered(false)}
+            className={cx(
+              "inline-flex items-center self-start rounded-full px-2.5 py-1 text-[11px] font-normal ring-1 ring-inset sm:self-auto sm:px-3",
+              "bg-red-50 text-red-700 ring-red-200 hover:bg-red-100 dark:bg-red-900/40 dark:text-red-200 dark:ring-red-500/40",
+            )}
+            aria-expanded={ruleViolationsOpen}
+          >
+            {ruleViolationsCount} Rule Violations
+          </button>
+        </div>
+        {ruleViolationsOpen
+          ? createPortal(
+              <div
+                className="fixed z-[1100] w-80 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                style={{ top: popoverPosition.top, right: popoverPosition.right }}
+              >
+                <div className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  Rule violations in view
                 </div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                  {violation.summary}
+                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                  {ruleViolations.map((violation) => (
+                    <button
+                      key={violation.id}
+                      type="button"
+                      onClick={() =>
+                        setActiveRuleViolationId((current) =>
+                          current === violation.id ? null : violation.id,
+                        )
+                      }
+                      onMouseEnter={() => setHoveredRuleViolationId(violation.id)}
+                      onMouseLeave={() => setHoveredRuleViolationId(null)}
+                      className={cx(
+                        "w-full rounded-lg border px-2 py-1 text-left transition-colors",
+                        activeRuleViolationId === violation.id
+                          ? "border-rose-200 bg-rose-50 dark:border-rose-500/40 dark:bg-rose-900/30"
+                          : "border-slate-100 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900/70",
+                      )}
+                      aria-pressed={activeRuleViolationId === violation.id}
+                    >
+                      <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                        {violation.clinicianName}
+                      </div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {violation.summary}
+                      </div>
+                    </button>
+                  ))}
                 </div>
-              </button>
-            ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
+              </div>,
+              document.body,
+            )
+          : null}
+      </>
     ) : null;
   const publishToggle = (
     <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">

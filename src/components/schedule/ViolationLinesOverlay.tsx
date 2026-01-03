@@ -34,8 +34,8 @@ type Line = {
 };
 
 /**
- * Calculate the intersection point of a line from center to target with a rounded rectangle border.
- * This makes lines appear to start/end at the pill edge instead of center.
+ * Calculate the point where a line from pill center to target intersects the pill border.
+ * Returns a point on the edge of the pill (plus small padding).
  */
 function getEdgePoint(
   pill: PillPosition,
@@ -46,7 +46,7 @@ function getEdgePoint(
   const halfWidth = width / 2;
   const halfHeight = height / 2;
 
-  // Direction from pill center to target
+  // Direction vector from pill center to target
   const dx = targetX - centerX;
   const dy = targetY - centerY;
 
@@ -55,31 +55,41 @@ function getEdgePoint(
     return { x: centerX, y: centerY };
   }
 
-  // Calculate intersection with rectangle edges
-  // We'll use parametric form: point = center + t * direction
+  // Calculate the scale factor to reach each edge
+  // For x: we need |dx * t| = halfWidth, so t = halfWidth / |dx|
+  // For y: we need |dy * t| = halfHeight, so t = halfHeight / |dy|
+  // We want the smallest positive t that hits an edge first
+
   let t = Infinity;
 
-  // Check intersection with left/right edges
   if (dx !== 0) {
-    const tRight = halfWidth / Math.abs(dx);
-    const tLeft = halfWidth / Math.abs(dx);
-    t = Math.min(t, dx > 0 ? tRight : tLeft);
+    const tx = halfWidth / Math.abs(dx);
+    t = Math.min(t, tx);
   }
 
-  // Check intersection with top/bottom edges
   if (dy !== 0) {
-    const tBottom = halfHeight / Math.abs(dy);
-    const tTop = halfHeight / Math.abs(dy);
-    t = Math.min(t, dy > 0 ? tBottom : tTop);
+    const ty = halfHeight / Math.abs(dy);
+    t = Math.min(t, ty);
   }
 
-  // Add small padding to be slightly outside the border
-  const padding = 4;
-  const paddingT = t + padding / Math.sqrt(dx * dx + dy * dy);
+  // If t is still infinity (shouldn't happen), return center
+  if (!Number.isFinite(t)) {
+    return { x: centerX, y: centerY };
+  }
+
+  // Calculate the edge point
+  const edgeX = centerX + dx * t;
+  const edgeY = centerY + dy * t;
+
+  // Add padding in the direction of the line (move point outward from edge)
+  const padding = 3;
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const unitX = dx / length;
+  const unitY = dy / length;
 
   return {
-    x: centerX + dx * paddingT,
-    y: centerY + dy * paddingT,
+    x: edgeX + unitX * padding,
+    y: edgeY + unitY * padding,
   };
 }
 
@@ -214,7 +224,7 @@ export default function ViolationLinesOverlay({
 
   return createPortal(
     <svg
-      className="pointer-events-none fixed inset-0 z-[999]"
+      className="pointer-events-none fixed inset-0 z-[900]"
       style={{ width: "100vw", height: "100vh", overflow: "visible" }}
     >
       {lines.map((line) => (
