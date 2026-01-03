@@ -290,7 +290,9 @@ def _normalize_weekly_template(
     }
     location_ids = {loc.id for loc in locations}
 
-    if template is None or template.version < 4 or not getattr(template, "blocks", None):
+    # Check if template needs legacy migration: None, old version, or missing blocks property
+    # Note: Use hasattr() not truthiness check - empty blocks [] is valid for v4 templates
+    if template is None or template.version < 4 or not hasattr(template, "blocks"):
         blocks: List[TemplateBlock] = []
         default_locations: List[WeeklyTemplateLocation] = []
 
@@ -333,9 +335,7 @@ def _normalize_weekly_template(
                 continue
 
             row_bands = _normalize_template_row_bands(existing.rowBands)
-            if not row_bands:
-                row_bands = _ensure_template_location(loc.id).rowBands
-                changed = True
+            # Allow empty row bands - users can add their own
             legacy_col_bands = _normalize_legacy_col_bands(existing.colBands or [])
             if not legacy_col_bands:
                 legacy_col_bands = [
@@ -479,9 +479,7 @@ def _normalize_weekly_template(
             changed = True
             continue
         row_bands = _normalize_template_row_bands(existing.rowBands)
-        if not row_bands:
-            row_bands = _ensure_template_location(loc.id).rowBands
-            changed = True
+        # Allow empty row bands - users can add their own
         col_bands = _normalize_template_col_bands(existing.colBands)
         col_bands_by_day: Dict[str, List[TemplateColBand]] = {day_type: [] for day_type in DAY_TYPES}
         for band in col_bands:
@@ -728,6 +726,27 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
     if len(filtered_assignments) != len(state.assignments):
         state.assignments = filtered_assignments
         changed = True
+
+    # Ensure system pools exist (Rest Day and Vacation)
+    existing_row_ids = {row.id for row in state.rows}
+    system_pools = [
+        WorkplaceRow(
+            id="pool-rest-day",
+            name="Rest Day",
+            kind="pool",
+            dotColorClass="bg-slate-200",
+        ),
+        WorkplaceRow(
+            id="pool-vacation",
+            name="Vacation",
+            kind="pool",
+            dotColorClass="bg-emerald-500",
+        ),
+    ]
+    for pool in system_pools:
+        if pool.id not in existing_row_ids:
+            state.rows.append(pool)
+            changed = True
 
     locations_enabled = state.locationsEnabled is not False
     if state.locationsEnabled != locations_enabled:
@@ -1084,29 +1103,11 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
 
 
 def _default_state() -> AppState:
+    """Create a minimal empty default state with only required pool rows."""
     current_year = datetime.now(timezone.utc).year
-    default_location = Location(id=DEFAULT_LOCATION_ID, name="Berlin")
+    default_location = Location(id=DEFAULT_LOCATION_ID, name="Default")
+    # Only create required pool rows, no sections or clinicians
     rows = [
-        WorkplaceRow(
-            id="mri",
-            name="MRI",
-            kind="class",
-            dotColorClass="bg-violet-500",
-            blockColor=SECTION_BLOCK_COLORS[0],
-            locationId=DEFAULT_LOCATION_ID,
-            subShifts=[
-                SubShift(
-                    id="s1",
-                    name="Shift 1",
-                    order=1,
-                    startTime=DEFAULT_SUB_SHIFT_START,
-                    endTime=_format_minutes(
-                        DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
-                    ),
-                    endDayOffset=0,
-                )
-            ],
-        ),
         WorkplaceRow(
             id="pool-rest-day",
             name="Rest Day",
@@ -1120,61 +1121,27 @@ def _default_state() -> AppState:
             dotColorClass="bg-emerald-500",
         ),
     ]
-    clinicians: List[Clinician] = [
-        Clinician(
-            id="alex-hartmann",
-            name="Alex Hartmann",
-            qualifiedClassIds=["mri"],
-            preferredClassIds=["mri"],
-            vacations=[],
-            preferredWorkingTimes=_normalize_preferred_working_times({}),
-            workingHoursPerWeek=38,
+    clinicians: List[Clinician] = []
+    min_slots: Dict[str, MinSlots] = {}
+    # Create empty col bands (one per day type) but no row bands
+    empty_col_bands = [
+        TemplateColBand(
+            id=f"{DEFAULT_LOCATION_ID}-col-{day_type}-1",
+            label="",
+            order=1,
+            dayType=day_type,
         )
+        for day_type in DAY_TYPES
     ]
-    min_slots: Dict[str, MinSlots] = {
-        _build_shift_row_id("mri", "s1"): MinSlots(weekday=1, weekend=1),
-    }
-    template_location = _ensure_template_location(DEFAULT_LOCATION_ID)
-    template_location.rowBands = [
-        TemplateRowBand(id="row-1", label="Row 1", order=1)
-    ]
-    monday_col = next(
-        (band for band in template_location.colBands if band.dayType == "mon"),
-        None,
-    )
-    block_id = "block-mri-1"
-    slot_id = "slot-mri-mon-1"
     weekly_template = WeeklyCalendarTemplate(
         version=4,
-        blocks=[
-            TemplateBlock(
-                id=block_id,
-                sectionId="mri",
-                label=None,
-                requiredSlots=0,
-                color=SECTION_BLOCK_COLORS[0],
-            )
-        ],
+        blocks=[],
         locations=[
             WeeklyTemplateLocation(
                 locationId=DEFAULT_LOCATION_ID,
-                rowBands=template_location.rowBands,
-                colBands=template_location.colBands,
-                slots=[
-                    TemplateSlot(
-                        id=slot_id,
-                        locationId=DEFAULT_LOCATION_ID,
-                        rowBandId=template_location.rowBands[0].id,
-                        colBandId=monday_col.id if monday_col else "",
-                        blockId=block_id,
-                        requiredSlots=1,
-                        startTime=DEFAULT_SUB_SHIFT_START,
-                        endTime=_format_minutes(
-                            DEFAULT_SUB_SHIFT_START_MINUTES + DEFAULT_SUB_SHIFT_MINUTES
-                        ),
-                        endDayOffset=0,
-                    )
-                ],
+                rowBands=[],
+                colBands=empty_col_bands,
+                slots=[],
             )
         ],
     )

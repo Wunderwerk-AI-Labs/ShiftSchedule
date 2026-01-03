@@ -180,7 +180,7 @@ export default function AutomatedPlanningPanel({
   };
 
   return (
-    <div className="w-fit max-w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:px-6">
+    <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
       <div className="flex flex-col gap-4">
         <div className={cx("-mt-7 inline-flex self-start", pillLabel.base)}>
           Automated Shift Planning
@@ -197,7 +197,7 @@ export default function AutomatedPlanningPanel({
                 disabled={isRunning}
                 className={getPillToggleClasses(visibleWeekActive)}
               >
-                Use visible week
+                Current week
               </button>
               <button
                 type="button"
@@ -220,8 +220,8 @@ export default function AutomatedPlanningPanel({
                 placeholder="Start DD.MM.YYYY"
                 disabled={isRunning}
                 className={cx(
-                  "w-36 rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900",
-                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:[color-scheme:dark]",
+                  "w-32 rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal text-slate-600",
+                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:[color-scheme:dark]",
                 )}
               />
               <input
@@ -235,8 +235,8 @@ export default function AutomatedPlanningPanel({
                 placeholder="End DD.MM.YYYY"
                 disabled={isRunning}
                 className={cx(
-                  "w-36 rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900",
-                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:[color-scheme:dark]",
+                  "w-32 rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal text-slate-600",
+                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:[color-scheme:dark]",
                 )}
               />
             </div>
@@ -273,7 +273,7 @@ export default function AutomatedPlanningPanel({
               disabled={isRunning}
               className={buttonPrimary.base}
             >
-              {isRunning ? "Planning..." : "Run automated planning"}
+              {isRunning ? "Planning..." : "Run"}
             </button>
             {progressLabel ? (
               <div className="text-xs font-normal text-slate-500 dark:text-slate-300">
@@ -288,7 +288,7 @@ export default function AutomatedPlanningPanel({
               disabled={isRunning}
               className={buttonSecondary.base}
             >
-              Reset...
+              Reset
             </button>
           </div>
         </div>

@@ -75,6 +75,7 @@ export default function ClinicianPickerPopover({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [popoverHeight, setPopoverHeight] = useState(0);
 
   useEffect(() => {
     if (!open) {
@@ -85,7 +86,7 @@ export default function ClinicianPickerPopover({
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
 
@@ -99,6 +100,13 @@ export default function ClinicianPickerPopover({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open, onClose]);
+
+  // Measure popover height after render
+  useEffect(() => {
+    if (open && popoverRef.current) {
+      setPopoverHeight(popoverRef.current.offsetHeight);
+    }
+  }, [open, clinicians.length, searchQuery]);
 
   if (!open || !anchorRect) return null;
 
@@ -115,17 +123,37 @@ export default function ClinicianPickerPopover({
     return a.name.localeCompare(b.name);
   });
 
-  // Position the popover below the anchor
-  const top = anchorRect.bottom + 4;
-  const left = Math.max(8, anchorRect.left);
+  // Calculate available space below and above the anchor
+  const viewportHeight = window.innerHeight;
+  const spaceBelow = viewportHeight - anchorRect.bottom - 8;
+  const spaceAbove = anchorRect.top - 8;
+  const estimatedHeight = Math.min(400, popoverHeight || 350);
+
+  // Position above if not enough space below but enough above
+  const openAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+
+  let top: number;
+  let maxHeight: number;
+
+  if (openAbove) {
+    // Position above the anchor
+    maxHeight = Math.min(400, spaceAbove);
+    top = anchorRect.top - 4 - Math.min(estimatedHeight, maxHeight);
+  } else {
+    // Position below the anchor
+    maxHeight = Math.min(400, spaceBelow);
+    top = anchorRect.bottom + 4;
+  }
+
+  const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - 288 - 8));
 
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-[100] w-72 rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
-      style={{ top, left, maxHeight: "min(400px, calc(100vh - 100px))" }}
+      className="fixed z-[100] flex w-72 flex-col rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
+      style={{ top, left, maxHeight }}
     >
-      <div className="border-b border-slate-100 px-3 py-2 dark:border-slate-800">
+      <div className="flex-shrink-0 border-b border-slate-100 px-3 py-2 dark:border-slate-800">
         <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">
           {rowName}
         </div>
@@ -133,7 +161,7 @@ export default function ClinicianPickerPopover({
           {dateLabel}
         </div>
       </div>
-      <div className="border-b border-slate-100 px-3 py-2 dark:border-slate-800">
+      <div className="flex-shrink-0 border-b border-slate-100 px-3 py-2 dark:border-slate-800">
         <input
           ref={inputRef}
           type="text"
@@ -143,7 +171,7 @@ export default function ClinicianPickerPopover({
           className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-700 placeholder-slate-400 focus:border-slate-400 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500"
         />
       </div>
-      <div className="max-h-64 overflow-y-auto py-1">
+      <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {sortedClinicians.length === 0 ? (
           <div className="px-3 py-4 text-center text-sm text-slate-400 dark:text-slate-500">
             No clinicians found

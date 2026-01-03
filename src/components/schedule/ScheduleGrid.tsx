@@ -100,7 +100,7 @@ export default function ScheduleGrid({
   clinicians = [],
   getIsOnRestDay,
   getHasTimeConflict,
-  enforceSameLocationPerDay = false,
+  enforceSameLocationPerDay = true,
   onAddAssignment,
   onRemoveAssignment,
 }: ScheduleGridProps) {

@@ -14,10 +14,12 @@ type ClinicianEditorProps = {
     vacations: Array<{ id: string; startISO: string; endISO: string }>;
     preferredWorkingTimes?: PreferredWorkingTimes;
     workingHoursPerWeek?: number;
+    workingHoursToleranceHours?: number;
   };
   classRows: Array<{ id: string; name: string }>;
   initialSection?: "vacations";
   onUpdateWorkingHours?: (clinicianId: string, workingHoursPerWeek?: number) => void;
+  onUpdateWorkingHoursTolerance?: (clinicianId: string, toleranceHours?: number) => void;
   onUpdatePreferredWorkingTimes?: (
     clinicianId: string,
     preferredWorkingTimes: PreferredWorkingTimes,
@@ -47,6 +49,7 @@ export default function ClinicianEditor({
   onRemoveVacation,
   initialSection,
   onUpdateWorkingHours,
+  onUpdateWorkingHoursTolerance,
   onUpdatePreferredWorkingTimes,
 }: ClinicianEditorProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -57,6 +60,9 @@ export default function ClinicianEditor({
   );
   const [workingHoursPerWeek, setWorkingHoursPerWeek] = useState(
     clinician.workingHoursPerWeek ?? "",
+  );
+  const [workingHoursTolerance, setWorkingHoursTolerance] = useState(
+    clinician.workingHoursToleranceHours ?? 5,
   );
   const [timeWarnings, setTimeWarnings] = useState<Record<string, string>>({});
   const suppressPreferredWorkingTimesUpdate = useRef(true);
@@ -159,6 +165,9 @@ export default function ClinicianEditor({
   useEffect(() => {
     setWorkingHoursPerWeek(clinician.workingHoursPerWeek ?? "");
   }, [clinician.id, clinician.workingHoursPerWeek]);
+  useEffect(() => {
+    setWorkingHoursTolerance(clinician.workingHoursToleranceHours ?? 5);
+  }, [clinician.id, clinician.workingHoursToleranceHours]);
   useEffect(() => {
     setPreferredWorkingTimes(
       normalizePreferredWorkingTimes(clinician.preferredWorkingTimes),
@@ -511,36 +520,70 @@ export default function ClinicianEditor({
           </div>
         </div>
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Working hours per week
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              value={workingHoursPerWeek}
-              onChange={(event) => {
-                const value = event.target.value;
-                setWorkingHoursPerWeek(value === "" ? "" : Number(value));
-                if (!onUpdateWorkingHours) return;
-                const trimmed = value.trim();
-                if (!trimmed) {
-                  onUpdateWorkingHours(clinician.id, undefined);
-                  return;
-                }
-                const parsed = Number(trimmed);
-                if (!Number.isFinite(parsed)) return;
-                onUpdateWorkingHours(clinician.id, Math.max(0, parsed));
-              }}
-              className={cx(
-                "w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm font-medium text-slate-900",
-                "focus:border-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
-              )}
-              placeholder="40"
-            />
-            <div className="text-sm text-slate-500 dark:text-slate-400">
-              Optional, can be left blank. Denotes the number of working hours according to the contract.
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Working hours per week
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={workingHoursPerWeek}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setWorkingHoursPerWeek(value === "" ? "" : Number(value));
+                    if (!onUpdateWorkingHours) return;
+                    const trimmed = value.trim();
+                    if (!trimmed) {
+                      onUpdateWorkingHours(clinician.id, undefined);
+                      return;
+                    }
+                    const parsed = Number(trimmed);
+                    if (!Number.isFinite(parsed)) return;
+                    onUpdateWorkingHours(clinician.id, Math.max(0, parsed));
+                  }}
+                  className={cx(
+                    "w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm font-medium text-slate-900",
+                    "focus:border-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
+                  )}
+                  placeholder="40"
+                />
+              </div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Hours according to contract
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Tolerance (hours)
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <input
+                  type="number"
+                  min={0}
+                  max={40}
+                  step={1}
+                  value={workingHoursTolerance}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    const parsed = Number(value);
+                    if (!Number.isFinite(parsed)) return;
+                    const clamped = Math.max(0, Math.min(40, Math.trunc(parsed)));
+                    setWorkingHoursTolerance(clamped);
+                    onUpdateWorkingHoursTolerance?.(clinician.id, clamped);
+                  }}
+                  className={cx(
+                    "w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm font-medium text-slate-900",
+                    "focus:border-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
+                  )}
+                  placeholder="5"
+                />
+              </div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Allowed deviation from target
+              </div>
             </div>
           </div>
         </div>

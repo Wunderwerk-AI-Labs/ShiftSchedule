@@ -87,6 +87,7 @@ class Clinician(BaseModel):
         default_factory=dict
     )
     workingHoursPerWeek: Optional[float] = None
+    workingHoursToleranceHours: int = 5
 
 
 class PreferredWorkingTime(BaseModel):
@@ -189,12 +190,11 @@ class SolveDayResponse(BaseModel):
 
 
 class SolverSettings(BaseModel):
-    enforceSameLocationPerDay: bool = False
+    enforceSameLocationPerDay: bool = True
     onCallRestEnabled: bool = False
     onCallRestClassId: Optional[str] = None
     onCallRestDaysBefore: int = 1
     onCallRestDaysAfter: int = 1
-    workingHoursToleranceHours: int = 5
 
 
 class SolverRule(BaseModel):

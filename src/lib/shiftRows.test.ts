@@ -113,7 +113,6 @@ describe("normalizeAppState", () => {
       onCallRestEnabled: false,
       onCallRestDaysBefore: 0,
       onCallRestDaysAfter: 0,
-      workingHoursToleranceHours: 5,
     },
     solverRules: [],
     weeklyTemplate: {
@@ -245,7 +244,6 @@ describe("normalizeAppState", () => {
           onCallRestEnabled: true,
           onCallRestDaysBefore: 1,
           onCallRestDaysAfter: 1,
-          workingHoursToleranceHours: 10,
         },
       });
 
@@ -253,20 +251,10 @@ describe("normalizeAppState", () => {
 
       expect(normalized.solverSettings?.enforceSameLocationPerDay).toBe(true);
       expect(normalized.solverSettings?.onCallRestEnabled).toBe(true);
-      expect(normalized.solverSettings?.workingHoursToleranceHours).toBe(10);
     });
   });
 
   describe("solver settings defaults", () => {
-    it("sets workingHoursToleranceHours default to 5", () => {
-      // Using 'as any' to simulate loading legacy data with incomplete settings
-      const state = makeMinimalState({ solverSettings: {} as any });
-
-      const { state: normalized } = normalizeAppState(state);
-
-      expect(normalized.solverSettings?.workingHoursToleranceHours).toBe(5);
-    });
-
     it("clamps onCallRestDaysBefore between 0 and 7", () => {
       const state = makeMinimalState({
         solverSettings: {

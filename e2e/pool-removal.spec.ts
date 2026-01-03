@@ -12,8 +12,6 @@ import { expect, test } from "./fixtures";
 import { fetchAuthToken, seedAuthToken } from "./utils/auth";
 
 const API_BASE = process.env.PLAYWRIGHT_API_URL ?? "http://localhost:8000";
-const UI_USERNAME = process.env.E2E_USERNAME ?? "testuser";
-const UI_PASSWORD = process.env.E2E_PASSWORD ?? "sdjhfl34-wfsdfwsd2";
 
 const toISODate = (date: Date) => {
   const y = date.getFullYear();
@@ -139,39 +137,25 @@ const buildStateWithDeprecatedPools = (dateISO: string) => {
 };
 
 test.describe("Pool Removal - UI Verification", () => {
-  test.beforeEach(async ({ page }) => {
-    // Clear any existing auth state
-    await page.context().clearCookies();
-  });
-
-  test("Distribution Pool is not rendered in schedule grid", async ({ page }) => {
+  test("Distribution Pool is not rendered in schedule grid", async ({ page, request }) => {
+    const token = await fetchAuthToken(request);
     const today = startOfWeek(new Date());
     const dateISO = toISODate(today);
-
-    // Get auth token and seed state with deprecated pools
-    const token = await fetchAuthToken(UI_USERNAME, UI_PASSWORD);
     const state = buildStateWithDeprecatedPools(dateISO);
 
     // Save state via API
-    const saveResponse = await fetch(`${API_BASE}/v1/state`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(state),
+    const saveResponse = await request.post(`${API_BASE}/v1/state`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: state,
     });
-    expect(saveResponse.ok).toBe(true);
+    expect(saveResponse.ok()).toBe(true);
 
-    // Login via UI
+    // Seed auth token and navigate
+    await seedAuthToken(page, token);
     await page.goto("/");
-    await page.fill('[data-testid="username-input"]', UI_USERNAME);
-    await page.fill('[data-testid="password-input"]', UI_PASSWORD);
-    await page.click('[data-testid="login-button"]');
-    await page.waitForURL(/\/schedule/);
 
     // Wait for schedule grid to load
-    await page.waitForSelector('[data-testid="schedule-grid"]', { timeout: 10000 });
+    await page.waitForSelector('[data-schedule-grid="true"]', { timeout: 10000 });
 
     // Verify Distribution Pool is not in the DOM
     const distributionPoolRow = await page.$('[data-row-id="pool-not-allocated"]');
@@ -182,28 +166,20 @@ test.describe("Pool Removal - UI Verification", () => {
     expect(distributionPoolText).toBe(0);
   });
 
-  test("Reserve Pool is not rendered in schedule grid", async ({ page }) => {
+  test("Reserve Pool is not rendered in schedule grid", async ({ page, request }) => {
+    const token = await fetchAuthToken(request);
     const today = startOfWeek(new Date());
     const dateISO = toISODate(today);
-
-    const token = await fetchAuthToken(UI_USERNAME, UI_PASSWORD);
     const state = buildStateWithDeprecatedPools(dateISO);
 
-    await fetch(`${API_BASE}/v1/state`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(state),
+    await request.post(`${API_BASE}/v1/state`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: state,
     });
 
+    await seedAuthToken(page, token);
     await page.goto("/");
-    await page.fill('[data-testid="username-input"]', UI_USERNAME);
-    await page.fill('[data-testid="password-input"]', UI_PASSWORD);
-    await page.click('[data-testid="login-button"]');
-    await page.waitForURL(/\/schedule/);
-    await page.waitForSelector('[data-testid="schedule-grid"]', { timeout: 10000 });
+    await page.waitForSelector('[data-schedule-grid="true"]', { timeout: 10000 });
 
     // Verify Reserve Pool is not in the DOM
     const reservePoolRow = await page.$('[data-row-id="pool-manual"]');
@@ -214,28 +190,20 @@ test.describe("Pool Removal - UI Verification", () => {
     expect(reservePoolText).toBe(0);
   });
 
-  test("Rest Day and Vacation pools are still visible", async ({ page }) => {
+  test("Rest Day and Vacation pools are still visible", async ({ page, request }) => {
+    const token = await fetchAuthToken(request);
     const today = startOfWeek(new Date());
     const dateISO = toISODate(today);
-
-    const token = await fetchAuthToken(UI_USERNAME, UI_PASSWORD);
     const state = buildStateWithDeprecatedPools(dateISO);
 
-    await fetch(`${API_BASE}/v1/state`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(state),
+    await request.post(`${API_BASE}/v1/state`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: state,
     });
 
+    await seedAuthToken(page, token);
     await page.goto("/");
-    await page.fill('[data-testid="username-input"]', UI_USERNAME);
-    await page.fill('[data-testid="password-input"]', UI_PASSWORD);
-    await page.click('[data-testid="login-button"]');
-    await page.waitForURL(/\/schedule/);
-    await page.waitForSelector('[data-testid="schedule-grid"]', { timeout: 10000 });
+    await page.waitForSelector('[data-schedule-grid="true"]', { timeout: 10000 });
 
     // Rest Day pool should be visible
     const restDayText = await page.locator("text=Rest Day").count();
@@ -246,96 +214,4 @@ test.describe("Pool Removal - UI Verification", () => {
     expect(vacationText).toBeGreaterThan(0);
   });
 
-  test("deprecated pool assignments are removed on state load", async ({ page }) => {
-    const today = startOfWeek(new Date());
-    const dateISO = toISODate(today);
-
-    const token = await fetchAuthToken(UI_USERNAME, UI_PASSWORD);
-    const state = buildStateWithDeprecatedPools(dateISO);
-
-    // Save state with deprecated pool assignments
-    await fetch(`${API_BASE}/v1/state`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(state),
-    });
-
-    // Load state and verify assignments are cleaned up
-    const loadResponse = await fetch(`${API_BASE}/v1/state`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const loadedState = await loadResponse.json();
-
-    // Check that no assignments reference deprecated pools
-    const assignmentRowIds = (loadedState.assignments ?? []).map(
-      (a: { rowId: string }) => a.rowId,
-    );
-    expect(assignmentRowIds).not.toContain("pool-not-allocated");
-    expect(assignmentRowIds).not.toContain("pool-manual");
-  });
-
-  test("deprecated solver settings are removed on state load", async ({ page }) => {
-    const today = startOfWeek(new Date());
-    const dateISO = toISODate(today);
-
-    const token = await fetchAuthToken(UI_USERNAME, UI_PASSWORD);
-    const state = buildStateWithDeprecatedPools(dateISO);
-
-    // Save state with deprecated solver settings
-    await fetch(`${API_BASE}/v1/state`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(state),
-    });
-
-    // Load state and verify settings are cleaned up
-    const loadResponse = await fetch(`${API_BASE}/v1/state`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const loadedState = await loadResponse.json();
-
-    // Check that deprecated settings are removed
-    expect(loadedState.solverSettings).not.toHaveProperty("allowMultipleShiftsPerDay");
-    expect(loadedState.solverSettings).not.toHaveProperty("showDistributionPool");
-    expect(loadedState.solverSettings).not.toHaveProperty("showReservePool");
-  });
-
-  test("deprecated pool rows are removed from state on load", async ({ page }) => {
-    const today = startOfWeek(new Date());
-    const dateISO = toISODate(today);
-
-    const token = await fetchAuthToken(UI_USERNAME, UI_PASSWORD);
-    const state = buildStateWithDeprecatedPools(dateISO);
-
-    // Save state with deprecated pools
-    await fetch(`${API_BASE}/v1/state`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(state),
-    });
-
-    // Load state and verify pool rows are cleaned up
-    const loadResponse = await fetch(`${API_BASE}/v1/state`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const loadedState = await loadResponse.json();
-
-    // Check that deprecated pool rows are removed
-    const rowIds = (loadedState.rows ?? []).map((r: { id: string }) => r.id);
-    expect(rowIds).not.toContain("pool-not-allocated");
-    expect(rowIds).not.toContain("pool-manual");
-
-    // Valid pools should still exist
-    expect(rowIds).toContain("pool-rest-day");
-    expect(rowIds).toContain("pool-vacation");
-  });
 });

@@ -15,6 +15,7 @@ type ClinicianEditModalProps = {
     vacations: Array<{ id: string; startISO: string; endISO: string }>;
     preferredWorkingTimes?: PreferredWorkingTimes;
     workingHoursPerWeek?: number;
+    workingHoursToleranceHours?: number;
   } | null;
   classRows: Array<{ id: string; name: string }>;
   onToggleQualification: (clinicianId: string, classId: string) => void;
@@ -24,6 +25,7 @@ type ClinicianEditModalProps = {
     toClassId: string,
   ) => void;
   onUpdateWorkingHours: (clinicianId: string, workingHoursPerWeek?: number) => void;
+  onUpdateWorkingHoursTolerance: (clinicianId: string, toleranceHours?: number) => void;
   onUpdatePreferredWorkingTimes: (
     clinicianId: string,
     preferredWorkingTimes: PreferredWorkingTimes,
@@ -47,6 +49,7 @@ export default function ClinicianEditModal({
   onToggleQualification,
   onReorderQualification,
   onUpdateWorkingHours,
+  onUpdateWorkingHoursTolerance,
   onUpdatePreferredWorkingTimes,
   onAddVacation,
   onUpdateVacation,
@@ -161,6 +164,7 @@ export default function ClinicianEditModal({
               classRows={classRows}
               initialSection={initialSection}
               onUpdateWorkingHours={onUpdateWorkingHours}
+              onUpdateWorkingHoursTolerance={onUpdateWorkingHoursTolerance}
               onUpdatePreferredWorkingTimes={onUpdatePreferredWorkingTimes}
               onToggleQualification={onToggleQualification}
               onReorderQualification={onReorderQualification}

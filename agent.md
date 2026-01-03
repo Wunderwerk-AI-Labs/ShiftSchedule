@@ -51,6 +51,7 @@ Top bar
 
 Schedule card
 - Week navigator lives inside the card header; range label uses DD.MM.YYYY (or DD.MM.YYYY – DD.MM.YYYY); Today button sits next to the arrows.
+- **Week picker**: clicking on the date range label opens a native date picker; selecting any date navigates to the week containing that date. A small calendar icon appears next to the date label.
 - On mobile, the schedule renders a single day with a day navigator (label between arrows, Today next to them).
 - Today is shown by circling the day number in the header.
 - Week starts Monday; weekend/holiday styling is header-only: weekend header light gray, holiday header light lavender; holiday name is a tiny purple label under the day.
@@ -156,6 +157,7 @@ Clinician Editor (modal)
 - Preferred working times persist per clinician as `preferredWorkingTimes` (mon..sun with startTime/endTime + requirement none/preference/mandatory).
 - Mandatory windows are hard solver constraints; preference windows add a small solver reward.
 - Week solver nudges total assigned minutes toward `workingHoursPerWeek` within the tolerance (manual assignments count toward totals).
+- Per-clinician working hours tolerance: stored as `clinician.workingHoursToleranceHours` (default 5 hours). Each clinician can have a different tolerance for how much their assigned hours can deviate from their contract hours.
 
 Working Hours Overview
 - Dashboard panel opens a full-screen modal showing yearly working hours for all clinicians.
@@ -178,11 +180,11 @@ Holidays
 - Holidays behave like weekends in solver + min slot logic and show in the calendar header.
 
 Solver Settings
-- Toggle: Enforce same location per day.
+- Toggle: Enforce same location per day (default: enabled).
 - Multiple shifts per day are always allowed (removed setting); only actual time overlaps are blocked.
 - On-call rest days: toggle + section selector + days before/after. When enabled, solver enforces rest days and the UI places clinicians into the Rest Day pool.
 - On-call rest days dropdown only shows sections that exist as current template section blocks.
-- Working hours tolerance (hours) is stored as `solverSettings.workingHoursToleranceHours` (default 5).
+- Working hours tolerance is now per-clinician (see Clinician Editor); removed from global solver settings.
 - Rule violations are evaluated for the current week and surfaced in the header badge; affected pills are shown in red.
 - Violations include: rest-day conflicts, same-day location mismatches (when enforced), and overlapping shift times.
 - Automated planning runs the week solver over the selected date range in one call and shows an ETA based on the last run's per-day duration.
@@ -202,6 +204,29 @@ Testing
   - PDF export test calls `/v1/pdf/week` and asserts the generated PDF has exactly one page.
   - Print layout test opens `/print/week` in print media and asserts the scaled schedule fits within one A4 page (portrait or landscape) and fills at least 70% of one dimension.
   - ColBand explosion tests (`e2e/colband-explosion.spec.ts`): verify colBand counts stay stable through settings, Copy Day, column operations, and solver runs; checks for console explosion errors.
+  - Pool removal tests (`e2e/pool-removal.spec.ts`): verify deprecated pools (Distribution Pool, Reserve Pool) are not rendered while Rest Day and Vacation pools remain visible.
+  - Full workflow test (`e2e/full-workflow.spec.ts`): comprehensive test that:
+    - Logs in as admin (`admin` / `tE7vcYMzC7ycXXV234s`)
+    - Deletes the test user if it exists
+    - Creates test user `Testuser-Test` with password `BananePferdStraßeRadio`
+    - Sets up a complex radiology schedule via API:
+      - 3 locations: Main Hospital, Outpatient Center, Emergency
+      - 5 sections: MRI, CT, X-Ray, Ultrasound, On-Call
+      - 3 columns per day with non-overlapping time slots (08-12, 12-16, 16-20)
+      - 20 radiologists with varying qualifications:
+        - 1-5: Senior radiologists (all sections)
+        - 6-10: MRI & CT specialists
+        - 11-14: X-Ray & Ultrasound specialists
+        - 15-20: Emergency/On-Call specialists
+      - Realistic vacation schedules for 7 physicians
+      - ~93 template slots across all locations
+      - Different staffing for weekdays vs weekends
+      - On-Call can overlap with regular shifts
+    - Logs in via UI to verify setup
+    - Runs automated allocation for 1 week and 4 weeks
+    - Takes 12 screenshots at each step (saved to `test-results/` directory)
+    - Run with: `ADMIN_USERNAME=admin ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s npx playwright test e2e/full-workflow.spec.ts`
+    - View results: `npx playwright show-report`
 
 Dev server restart
 - Kill existing servers via `lsof -nP -iTCP:8000 -sTCP:LISTEN` and `lsof -nP -iTCP:5173 -sTCP:LISTEN`, then `kill <pid>`.
@@ -336,6 +361,13 @@ Slot override key parsing
 - `slotOverridesByKey` keys are `slotId__dateISO` (e.g., `slot-1__2026-01-05`).
 - Backend validates date portion; malformed keys with day types instead of dates (e.g., `slot-1__mon`) are skipped.
 
+ColBand explosion on fresh start (fixed)
+- Root cause: In `backend/state.py` `_normalize_weekly_template()`, the legacy migration check used `not getattr(template, "blocks", None)` which evaluates to `True` for an empty list `[]` because empty lists are falsy in Python.
+- Symptom: Fresh databases started with 50 colBands per day (hitting the safeguard limit) instead of 8 (one per dayType).
+- Mechanism: The faulty check triggered legacy migration for v4 templates with empty blocks. Legacy migration treats each existing colBand as a "legacy" colBand and creates 8 new colBands (one per dayType) for each, resulting in 8×8=64 colBands.
+- Fix: Changed the condition from `not getattr(template, "blocks", None)` to `not hasattr(template, "blocks")` which correctly checks for property existence rather than truthiness.
+- Note: The frontend (`src/lib/shiftRows.ts`) was already correct, using `!("blocks" in template)` which checks property existence.
+
 ---
 
 ## 4) Data Model (Shared Concept)
@@ -374,6 +406,7 @@ type Clinician = {
   preferredClassIds: string[];
   vacations: VacationRange[];
   workingHoursPerWeek?: number;
+  workingHoursToleranceHours?: number; // default 5
 };
 
 type Assignment = {
@@ -430,12 +463,11 @@ type WeeklyCalendarTemplate = {
 type Holiday = { dateISO: string; name: string };
 
 type SolverSettings = {
-  enforceSameLocationPerDay: boolean;
+  enforceSameLocationPerDay: boolean; // default true
   onCallRestEnabled: boolean;
   onCallRestClassId?: string;
   onCallRestDaysBefore: number;
   onCallRestDaysAfter: number;
-  workingHoursToleranceHours?: number;
 };
 ```
 
@@ -456,6 +488,7 @@ Slot IDs
 - Day type is `holiday` if the date is in holidays; otherwise it is the weekday. Holiday settings always override weekday settings.
 - Overlap checks use time intervals (start/end + endDayOffset); shift order is not used for overlap decisions. These checks feed solver constraints and UI violation detection.
 - Drag/drop also prevents placing a clinician into overlapping time slots on the same day.
+- Clinician picker popover: viewport-aware positioning opens above anchor when insufficient space below (flips direction automatically).
 
 ---
 
@@ -488,8 +521,14 @@ Behavior
 - Objective:
   - Prioritize coverage by section order (top of section list is highest).
   - Minimize missing required slots.
-  - If `only_fill_required=false`, add extras.
+  - If `only_fill_required=false`, add extras using wave-based distribution.
   - Preferred sections (order of eligible sections) is a lower-weight tie breaker.
+- Wave-based equal distribution (when `only_fill_required=false`):
+  - First fills all slots to 1× their base required count.
+  - Then fills all slots to 2× their base required count.
+  - Then 3×, 4×, etc. until clinicians are exhausted.
+  - Wave multiplier is calculated as `total_available_clinicians // total_base_required`.
+  - Ensures proportional distribution across slots instead of piling all extras into high-priority slots.
 
 ---
 
@@ -504,12 +543,11 @@ Backend stores one JSON blob per user in SQLite:
   "assignments": [...],
   "minSlotsByRowId": {...},
   "solverSettings": {
-    "enforceSameLocationPerDay": false,
+    "enforceSameLocationPerDay": true,
     "onCallRestEnabled": false,
     "onCallRestClassId": "on-call",
     "onCallRestDaysBefore": 1,
-    "onCallRestDaysAfter": 1,
-    "workingHoursToleranceHours": 5
+    "onCallRestDaysAfter": 1
   },
   "solverRules": [],
   "publishedWeekStartISOs": ["2025-12-22"],
@@ -529,6 +567,12 @@ State normalization on load
 - Template slot assignment ids (e.g. `slot-1`) are preserved during normalization in both frontend and backend.
 - Ensures `solverSettings` defaults, clamps on-call rest day values, and fixes invalid on-call class ids.
 - Ensures the Rest Day pool exists (pool-rest-day), inserted after Reserve Pool.
+
+Default state (clean database)
+- A fresh database starts with a truly empty state: no row bands, no sections, no clinicians.
+- Only the required pool rows exist: Rest Day (`pool-rest-day`) and Vacation (`pool-vacation`).
+- Empty row bands are allowed and preserved—normalization does not add default row bands anymore.
+- Users can build their entire schedule from scratch via the Weekly Calendar Template settings.
 Table: `app_state` (id = username). Legacy row id `"state"` is migrated to `"jk"`. The table now also has an `updated_at` column which is bumped on every `POST /v1/state` save.
 
 Endpoints
@@ -570,7 +614,7 @@ Prereqs
 Auth env (required for login):
 ```bash
 export ADMIN_USERNAME=admin
-export ADMIN_PASSWORD=change-me
+export ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s   # local dev password
 export JWT_SECRET=change-me-too
 ```
 
@@ -710,7 +754,7 @@ Backend
   - `DOMAIN=shiftplanner.wunderwerk.ai`
   - `LETSENCRYPT_EMAIL=daniel.truhn@gmail.com`
   - `ADMIN_USERNAME=admin`
-  - `ADMIN_PASSWORD=change-me`
+  - `ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s`
   - `JWT_SECRET=change-me-too`
   - `JWT_EXPIRE_MINUTES=720` (avoid empty string; backend crashes on startup)
 - `PUBLIC_BASE_URL` is set in `docker-compose.yml` as `https://${DOMAIN}/api` (don’t leave it blank).

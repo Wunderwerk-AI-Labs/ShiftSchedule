@@ -299,8 +299,9 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
     def get_manual_count(slot_id: str) -> int:
         return sum(1 for rows in manual_assignments.values() if slot_id in rows)
 
+    # First pass: collect slot info for wave-based distribution
+    slot_info: List[Dict[str, Any]] = []
     for index, ctx in enumerate(active_slots):
-        block = ctx["block"]
         slot_id = ctx["slot_id"]
         order_weight = max(1, total_slots - index) * 10
         order_weight_by_slot_id[slot_id] = order_weight
@@ -314,6 +315,36 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
         vars_here = [
             var for (cid, sid), var in var_map.items() if sid == slot_id
         ]
+        slot_info.append({
+            "ctx": ctx,
+            "slot_id": slot_id,
+            "order_weight": order_weight,
+            "base_required": base_required,
+            "target": target,
+            "already": already,
+            "missing": missing,
+            "vars_here": vars_here,
+        })
+
+    # Calculate wave multiplier for equal distribution when not only_fill_required
+    # Wave multiplier determines how many times we can fill all slots proportionally
+    wave_multiplier = 1
+    if not payload.only_fill_required:
+        total_available_clinicians = len(set(cid for (cid, _) in var_map.keys()))
+        total_base_required = sum(info["base_required"] for info in slot_info if info["base_required"] > 0)
+        if total_base_required > 0:
+            # Calculate how many complete waves we can do with available clinicians
+            wave_multiplier = max(1, total_available_clinicians // total_base_required)
+
+    for info in slot_info:
+        slot_id = info["slot_id"]
+        order_weight = info["order_weight"]
+        target = info["target"]
+        base_required = info["base_required"]
+        already = info["already"]
+        missing = info["missing"]
+        vars_here = info["vars_here"]
+
         if missing == 0:
             if payload.only_fill_required and vars_here:
                 model.Add(sum(vars_here) == 0)
@@ -322,8 +353,15 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
             covered = model.NewBoolVar(f"covered_{slot_id}")
             model.Add(sum(vars_here) + already >= covered)
             coverage_terms.append(covered * order_weight)
+            # Calculate slot capacity based on wave distribution
             if payload.only_fill_required:
-                model.Add(sum(vars_here) <= missing)
+                # Only fill to required amount
+                slot_capacity = missing
+            else:
+                # Wave-based: allow up to (base_required * wave_multiplier) - already
+                wave_target = base_required * wave_multiplier
+                slot_capacity = max(missing, wave_target - already)
+            model.Add(sum(vars_here) <= slot_capacity)
         slack = model.NewIntVar(0, missing, f"slack_{slot_id}")
         if vars_here:
             model.Add(sum(vars_here) + slack + already >= missing)
@@ -345,15 +383,15 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
 
     if payload.only_fill_required:
         model.Minimize(
-            -total_coverage * 10000
-            + total_slack * 100
+            -total_coverage * 1000
+            + total_slack * 1000
             - total_preference
             - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
         )
     else:
         model.Minimize(
-            -total_coverage * 10000
-            + total_slack * 100
+            -total_coverage * 1000
+            + total_slack * 1000
             - total_priority * 10
             - total_preference
             - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
@@ -599,8 +637,9 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                     count += 1
         return count
 
+    # First pass: collect slot info for wave-based distribution
+    slot_date_info: List[Dict[str, Any]] = []
     for index, ctx in enumerate(slot_contexts):
-        block = ctx["block"]
         slot_id = ctx["slot_id"]
         order_weight = max(1, total_slots - index) * 10
         order_weight_by_slot_id[slot_id] = order_weight
@@ -609,9 +648,9 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
             if ctx.get("day_type") != day_type:
                 continue
             raw_required = getattr(ctx["slot"], "requiredSlots", 0)
-            base_target = raw_required if isinstance(raw_required, int) else 0
+            base_required = raw_required if isinstance(raw_required, int) else 0
             override = state.slotOverridesByKey.get(f"{slot_id}__{date_iso}", 0)
-            target = max(0, base_target + override)
+            target = max(0, base_required + override)
             total_required += target
             already = get_manual_count(date_iso, slot_id)
             missing = max(0, target - already)
@@ -620,22 +659,61 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                 for (cid, d, sid), var in var_map.items()
                 if d == date_iso and sid == slot_id
             ]
-            if missing == 0:
-                if payload.only_fill_required and vars_here:
-                    model.Add(sum(vars_here) == 0)
-                continue
-            if vars_here:
-                covered = model.NewBoolVar(f"covered_{slot_id}_{date_iso}")
-                model.Add(sum(vars_here) + already >= covered)
-                coverage_terms.append(covered * order_weight)
-                if payload.only_fill_required:
-                    model.Add(sum(vars_here) <= missing)
-            slack = model.NewIntVar(0, missing, f"slack_{slot_id}_{date_iso}")
-            if vars_here:
-                model.Add(sum(vars_here) + slack + already >= missing)
+            slot_date_info.append({
+                "ctx": ctx,
+                "slot_id": slot_id,
+                "date_iso": date_iso,
+                "order_weight": order_weight,
+                "base_required": base_required,
+                "target": target,
+                "already": already,
+                "missing": missing,
+                "vars_here": vars_here,
+            })
+
+    # Calculate wave multiplier for equal distribution when not only_fill_required
+    # Wave multiplier determines how many times we can fill all slots proportionally
+    wave_multiplier = 1
+    if not payload.only_fill_required:
+        total_available_clinicians = len(set(cid for (cid, _, _) in var_map.keys()))
+        total_base_required = sum(info["base_required"] for info in slot_date_info if info["base_required"] > 0)
+        if total_base_required > 0:
+            # Calculate how many complete waves we can do with available clinicians
+            wave_multiplier = max(1, total_available_clinicians // total_base_required)
+
+    for info in slot_date_info:
+        slot_id = info["slot_id"]
+        date_iso = info["date_iso"]
+        order_weight = info["order_weight"]
+        base_required = info["base_required"]
+        target = info["target"]
+        already = info["already"]
+        missing = info["missing"]
+        vars_here = info["vars_here"]
+
+        if missing == 0:
+            if payload.only_fill_required and vars_here:
+                model.Add(sum(vars_here) == 0)
+            continue
+        if vars_here:
+            covered = model.NewBoolVar(f"covered_{slot_id}_{date_iso}")
+            model.Add(sum(vars_here) + already >= covered)
+            coverage_terms.append(covered * order_weight)
+            # Calculate slot capacity based on wave distribution
+            if payload.only_fill_required:
+                # Only fill to required amount
+                slot_capacity = missing
             else:
-                model.Add(slack + already >= missing)
-            slack_terms.append(slack * order_weight)
+                # Wave-based: allow up to (base_required * wave_multiplier) - already
+                wave_target = base_required * wave_multiplier
+                slot_capacity = max(missing, wave_target - already)
+            model.Add(sum(vars_here) <= slot_capacity)
+        slack = model.NewIntVar(0, missing, f"slack_{slot_id}_{date_iso}")
+        if vars_here:
+            model.Add(sum(vars_here) + slack + already >= missing)
+        else:
+            model.Add(slack + already >= missing)
+        slack_terms.append(slack * order_weight)
 
     # On-call rest days
     rest_class_id = solver_settings.onCallRestClassId
@@ -706,7 +784,6 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                     apply_rest_constraint(day_index + offset)
 
     hours_penalty_terms: List[cp_model.IntVar] = []
-    tolerance_hours = max(0, solver_settings.workingHoursToleranceHours or 0)
     total_days = len(target_day_isos)
     scale = total_days / 7.0 if total_days else 0
     slot_duration_by_id = {
@@ -731,6 +808,8 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
             continue
         if clinician.workingHoursPerWeek <= 0:
             continue
+        # Use per-clinician tolerance (default 5 hours)
+        tolerance_hours = max(0, clinician.workingHoursToleranceHours or 5)
         target_minutes = int(round(clinician.workingHoursPerWeek * 60 * scale))
         tol_minutes = int(round(tolerance_hours * 60 * scale))
         if target_minutes <= 0 and tol_minutes <= 0:
@@ -785,16 +864,16 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
 
     if payload.only_fill_required:
         model.Minimize(
-            -total_coverage * 10000
-            + total_slack * 100
+            -total_coverage * 1000
+            + total_slack * 1000
             - total_preference
             - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
             + total_hours_penalty * WORKING_HOURS_PENALTY_WEIGHT
         )
     else:
         model.Minimize(
-            -total_coverage * 10000
-            + total_slack * 100
+            -total_coverage * 1000
+            + total_slack * 1000
             - total_priority * 10
             - total_preference
             - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
@@ -802,7 +881,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         )
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 4.0
+    solver.parameters.max_time_in_seconds = 10.0
     solver.parameters.num_search_workers = 8
     result = solver.Solve(model)
 

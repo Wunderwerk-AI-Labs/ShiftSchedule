@@ -57,6 +57,7 @@ export type Clinician = {
   vacations: VacationRange[];
   preferredWorkingTimes?: PreferredWorkingTimes;
   workingHoursPerWeek?: number;
+  workingHoursToleranceHours?: number;
 };
 
 export type Assignment = {
@@ -130,7 +131,6 @@ export type SolverSettings = {
   onCallRestClassId?: string;
   onCallRestDaysBefore: number;
   onCallRestDaysAfter: number;
-  workingHoursToleranceHours?: number;
 };
 
 export type SolverRule = {

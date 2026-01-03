@@ -1,6 +1,7 @@
+import { useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
-import { formatRangeLabel } from "../../lib/date";
-import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
+import { formatRangeLabel, toISODate } from "../../lib/date";
+import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon } from "./icons";
 
 type WeekNavigatorProps = {
   rangeStart: Date;
@@ -8,6 +9,7 @@ type WeekNavigatorProps = {
   onPrevWeek: () => void;
   onNextWeek: () => void;
   onToday: () => void;
+  onGoToDate?: (date: Date) => void;
   variant?: "page" | "card";
 };
 
@@ -17,8 +19,27 @@ export default function WeekNavigator({
   onPrevWeek,
   onNextWeek,
   onToday,
+  onGoToDate,
   variant = "page",
 }: WeekNavigatorProps) {
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const handleDateClick = () => {
+    if (onGoToDate && dateInputRef.current) {
+      dateInputRef.current.showPicker?.();
+      setShowDatePicker(true);
+    }
+  };
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (value && onGoToDate) {
+      onGoToDate(new Date(value));
+    }
+    setShowDatePicker(false);
+  };
+
   const panel = (
     <div
       className={cx(
@@ -40,8 +61,35 @@ export default function WeekNavigator({
         >
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
-        <div className="min-w-[148px] text-center text-sm font-normal tracking-tight text-slate-700 dark:text-slate-200 sm:text-base">
-          {formatRangeLabel(rangeStart, rangeEndInclusive)}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={handleDateClick}
+            disabled={!onGoToDate}
+            className={cx(
+              "flex min-w-[148px] items-center justify-center gap-1.5 text-center text-sm font-normal tracking-tight text-slate-700 dark:text-slate-200 sm:text-base",
+              onGoToDate &&
+                "cursor-pointer rounded-lg px-2 py-1 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800",
+            )}
+            aria-label="Pick a week"
+          >
+            <span>{formatRangeLabel(rangeStart, rangeEndInclusive)}</span>
+            {onGoToDate ? (
+              <CalendarIcon className="h-4 w-4 text-slate-400 dark:text-slate-500" />
+            ) : null}
+          </button>
+          {onGoToDate ? (
+            <input
+              ref={dateInputRef}
+              type="date"
+              value={toISODate(rangeStart)}
+              onChange={handleDateChange}
+              onBlur={() => setShowDatePicker(false)}
+              className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+              tabIndex={-1}
+              aria-hidden="true"
+            />
+          ) : null}
         </div>
         <button
           type="button"

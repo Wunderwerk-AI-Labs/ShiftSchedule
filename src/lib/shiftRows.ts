@@ -244,7 +244,8 @@ const normalizeTemplateRowBands = (rowBands: TemplateRowBand[]) => {
   }));
 };
 
-const MAX_COLBANDS_PER_DAY = 50; // Safeguard against colBand explosion
+// Safeguard against colBand explosion - reduced from 50 to 20
+const MAX_COLBANDS_PER_DAY = 20;
 
 const normalizeTemplateColBands = (colBands: TemplateColBand[]) => {
   const byDay = new Map<DayType, TemplateColBand[]>();
@@ -695,12 +696,11 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
     }
   }
   const defaultSolverSettings = {
-    enforceSameLocationPerDay: false,
+    enforceSameLocationPerDay: true,
     onCallRestEnabled: false,
     onCallRestClassId: "",
     onCallRestDaysBefore: 1,
     onCallRestDaysAfter: 1,
-    workingHoursToleranceHours: 5,
   };
   // Remove deprecated settings during migration
   const {
@@ -726,14 +726,6 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
   };
   solverSettings.onCallRestDaysBefore = clampDays(solverSettings.onCallRestDaysBefore);
   solverSettings.onCallRestDaysAfter = clampDays(solverSettings.onCallRestDaysAfter);
-  const clampTolerance = (value: unknown) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return defaultSolverSettings.workingHoursToleranceHours;
-    return Math.max(0, Math.min(40, Math.trunc(parsed)));
-  };
-  solverSettings.workingHoursToleranceHours = clampTolerance(
-    solverSettings.workingHoursToleranceHours,
-  );
   if (JSON.stringify(solverSettings) !== JSON.stringify(state.solverSettings ?? {})) {
     changed = true;
   }

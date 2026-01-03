@@ -29,8 +29,10 @@ const PRINT_DPI = 96;
 const MM_TO_PX = PRINT_DPI / 25.4;
 const PRINT_PAGE_WIDTH_MM = 297;
 const PRINT_PAGE_HEIGHT_MM = 210;
-const PRINT_PAGE_MARGIN_MM = 6;
-const PRINT_SAFETY_SCALE = 0.97;
+const PRINT_PAGE_MARGIN_MM = 8;
+const PRINT_SAFETY_SCALE = 0.98;
+// Maximum scale-up factor (e.g., 1.5 means content can be scaled up to 150%)
+const MAX_SCALE_UP = 1.5;
 
 const getPrintAreaPx = () => ({
   width: (PRINT_PAGE_WIDTH_MM - PRINT_PAGE_MARGIN_MM * 2) * MM_TO_PX,
@@ -223,11 +225,11 @@ export default function PrintWeekPage({ theme }: PrintWeekPageProps) {
       const contentWidth = Math.max(content.scrollWidth, contentRect.width);
       const contentHeight = Math.max(content.scrollHeight, contentRect.height);
       if (!contentWidth || !contentHeight) return;
-      // Calculate scale to fit within printable area, but never scale up above 1
+      // Calculate scale to fit within printable area, allow scaling up to MAX_SCALE_UP
       const fitScale = Math.min(available.width / contentWidth, available.height / contentHeight);
       const safeScale = Number.isFinite(fitScale) ? fitScale * PRINT_SAFETY_SCALE : 1;
-      // Never scale above 1 (only scale down, not up)
-      const nextScale = Math.min(Math.max(safeScale, 0.01), 1);
+      // Allow scaling up to MAX_SCALE_UP to fill the page better
+      const nextScale = Math.min(Math.max(safeScale, 0.01), MAX_SCALE_UP);
       const scaledWidth = contentWidth * nextScale;
       const scaledHeight = contentHeight * nextScale;
       setPrintLayout({

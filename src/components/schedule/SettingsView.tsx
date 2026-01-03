@@ -217,11 +217,6 @@ export default function SettingsView({
     if (!Number.isFinite(parsed)) return 0;
     return Math.max(0, Math.min(7, Math.trunc(parsed)));
   };
-  const clampTolerance = (value: string) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return 5;
-    return Math.max(0, Math.min(40, Math.trunc(parsed)));
-  };
   const reorderSectionBlocks = (fromId: string, toId: string) => {
     if (!weeklyTemplate || fromId === toId) return;
     const fromIndex = sectionBlocks.findIndex((block) => block.id === fromId);
@@ -350,30 +345,6 @@ export default function SettingsView({
                   )}
                 />
               </button>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
-              <div>
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Working hours tolerance (hours)
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">
-                  Target contract hours per clinician is respected within ± this tolerance when possible.
-                </div>
-              </div>
-              <input
-                type="number"
-                min={0}
-                max={40}
-                step={1}
-                value={solverSettings.workingHoursToleranceHours ?? 5}
-                onChange={(event) =>
-                  onChangeSolverSettings({
-                    ...solverSettings,
-                    workingHoursToleranceHours: clampTolerance(event.target.value),
-                  })
-                }
-                className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
               <div>

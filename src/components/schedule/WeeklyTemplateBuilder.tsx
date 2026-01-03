@@ -45,7 +45,8 @@ const createId = (prefix: string) => {
 };
 
 // Maximum colBands allowed per dayType to prevent infinite loop explosions
-const MAX_COLBANDS_PER_DAY = 50;
+// Reduced from 50 to 20 - no practical use case needs more than 20 columns per day
+const MAX_COLBANDS_PER_DAY = 20;
 
 // Debug logging for colBand mutations
 const logColBandChange = (

@@ -325,7 +325,7 @@ export default function WeeklySchedulePage({
     defaultAppState.weeklyTemplate,
   );
 
-  // Safeguard wrapper to prevent colBand explosion (max 50 per dayType)
+  // Safeguard wrapper to prevent colBand explosion (max 20 per dayType)
   const setWeeklyTemplate = useCallback((update: React.SetStateAction<WeeklyCalendarTemplate | undefined>) => {
     setWeeklyTemplateRaw((prev) => {
       const next = typeof update === "function" ? update(prev) : update;
@@ -340,7 +340,8 @@ export default function WeeklySchedulePage({
         });
       }
 
-      // Check for colBand explosion
+      // Check for colBand explosion (reduced from 50 to 20)
+      const MAX_COLBANDS_PER_DAY = 20;
       let needsSanitization = false;
       for (const loc of next.locations) {
         const countByDay = new Map<string, number>();
@@ -349,10 +350,10 @@ export default function WeeklySchedulePage({
           countByDay.set(day, (countByDay.get(day) ?? 0) + 1);
         }
         for (const [day, count] of countByDay) {
-          if (count > 50) {
+          if (count > MAX_COLBANDS_PER_DAY) {
             console.error(
               `[WeeklySchedulePage] BLOCKING colBand explosion! ` +
-              `Location ${loc.locationId} has ${count} colBands for ${day}`,
+              `Location ${loc.locationId} has ${count} colBands for ${day} (max: ${MAX_COLBANDS_PER_DAY})`,
               { stack: new Error().stack }
             );
             needsSanitization = true;
@@ -364,7 +365,7 @@ export default function WeeklySchedulePage({
 
       if (!needsSanitization) return next;
 
-      // Sanitize: keep only first 50 colBands per dayType
+      // Sanitize: keep only first MAX_COLBANDS_PER_DAY colBands per dayType
       return {
         ...next,
         locations: next.locations.map((loc) => {
@@ -372,7 +373,7 @@ export default function WeeklySchedulePage({
           const filteredColBands = loc.colBands.filter((cb) => {
             const day = cb.dayType ?? "unknown";
             const current = countByDay.get(day) ?? 0;
-            if (current >= 50) return false;
+            if (current >= MAX_COLBANDS_PER_DAY) return false;
             countByDay.set(day, current + 1);
             return true;
           });
@@ -1450,13 +1451,15 @@ export default function WeeklySchedulePage({
     if (!hasLoaded || loadedUserId !== currentUser.username) return;
 
     // SAFEGUARD: Check for colBand explosion before saving
+    // With 20 max per day × 8 day types × 5 locations = 800 theoretical max
+    // Using 300 as a sanity check (allows 2-3 locations with reasonable usage)
     const totalColBands = weeklyTemplate?.locations?.reduce(
       (sum, loc) => sum + (loc.colBands?.length ?? 0),
       0
     ) ?? 0;
-    if (totalColBands > 500) {
+    if (totalColBands > 300) {
       console.error(
-        `[WeeklySchedulePage] BLOCKING SAVE - colBand explosion detected: ${totalColBands} total colBands`,
+        `[WeeklySchedulePage] BLOCKING SAVE - colBand explosion detected: ${totalColBands} total colBands (max: 300)`,
         { stack: new Error().stack }
       );
       return; // Don't save corrupted state
@@ -2227,6 +2230,7 @@ export default function WeeklySchedulePage({
                       onPrevWeek={() => setAnchorDate((d) => addWeeks(d, -1))}
                       onNextWeek={() => setAnchorDate((d) => addWeeks(d, 1))}
                       onToday={() => setAnchorDate(new Date())}
+                      onGoToDate={(date) => setAnchorDate(date)}
                     />
                   )}
                 </div>
@@ -2424,6 +2428,28 @@ export default function WeeklySchedulePage({
                 <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
                   <div className="flex flex-col gap-4">
                     <div className="-mt-7 inline-flex self-start rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-normal text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                      Working Hours
+                    </div>
+                    <div className="text-sm text-slate-600 dark:text-slate-300">
+                      Track working hours per week and compare against contract hours.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setWorkingHoursOverviewOpen(true)}
+                      className={cx(
+                        "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-normal text-slate-900 shadow-sm",
+                        "hover:bg-slate-50 active:bg-slate-100",
+                        "disabled:cursor-not-allowed disabled:opacity-70",
+                        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
+                      )}
+                    >
+                      Open Working Hours
+                    </button>
+                  </div>
+                </div>
+                <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
+                  <div className="flex flex-col gap-4">
+                    <div className="-mt-7 inline-flex self-start rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-normal text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
                       Export
                     </div>
                     <div className="text-sm text-slate-600 dark:text-slate-300">
@@ -2444,31 +2470,6 @@ export default function WeeklySchedulePage({
                       )}
                     >
                       Open Export
-                    </button>
-                  </div>
-                </div>
-              </div>
-              {/* Second row: Working Hours */}
-              <div className="flex w-full flex-col gap-6 lg:flex-row lg:items-start">
-                <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
-                  <div className="flex flex-col gap-4">
-                    <div className="-mt-7 inline-flex self-start rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-normal text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                      Working Hours
-                    </div>
-                    <div className="text-sm text-slate-600 dark:text-slate-300">
-                      Track working hours per week and compare against contract hours.
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setWorkingHoursOverviewOpen(true)}
-                      className={cx(
-                        "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-normal text-slate-900 shadow-sm",
-                        "hover:bg-slate-50 active:bg-slate-100",
-                        "disabled:cursor-not-allowed disabled:opacity-70",
-                        "dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700",
-                      )}
-                    >
-                      Open Working Hours
                     </button>
                   </div>
                 </div>
@@ -2676,6 +2677,15 @@ export default function WeeklySchedulePage({
             prev.map((clinician) =>
               clinician.id === clinicianId
                 ? { ...clinician, workingHoursPerWeek }
+                : clinician,
+            ),
+          );
+        }}
+        onUpdateWorkingHoursTolerance={(clinicianId, workingHoursToleranceHours) => {
+          setClinicians((prev) =>
+            prev.map((clinician) =>
+              clinician.id === clinicianId
+                ? { ...clinician, workingHoursToleranceHours }
                 : clinician,
             ),
           );

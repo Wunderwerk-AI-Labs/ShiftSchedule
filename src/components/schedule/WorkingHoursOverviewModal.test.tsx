@@ -20,12 +20,23 @@ describe("WorkingHoursOverviewModal", () => {
   ];
 
   const mockTemplate: WeeklyCalendarTemplate = {
+    version: 4,
+    blocks: [{ id: "block-1", sectionId: "section-1", requiredSlots: 1 }],
     locations: [
       {
-        id: "loc-1",
-        name: "Location 1",
+        locationId: "loc-1",
+        rowBands: [],
+        colBands: [],
         slots: [
-          { id: "slot-1", name: "Morning", startTime: "08:00", endTime: "16:00" },
+          {
+            id: "slot-1",
+            locationId: "loc-1",
+            rowBandId: "row-1",
+            colBandId: "col-1",
+            blockId: "block-1",
+            startTime: "08:00",
+            endTime: "16:00",
+          },
         ],
       },
     ],

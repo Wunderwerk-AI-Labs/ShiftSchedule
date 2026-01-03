@@ -575,7 +575,7 @@ test.describe("Solver Integration with Template", () => {
     await attachStepScreenshot(page, testInfo, "01-before-solver");
 
     // Find and click the solver/planning button - exact match to avoid ambiguity
-    const solverButton = page.getByRole("button", { name: "Run automated planning" });
+    const solverButton = page.getByRole("button", { name: "Run" });
 
     if (await solverButton.isVisible()) {
       await solverButton.click();

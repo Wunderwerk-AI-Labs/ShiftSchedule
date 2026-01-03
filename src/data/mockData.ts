@@ -100,12 +100,11 @@ export const defaultMinSlotsByRowId: Record<
 };
 
 export const defaultSolverSettings = {
-  enforceSameLocationPerDay: false,
+  enforceSameLocationPerDay: true,
   onCallRestEnabled: false,
   onCallRestClassId: "mri",
   onCallRestDaysBefore: 1,
   onCallRestDaysAfter: 1,
-  workingHoursToleranceHours: 5,
 };
 
 export const defaultSolverRules: Array<{

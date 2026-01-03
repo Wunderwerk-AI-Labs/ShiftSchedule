@@ -69,7 +69,7 @@ export function buildRenderedAssignmentMap(
 ) {
   const scheduleRows = options?.scheduleRows ?? [];
   const solverSettings = options?.solverSettings ?? {
-    enforceSameLocationPerDay: false,
+    enforceSameLocationPerDay: true,
     onCallRestEnabled: false,
     onCallRestClassId: "",
     onCallRestDaysBefore: 0,
