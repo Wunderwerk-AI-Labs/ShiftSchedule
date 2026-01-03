@@ -112,7 +112,8 @@ Section Blocks (Weekly Calendar Template)
 
 Weekly Calendar Template
 - Single calendar with locations stacked; day-type columns are shared across locations (Mon..Sun + Holiday).
-- Per-day columns: add columns for a specific day; delete via a hover-only "Delete Column" button at the top of the first row (confirm only if the column has slots; column outlines red on hover/confirm).
+- Per-day columns: add columns for a specific day; delete via a hover-only "Delete Column" button at the top of the first row (confirm only if the column has slots).
+- Delete button highlighting: hovering Delete Location/Row/Column buttons shows a thick red outline around the entire group (not per-cell rings). The outline uses edge borders only—top/left/right/bottom borders on the outer cells of the highlighted region.
 - Row bands are simple rows with an editable row label in the left header cell; Add row is a full-width dashed button below each location; row delete confirms only if the row has slots.
 - Section blocks sidebar stays visible while scrolling the template grid (sticky at all sizes; scrolls with the template grid container).
 - Blocks live in `weeklyTemplate.blocks` and slots reference `blockId`.

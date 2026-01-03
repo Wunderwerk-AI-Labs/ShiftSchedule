@@ -1487,7 +1487,7 @@ export default function WeeklyTemplateBuilder({
                   <div
                     className={cx(
                       "col-span-full border-b border-slate-200 bg-white px-2 py-2 dark:border-slate-800 dark:bg-slate-950",
-                      isLocationHighlighted && "ring-2 ring-rose-400 ring-inset",
+                      isLocationHighlighted && "border-t-2 border-l-2 border-r-2 border-t-rose-500 border-l-rose-500 border-r-rose-500",
                     )}
                     data-location-id={location.id}
                   >
@@ -1557,8 +1557,8 @@ export default function WeeklyTemplateBuilder({
                       <div
                         className={cx(
                           "group relative z-10 flex items-center overflow-visible border-b border-r border-slate-200 bg-white p-2 pl-12 pr-3 dark:border-slate-800 dark:bg-slate-950",
-                          isLocationHighlighted && "ring-2 ring-rose-400 ring-inset",
-                          isRowHighlighted && "ring-2 ring-rose-400 ring-inset",
+                          isLocationHighlighted && "border-l-2 border-l-rose-500",
+                          isRowHighlighted && "border-t-2 border-b-2 border-l-2 border-t-rose-500 border-b-rose-500 border-l-rose-500",
                         )}
                         data-row-band-id={band.id}
                         data-location-id={location.id}
@@ -1616,13 +1616,16 @@ export default function WeeklyTemplateBuilder({
                         );
                       })()}
 
-                    {visibleDayTypes.map((dayType) => {
+                    {visibleDayTypes.map((dayType, dayIndex) => {
                         const targetCount = Math.max(
                           sharedColumnCounts.get(dayType) ?? 0,
                           1,
                         );
+                        const isLastDay = dayIndex === visibleDayTypes.length - 1;
                         return Array.from({ length: targetCount }).map((_, colIndex) => {
                           const isLastInDay = colIndex === targetCount - 1;
+                          const isLastColumn = isLastDay && isLastInDay;
+                          const isFirstRowInGrid = locationIndex === 0 && rowIndex === 0;
                           const colBand = getLocationColBandByIndex(
                             templateLocation,
                             dayType,
@@ -1654,12 +1657,16 @@ export default function WeeklyTemplateBuilder({
                                   "border-r-2 border-r-slate-300 dark:border-r-slate-700",
                                 dragOverCell === dragKey &&
                                   "ring-2 ring-emerald-300 ring-inset",
-                                isLocationHighlighted &&
-                                  "ring-2 ring-rose-400 ring-inset",
+                                isLocationHighlighted && isLastColumn &&
+                                  "border-r-2 border-r-rose-500",
                                 isRowHighlighted &&
-                                  "ring-2 ring-rose-400 ring-inset",
+                                  "border-t-2 border-b-2 border-t-rose-500 border-b-rose-500",
+                                isRowHighlighted && isLastColumn &&
+                                  "border-r-2 border-r-rose-500",
                                 isHighlightedColumn &&
-                                  "ring-2 ring-rose-400 ring-inset",
+                                  "border-l-2 border-r-2 border-l-rose-500 border-r-rose-500",
+                                isHighlightedColumn && isFirstRowInGrid &&
+                                  "border-t-2 border-t-rose-500",
                               )}
                               data-column-key={`${dayType}-${colIndex}`}
                               data-row-band-id={band.id}
@@ -1857,7 +1864,7 @@ export default function WeeklyTemplateBuilder({
                   <div
                     className={cx(
                       "border-b border-r border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-950",
-                      isLocationHighlighted && "ring-2 ring-rose-400 ring-inset",
+                      isLocationHighlighted && "border-l-2 border-b-2 border-l-rose-500 border-b-rose-500",
                     )}
                     data-location-id={location.id}
                   >
@@ -1869,13 +1876,16 @@ export default function WeeklyTemplateBuilder({
                       Add row
                     </button>
                   </div>
-                  {visibleDayTypes.map((dayType) => {
+                  {visibleDayTypes.map((dayType, dayIndex) => {
                     const targetCount = Math.max(
                       sharedColumnCounts.get(dayType) ?? 0,
                       1,
                     );
+                    const isLastDay = dayIndex === visibleDayTypes.length - 1;
+                    const isLastLocation = locationIndex === locations.length - 1;
                     return Array.from({ length: targetCount }).map((_, colIndex) => {
                       const isLastInDay = colIndex === targetCount - 1;
+                      const isLastColumn = isLastDay && isLastInDay;
                       const isHighlightedColumn =
                         (pendingDeleteColumn?.dayType === dayType &&
                           pendingDeleteColumn.index === colIndex) ||
@@ -1894,9 +1904,15 @@ export default function WeeklyTemplateBuilder({
                             isLastInDay &&
                               "border-r-2 border-r-slate-300 dark:border-r-slate-700",
                             isLocationHighlighted &&
-                              "ring-2 ring-rose-400 ring-inset",
+                              "border-b-2 border-b-rose-500",
+                            isLocationHighlighted && isLastColumn &&
+                              "border-r-2 border-r-rose-500",
                             isHighlightedColumn &&
-                              "ring-2 ring-rose-400 ring-inset",
+                              "border-l-2 border-r-2 border-l-rose-500 border-r-rose-500",
+                            isHighlightedColumn && locationIndex === 0 && rowBands.length === 0 &&
+                              "border-t-2 border-t-rose-500",
+                            isHighlightedColumn && isLastLocation &&
+                              "border-b-2 border-b-rose-500",
                           )}
                           data-column-key={`${dayType}-${colIndex}`}
                           data-location-id={location.id}
