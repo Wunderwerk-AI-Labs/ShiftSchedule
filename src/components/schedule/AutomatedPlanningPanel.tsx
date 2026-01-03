@@ -7,6 +7,7 @@ import {
 } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import { toISODate } from "../../lib/date";
+import CustomDatePicker from "./CustomDatePicker";
 
 type AutomatedPlanningPanelProps = {
   weekStartISO: string;
@@ -208,36 +209,28 @@ export default function AutomatedPlanningPanel({
                 Today
               </button>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
+            <div className="flex flex-col gap-2">
+              <CustomDatePicker
                 value={startInput}
-                onChange={(event) => {
+                onChange={(value) => {
                   setHasTouched(true);
-                  setStartInput(event.target.value);
+                  setStartInput(value);
                   setLocalError(null);
                 }}
-                placeholder="Start DD.MM.YYYY"
+                placeholder="Start"
                 disabled={isRunning}
-                className={cx(
-                  "w-32 rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal text-slate-600",
-                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:[color-scheme:dark]",
-                )}
+                className="w-full"
               />
-              <input
-                type="text"
+              <CustomDatePicker
                 value={endInput}
-                onChange={(event) => {
+                onChange={(value) => {
                   setHasTouched(true);
-                  setEndInput(event.target.value);
+                  setEndInput(value);
                   setLocalError(null);
                 }}
-                placeholder="End DD.MM.YYYY"
+                placeholder="End"
                 disabled={isRunning}
-                className={cx(
-                  "w-32 rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal text-slate-600",
-                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:[color-scheme:dark]",
-                )}
+                className="w-full"
               />
             </div>
           </div>

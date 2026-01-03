@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { getPillToggleClasses } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import type { IcalPublishStatus } from "../../api/client";
+import CustomNumberInput from "./CustomNumberInput";
+import CustomDatePicker from "./CustomDatePicker";
 
 type IcalExportModalProps = {
   open: boolean;
@@ -69,7 +71,7 @@ export default function IcalExportModal({
   const [tab, setTab] = useState<"pdf" | "ical" | "web">("pdf");
   const [icalTab, setIcalTab] = useState<"download" | "subscribe">("subscribe");
   const [pdfStartText, setPdfStartText] = useState<string>("");
-  const [pdfWeeksText, setPdfWeeksText] = useState<string>("1");
+  const [pdfWeeks, setPdfWeeks] = useState<number>(1);
   const [pdfMode, setPdfMode] = useState<"combined" | "individual">("combined");
   const [copyState, setCopyState] = useState<{
     status: "idle" | "copied" | "error";
@@ -118,7 +120,7 @@ export default function IcalExportModal({
     setStartText(isoToEuropean(defaultStartISO));
     setEndText(isoToEuropean(defaultEndISO));
     setPdfStartText(isoToEuropean(defaultPdfStartISO));
-    setPdfWeeksText("1");
+    setPdfWeeks(1);
     setPdfMode("combined");
   }, [defaultEndISO, defaultPdfStartISO, defaultStartISO, open]);
 
@@ -145,16 +147,15 @@ export default function IcalExportModal({
 
   const pdfValidation = useMemo(() => {
     const parsedStart = parseDateInput(pdfStartText);
-    const weeks = Number(pdfWeeksText);
-    const weeksValid = Number.isFinite(weeks) && weeks >= 1 && weeks <= 55;
+    const weeksValid = pdfWeeks >= 1 && pdfWeeks <= 55;
     return {
       startValid: parsedStart.valid,
       startISO: parsedStart.iso,
       weeksValid,
-      weeks: Math.trunc(weeks),
+      weeks: pdfWeeks,
       hasError: !parsedStart.valid || !weeksValid,
     };
-  }, [pdfStartText, pdfWeeksText]);
+  }, [pdfStartText, pdfWeeks]);
 
   const subscribeUrl = publishStatus?.all?.subscribeUrl ?? "";
   const clinicianLinks = publishStatus?.clinicians ?? [];
@@ -395,42 +396,27 @@ export default function IcalExportModal({
                   separate PDF.
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <label className="grid gap-1">
+                  <div className="grid gap-1">
                     <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">
                       Start week (DD.MM.YYYY)
                     </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="DD.MM.YYYY"
+                    <CustomDatePicker
                       value={pdfStartText}
-                      onChange={(e) => setPdfStartText(e.target.value)}
-                      className={cx(
-                        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
-                        "focus:border-sky-300 focus:outline-none",
-                        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                        !pdfValidation.startValid && "border-rose-300 bg-rose-50/50",
-                      )}
+                      onChange={setPdfStartText}
+                      placeholder="DD.MM.YYYY"
                     />
-                  </label>
-                  <label className="grid gap-1">
+                  </div>
+                  <div className="grid gap-1">
                     <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">
                       Number of weeks
                     </span>
-                    <input
-                      type="number"
+                    <CustomNumberInput
+                      value={pdfWeeks}
+                      onChange={setPdfWeeks}
                       min={1}
                       max={55}
-                      value={pdfWeeksText}
-                      onChange={(e) => setPdfWeeksText(e.target.value)}
-                      className={cx(
-                        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
-                        "focus:border-sky-300 focus:outline-none",
-                        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                        !pdfValidation.weeksValid && "border-rose-300 bg-rose-50/50",
-                      )}
                     />
-                  </label>
+                  </div>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <button

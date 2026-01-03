@@ -1,6 +1,8 @@
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useState } from "react";
 import { cx } from "../../lib/classNames";
+import CustomNumberInput from "./CustomNumberInput";
+import CustomDatePicker from "./CustomDatePicker";
 
 type PdfExportModalProps = {
   open: boolean;
@@ -56,24 +58,23 @@ export default function PdfExportModal({
   error,
 }: PdfExportModalProps) {
   const [startText, setStartText] = useState("");
-  const [weeksText, setWeeksText] = useState("2");
+  const [weeks, setWeeks] = useState(2);
 
   useEffect(() => {
     if (!open) return;
     setStartText(isoToEuropean(defaultStartISO));
-    setWeeksText("2");
+    setWeeks(2);
   }, [defaultStartISO, open]);
 
   const validation = useMemo(() => {
     const parsed = parseDateInput(startText);
-    const weeks = Number(weeksText);
     return {
       startValid: parsed.valid,
       startISO: parsed.iso,
-      weeksValid: Number.isFinite(weeks) && weeks >= 1 && weeks <= 24,
-      weeks: Math.trunc(weeks),
+      weeksValid: weeks >= 1 && weeks <= 24,
+      weeks,
     };
-  }, [startText, weeksText]);
+  }, [startText, weeks]);
 
   const canSubmit = validation.startValid && validation.weeksValid && !exporting;
 
@@ -115,42 +116,27 @@ export default function PdfExportModal({
 
           <div className="min-h-0 overflow-y-auto px-6 py-5">
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-1">
+              <div className="grid gap-1">
                 <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">
                   Start week (DD.MM.YYYY)
                 </span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="DD.MM.YYYY"
+                <CustomDatePicker
                   value={startText}
-                  onChange={(e) => setStartText(e.target.value)}
-                  className={cx(
-                    "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
-                    "focus:border-sky-300 focus:outline-none",
-                    "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                    !validation.startValid && "border-rose-300 bg-rose-50/50",
-                  )}
+                  onChange={setStartText}
+                  placeholder="DD.MM.YYYY"
                 />
-              </label>
-              <label className="grid gap-1">
+              </div>
+              <div className="grid gap-1">
                 <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">
                   Number of weeks
                 </span>
-                <input
-                  type="number"
+                <CustomNumberInput
+                  value={weeks}
+                  onChange={setWeeks}
                   min={1}
                   max={24}
-                  value={weeksText}
-                  onChange={(e) => setWeeksText(e.target.value)}
-                  className={cx(
-                    "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900",
-                    "focus:border-sky-300 focus:outline-none",
-                    "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                    !validation.weeksValid && "border-rose-300 bg-rose-50/50",
-                  )}
                 />
-              </label>
+              </div>
             </div>
 
             {!validation.startValid || !validation.weeksValid ? (

@@ -10,6 +10,8 @@ import { cx } from "../../lib/classNames";
 import { Location, WorkplaceRow } from "../../data/mockData";
 import type { Holiday, SolverSettings, WeeklyCalendarTemplate } from "../../api/client";
 import WeeklyTemplateBuilder from "./WeeklyTemplateBuilder";
+import CustomSelect from "./CustomSelect";
+import CustomNumberInput from "./CustomNumberInput";
 
 type SettingsViewProps = {
   classRows: WorkplaceRow[];
@@ -212,11 +214,6 @@ export default function SettingsView({
     solverSectionRows.some((row) => row.id === solverSettings.onCallRestClassId)
       ? solverSettings.onCallRestClassId
       : solverSectionRows[0]?.id ?? "";
-  const clampRestDays = (value: string) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return 0;
-    return Math.max(0, Math.min(7, Math.trunc(parsed)));
-  };
   const reorderSectionBlocks = (fromId: string, toId: string) => {
     if (!weeklyTemplate || fromId === toId) return;
     const fromIndex = sectionBlocks.findIndex((block) => block.id === fromId);
@@ -447,60 +444,53 @@ export default function SettingsView({
                 !solverSettings.onCallRestEnabled && "opacity-60",
               )}
             >
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+              <div className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
                 Section
-                <select
+                <CustomSelect
                   value={onCallRestClassId}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     onChangeSolverSettings({
                       ...solverSettings,
-                      onCallRestClassId: e.target.value,
+                      onCallRestClassId: value,
                     })
                   }
+                  options={solverSectionRows.map((row) => ({
+                    value: row.id,
+                    label: row.name,
+                  }))}
                   disabled={!solverSettings.onCallRestEnabled}
-                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                >
-                  {solverSectionRows.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                />
+              </div>
+              <div className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
                 Days before
-                <input
-                  type="number"
-                  min={0}
-                  max={7}
+                <CustomNumberInput
                   value={solverSettings.onCallRestDaysBefore}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     onChangeSolverSettings({
                       ...solverSettings,
-                      onCallRestDaysBefore: clampRestDays(e.target.value),
+                      onCallRestDaysBefore: value,
                     })
                   }
-                  disabled={!solverSettings.onCallRestEnabled}
-                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                Days after
-                <input
-                  type="number"
                   min={0}
                   max={7}
+                  disabled={!solverSettings.onCallRestEnabled}
+                />
+              </div>
+              <div className="flex flex-col gap-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Days after
+                <CustomNumberInput
                   value={solverSettings.onCallRestDaysAfter}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     onChangeSolverSettings({
                       ...solverSettings,
-                      onCallRestDaysAfter: clampRestDays(e.target.value),
+                      onCallRestDaysAfter: value,
                     })
                   }
+                  min={0}
+                  max={7}
                   disabled={!solverSettings.onCallRestEnabled}
-                  className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                 />
-              </label>
+              </div>
             </div>
           </div>
         </div>
@@ -672,25 +662,20 @@ export default function SettingsView({
               Preload holidays
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <select
+              <CustomSelect
                 value={normalizedCountry}
-                onChange={(event) =>
-                  onChangeHolidayCountry(event.target.value.toUpperCase())
-                }
-                className={cx(
-                  "h-10 w-56 rounded-xl border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900",
-                  "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100",
-                )}
-              >
-                {!hasCountryOption ? (
-                  <option value={normalizedCountry}>{normalizedCountry}</option>
-                ) : null}
-                {countryOptions.map((option) => (
-                  <option key={option.code} value={option.code}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => onChangeHolidayCountry(value.toUpperCase())}
+                options={[
+                  ...(!hasCountryOption
+                    ? [{ value: normalizedCountry, label: normalizedCountry }]
+                    : []),
+                  ...countryOptions.map((option) => ({
+                    value: option.code,
+                    label: option.label,
+                  })),
+                ]}
+                className="w-56"
+              />
               <button
                 type="button"
                 onClick={async () => {

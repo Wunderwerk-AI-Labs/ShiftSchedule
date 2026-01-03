@@ -5,6 +5,9 @@ import {
   DEFAULT_PREFERRED_WORKING_TIMES,
   normalizePreferredWorkingTimes,
 } from "../../lib/clinicianPreferences";
+import CustomSelect from "./CustomSelect";
+import CustomNumberInput from "./CustomNumberInput";
+import CustomTimePicker from "./CustomTimePicker";
 
 type ClinicianEditorProps = {
   clinician: {
@@ -119,27 +122,25 @@ export default function ClinicianEditor({
     const value = preferredWorkingTimes[dayId];
     if (value.requirement === "none") {
       clearTimeWarning(dayId);
+      commitPreferredWorkingTimes();
       return;
     }
     const startMinutes = parseTimeToMinutes(value.startTime ?? "");
     const endMinutes = parseTimeToMinutes(value.endTime ?? "");
-    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
-      const defaults = DEFAULT_PREFERRED_WORKING_TIMES[dayId];
-      updatePreferredWorkingTimes((prev) => ({
-        ...prev,
-        [dayId]: {
-          ...prev[dayId],
-          startTime: defaults.startTime,
-          endTime: defaults.endTime,
-        },
-      }));
+    if (startMinutes === null || endMinutes === null) {
       setTimeWarnings((prev) => ({
         ...prev,
-        [dayId]: "Invalid time range. Reset to 07:00-17:00.",
+        [dayId]: "Invalid time format.",
       }));
-      return;
+    } else if (endMinutes <= startMinutes) {
+      setTimeWarnings((prev) => ({
+        ...prev,
+        [dayId]: "End time must be after start time.",
+      }));
+    } else {
+      clearTimeWarning(dayId);
     }
-    clearTimeWarning(dayId);
+    // Always commit - let the user keep their values
     commitPreferredWorkingTimes();
   };
 
@@ -279,20 +280,15 @@ export default function ClinicianEditor({
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               Add section
             </div>
-            <select
+            <CustomSelect
               value={selectedClassId}
-              onChange={(event) => setSelectedClassId(event.target.value)}
-              className={cx(
-                "rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700",
-                "focus:border-sky-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
-              )}
-            >
-              {availableRows.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setSelectedClassId(value)}
+              options={availableRows.map((row) => ({
+                value: row.id,
+                label: row.name,
+              }))}
+              className="min-w-[140px]"
+            />
             <button
               type="button"
               onClick={() => {
@@ -554,25 +550,15 @@ export default function ClinicianEditor({
                 Tolerance (hours)
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-3">
-                <input
-                  type="number"
+                <CustomNumberInput
+                  value={workingHoursTolerance}
+                  onChange={(value) => {
+                    setWorkingHoursTolerance(value);
+                    onUpdateWorkingHoursTolerance?.(clinician.id, value);
+                  }}
                   min={0}
                   max={40}
-                  step={1}
-                  value={workingHoursTolerance}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    const parsed = Number(value);
-                    if (!Number.isFinite(parsed)) return;
-                    const clamped = Math.max(0, Math.min(40, Math.trunc(parsed)));
-                    setWorkingHoursTolerance(clamped);
-                    onUpdateWorkingHoursTolerance?.(clinician.id, clamped);
-                  }}
-                  className={cx(
-                    "w-24 rounded-lg border border-slate-200 px-2 py-1 text-sm font-medium text-slate-900",
-                    "focus:border-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
-                  )}
-                  placeholder="5"
+                  className="w-24"
                 />
               </div>
               <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -594,48 +580,40 @@ export default function ClinicianEditor({
                   {day.label}
                 </div>
                 <div className="flex items-center gap-1">
-                  <input
-                    type="time"
-                    step={60}
-                    value={value.startTime}
-                    onChange={(event) =>
+                  <CustomTimePicker
+                    value={value.startTime ?? "07:00"}
+                    onChange={(time) => {
                       updatePreferredWorkingTimes((prev) => ({
                         ...prev,
                         [day.id]: {
                           ...prev[day.id],
-                          startTime: event.target.value,
+                          startTime: time,
                         },
-                      }))
-                    }
-                    onBlur={() => validatePreferredWorkingTime(day.id)}
+                      }));
+                      // Validate after a short delay to let state update
+                      setTimeout(() => validatePreferredWorkingTime(day.id), 0);
+                    }}
                     disabled={isInactive}
-                    className={cx(
-                      "w-[8.5ch] rounded-lg border border-slate-200 px-1.5 py-1 text-[11px] font-medium text-slate-900",
-                      "focus:border-indigo-300 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-                      "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-900/60 dark:disabled:text-slate-500",
-                    )}
+                    hasError={!!timeWarnings[day.id]}
+                    className="w-[72px]"
                   />
                   <span className="text-[11px] font-semibold text-slate-400">–</span>
-                  <input
-                    type="time"
-                    step={60}
-                    value={value.endTime}
-                    onChange={(event) =>
+                  <CustomTimePicker
+                    value={value.endTime ?? "17:00"}
+                    onChange={(time) => {
                       updatePreferredWorkingTimes((prev) => ({
                         ...prev,
                         [day.id]: {
                           ...prev[day.id],
-                          endTime: event.target.value,
+                          endTime: time,
                         },
-                      }))
-                    }
-                    onBlur={() => validatePreferredWorkingTime(day.id)}
+                      }));
+                      // Validate after a short delay to let state update
+                      setTimeout(() => validatePreferredWorkingTime(day.id), 0);
+                    }}
                     disabled={isInactive}
-                    className={cx(
-                      "w-[8.5ch] rounded-lg border border-slate-200 px-1.5 py-1 text-[11px] font-medium text-slate-900",
-                      "focus:border-indigo-300 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400",
-                      "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-900/60 dark:disabled:text-slate-500",
-                    )}
+                    hasError={!!timeWarnings[day.id]}
+                    className="w-[72px]"
                   />
                 </div>
                 <div className="ml-auto flex flex-wrap items-center gap-2">

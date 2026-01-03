@@ -210,7 +210,7 @@ Testing
   - Full workflow test (`e2e/full-workflow.spec.ts`): comprehensive test that:
     - Logs in as admin (`admin` / `tE7vcYMzC7ycXXV234s`)
     - Deletes the test user if it exists
-    - Creates test user `Testuser-Test` with password `BananePferdStraßeRadio`
+    - Creates test user `Test` with password `Test`
     - Sets up a complex radiology schedule via API:
       - 3 locations: Main Hospital, Outpatient Center, Emergency
       - 5 sections: MRI, CT, X-Ray, Ultrasound, On-Call
