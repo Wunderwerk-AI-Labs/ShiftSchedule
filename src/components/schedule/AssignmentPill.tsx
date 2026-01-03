@@ -5,7 +5,7 @@ import type { AvailabilitySegment } from "../../lib/schedule";
 
 /**
  * Abbreviate a name to fit in limited space.
- * Strategy: "First Last" -> "F. Last" -> "F. L." -> "FL"
+ * Strategy: "First Last" -> "First L." -> "F. Last" -> "F. L." -> "FL"
  * If disambiguation is needed, adds more characters from first name.
  */
 function abbreviateName(
@@ -16,7 +16,7 @@ function abbreviateName(
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) {
     // Single name - truncate if needed
-    if (level >= 2) return parts[0].charAt(0);
+    if (level >= 3) return parts[0].charAt(0);
     return parts[0];
   }
 
@@ -25,16 +25,19 @@ function abbreviateName(
 
   let result: string;
   if (level === 0) {
-    // Full name
+    // Full name: "John Smith"
     result = name;
   } else if (level === 1) {
-    // "F. Last"
-    result = `${firstName.charAt(0)}. ${lastName}`;
+    // "First L.": "John S."
+    result = `${firstName} ${lastName.charAt(0)}.`;
   } else if (level === 2) {
-    // "F. L."
+    // "F. Last": "J. Smith"
+    result = `${firstName.charAt(0)}. ${lastName}`;
+  } else if (level === 3) {
+    // "F. L.": "J. S."
     result = `${firstName.charAt(0)}. ${lastName.charAt(0)}.`;
   } else {
-    // "FL"
+    // "FL": "JS"
     result = `${firstName.charAt(0)}${lastName.charAt(0)}`;
   }
 
@@ -45,8 +48,23 @@ function abbreviateName(
       .map((n) => abbreviateName(n, level));
 
     if (otherAbbreviations.includes(result)) {
-      // Collision detected - add more of the first name to disambiguate
+      // Collision detected - add more characters to disambiguate
       if (level === 1) {
+        // "First L." -> try adding more chars from last name: "John Sm.", "John Smi."
+        for (let i = 2; i <= lastName.length; i++) {
+          const disambiguated = `${firstName} ${lastName.slice(0, i)}.`;
+          const othersWithMoreChars = siblingNames
+            .filter((n) => n !== name)
+            .map((n) => {
+              const p = n.trim().split(/\s+/);
+              if (p.length === 1) return n;
+              return `${p[0]} ${p[p.length - 1].slice(0, i)}.`;
+            });
+          if (!othersWithMoreChars.includes(disambiguated)) {
+            return disambiguated;
+          }
+        }
+      } else if (level === 2) {
         // "F. Last" -> "Fi. Last" or "Fir. Last"
         for (let i = 2; i <= firstName.length; i++) {
           const disambiguated = `${firstName.slice(0, i)}. ${lastName}`;
@@ -61,7 +79,7 @@ function abbreviateName(
             return disambiguated;
           }
         }
-      } else if (level === 2) {
+      } else if (level === 3) {
         // "F. L." -> "Fi. L." or use first 2 chars of last name
         const disambiguated = `${firstName.slice(0, 2)}. ${lastName.charAt(0)}.`;
         const othersDisambiguated = siblingNames
@@ -75,7 +93,7 @@ function abbreviateName(
           return disambiguated;
         }
       }
-      // level 3 (initials) - not much we can do, fall through
+      // level 4 (initials) - not much we can do, fall through
     }
   }
 
@@ -161,7 +179,7 @@ export default function AssignmentPill({
     // Use requestAnimationFrame to ensure layout is computed
     const rafId = requestAnimationFrame(() => {
       const isOverflowing = nameEl.scrollWidth > containerEl.clientWidth;
-      if (isOverflowing && abbreviationLevel < 3) {
+      if (isOverflowing && abbreviationLevel < 4) {
         setAbbreviationLevel((prev) => prev + 1);
       }
     });
