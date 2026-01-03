@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
 import { formatRangeLabel, toISODate } from "../../lib/date";
 import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon } from "./icons";
@@ -23,7 +23,25 @@ export default function WeekNavigator({
   variant = "page",
 }: WeekNavigatorProps) {
   const dateInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Close date picker when clicking outside
+  useEffect(() => {
+    if (!showDatePicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setShowDatePicker(false);
+      }
+    };
+    // Use capture phase to catch clicks before the picker might handle them
+    document.addEventListener("mousedown", handleClickOutside, true);
+    return () =>
+      document.removeEventListener("mousedown", handleClickOutside, true);
+  }, [showDatePicker]);
 
   const handleDateClick = () => {
     if (onGoToDate && dateInputRef.current) {
@@ -61,7 +79,7 @@ export default function WeekNavigator({
         >
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
-        <div className="relative">
+        <div ref={containerRef} className="relative">
           <button
             type="button"
             onClick={handleDateClick}
