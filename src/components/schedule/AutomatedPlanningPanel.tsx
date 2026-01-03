@@ -209,7 +209,7 @@ export default function AutomatedPlanningPanel({
                 Today
               </button>
             </div>
-            <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
               <CustomDatePicker
                 value={startInput}
                 onChange={(value) => {
@@ -219,8 +219,9 @@ export default function AutomatedPlanningPanel({
                 }}
                 placeholder="Start"
                 disabled={isRunning}
-                className="w-full"
+                className="w-[120px]"
               />
+              <span className="text-xs font-semibold text-slate-400">–</span>
               <CustomDatePicker
                 value={endInput}
                 onChange={(value) => {
@@ -230,7 +231,7 @@ export default function AutomatedPlanningPanel({
                 }}
                 placeholder="End"
                 disabled={isRunning}
-                className="w-full"
+                className="w-[120px]"
               />
             </div>
           </div>
@@ -245,7 +246,7 @@ export default function AutomatedPlanningPanel({
                 disabled={isRunning}
                 className={getPillToggleClasses(strategy === "fill")}
               >
-                Fill open slots only
+                Fill open slots
               </button>
               <button
                 type="button"
@@ -253,7 +254,7 @@ export default function AutomatedPlanningPanel({
                 disabled={isRunning}
                 className={getPillToggleClasses(strategy === "distribute")}
               >
-                Distribute all people
+                Distribute all
               </button>
             </div>
           </div>

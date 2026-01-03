@@ -151,7 +151,7 @@ Clinician Editor (modal)
 - Panel order: Eligible Sections → Vacations → Preferred Working Times.
 - Eligible sections list is ordered. Drag to set priority (this order is also the preference list).
 - Add eligible sections via dropdown + Add button; remove via per-row Remove button.
-- Vacation management uses native date pickers; start date is unrestricted, end date has min=startISO.
+- Vacation management uses custom date pickers (DD.MM.YYYY format) with calendar dropdown; setting a start date after the current end date auto-adjusts end to start + 1 day.
 - Invalid date ranges (end before start) show red styling with "End must be after start" warning but are allowed for editing flexibility.
 - Past vacations collapsed in a <details>.
 - Modal body is scrollable for long vacation lists.
@@ -564,6 +564,17 @@ Solver notice panel (frontend):
 - Displays timing info (build + solve time) on success and failure.
 - Stays open until user clicks to dismiss (click backdrop or X button).
 - Centered modal with scrollable content for long diagnostics.
+
+Automated Shift Planning panel (frontend):
+- Timeframe: "Current week" and "Today" quick buttons; custom date pickers (DD.MM.YYYY) for start/end displayed inline with dash separator.
+- Strategy: "Fill open slots" (only fills required slots) or "Distribute all" (assigns all available clinicians).
+- Run button triggers solver; Reset button clears assignments in the selected range (with confirmation).
+
+Custom date picker component (`CustomDatePicker.tsx`):
+- European format (DD.MM.YYYY) with calendar dropdown.
+- Calendar shows month navigation, weekday headers (Mo-Su), today highlight, selected date highlight.
+- Dropdown opens above if not enough space below (auto-detects).
+- Fixed width 252px for consistent dropdown size; z-index 100 for proper layering.
 
 ---
 

@@ -8,6 +8,25 @@ import {
 import CustomSelect from "./CustomSelect";
 import CustomNumberInput from "./CustomNumberInput";
 import CustomTimePicker from "./CustomTimePicker";
+import CustomDatePicker from "./CustomDatePicker";
+
+// Convert ISO date (YYYY-MM-DD) to European format (DD.MM.YYYY)
+function isoToEuropean(iso: string): string {
+  if (!iso) return "";
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  const [, year, month, day] = match;
+  return `${day}.${month}.${year}`;
+}
+
+// Convert European format (DD.MM.YYYY) to ISO date (YYYY-MM-DD)
+function europeanToIso(european: string): string {
+  if (!european) return "";
+  const match = european.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!match) return "";
+  const [, day, month, year] = match;
+  return `${year}-${month}-${day}`;
+}
 
 type ClinicianEditorProps = {
   clinician: {
@@ -350,50 +369,36 @@ export default function ClinicianEditor({
                       : "border-slate-200 dark:border-slate-700",
                   )}
                 >
-                  <input
-                    type="date"
-                    value={vacation.startISO}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value) {
-                        onUpdateVacation(clinician.id, vacation.id, {
-                          startISO: value,
-                        });
+                  <CustomDatePicker
+                    value={isoToEuropean(vacation.startISO)}
+                    onChange={(value) => {
+                      const iso = europeanToIso(value);
+                      if (iso) {
+                        const updates: { startISO: string; endISO?: string } = { startISO: iso };
+                        // If end date is before new start date, set end to start + 1 day
+                        if (vacation.endISO < iso) {
+                          const nextDay = new Date(iso);
+                          nextDay.setDate(nextDay.getDate() + 1);
+                          updates.endISO = nextDay.toISOString().slice(0, 10);
+                        }
+                        onUpdateVacation(clinician.id, vacation.id, updates);
                       }
                     }}
-                    className={cx(
-                      "rounded-lg border px-2 py-1 text-xs font-medium",
-                      isInvalid
-                        ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
-                        : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
-                      "focus:border-sky-300 dark:bg-slate-900",
-                    )}
+                    className="w-[120px]"
                   />
                   <span className="text-xs font-semibold text-slate-400">–</span>
-                  <input
-                    type="date"
-                    value={vacation.endISO}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value) {
+                  <CustomDatePicker
+                    value={isoToEuropean(vacation.endISO)}
+                    onChange={(value) => {
+                      const iso = europeanToIso(value);
+                      if (iso) {
                         onUpdateVacation(clinician.id, vacation.id, {
-                          endISO: value,
+                          endISO: iso,
                         });
                       }
                     }}
-                    className={cx(
-                      "rounded-lg border px-2 py-1 text-xs font-medium",
-                      isInvalid
-                        ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
-                        : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
-                      "focus:border-sky-300 dark:bg-slate-900",
-                    )}
+                    className="w-[120px]"
                   />
-                  {isInvalid && (
-                    <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                      End must be after start
-                    </span>
-                  )}
                   <button
                     type="button"
                     onClick={() => onRemoveVacation(clinician.id, vacation.id)}
@@ -435,50 +440,36 @@ export default function ClinicianEditor({
                         : "border-slate-200 dark:border-slate-700",
                     )}
                   >
-                    <input
-                      type="date"
-                      value={vacation.startISO}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value) {
-                          onUpdateVacation(clinician.id, vacation.id, {
-                            startISO: value,
-                          });
+                    <CustomDatePicker
+                      value={isoToEuropean(vacation.startISO)}
+                      onChange={(value) => {
+                        const iso = europeanToIso(value);
+                        if (iso) {
+                          const updates: { startISO: string; endISO?: string } = { startISO: iso };
+                          // If end date is before new start date, set end to start + 1 day
+                          if (vacation.endISO < iso) {
+                            const nextDay = new Date(iso);
+                            nextDay.setDate(nextDay.getDate() + 1);
+                            updates.endISO = nextDay.toISOString().slice(0, 10);
+                          }
+                          onUpdateVacation(clinician.id, vacation.id, updates);
                         }
                       }}
-                      className={cx(
-                        "rounded-lg border px-2 py-1 text-xs font-medium",
-                        isInvalid
-                          ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
-                          : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
-                        "focus:border-sky-300 dark:bg-slate-900",
-                      )}
+                      className="w-[120px]"
                     />
                     <span className="text-xs font-semibold text-slate-400">–</span>
-                    <input
-                      type="date"
-                      value={vacation.endISO}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value) {
+                    <CustomDatePicker
+                      value={isoToEuropean(vacation.endISO)}
+                      onChange={(value) => {
+                        const iso = europeanToIso(value);
+                        if (iso) {
                           onUpdateVacation(clinician.id, vacation.id, {
-                            endISO: value,
+                            endISO: iso,
                           });
                         }
                       }}
-                      className={cx(
-                        "rounded-lg border px-2 py-1 text-xs font-medium",
-                        isInvalid
-                          ? "border-rose-300 text-rose-700 dark:border-rose-500/60 dark:text-rose-300"
-                          : "border-slate-200 text-slate-900 dark:border-slate-700 dark:text-slate-100",
-                        "focus:border-sky-300 dark:bg-slate-900",
-                      )}
+                      className="w-[120px]"
                     />
-                    {isInvalid && (
-                      <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">
-                        End must be after start
-                      </span>
-                    )}
                     <button
                       type="button"
                       onClick={() => onRemoveVacation(clinician.id, vacation.id)}

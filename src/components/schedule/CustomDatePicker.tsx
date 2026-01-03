@@ -216,7 +216,7 @@ export default function CustomDatePicker({
       {isOpen && (
         <div
           className={cx(
-            "absolute left-0 z-50 rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-800",
+            "absolute left-0 z-[100] w-[252px] rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-800",
             openAbove ? "bottom-full mb-1" : "top-full mt-1",
           )}
         >
