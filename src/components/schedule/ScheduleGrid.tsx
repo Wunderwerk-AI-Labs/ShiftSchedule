@@ -67,6 +67,7 @@ type ScheduleGridProps = {
   }>;
   getIsOnRestDay?: (clinicianId: string, dateISO: string) => boolean;
   getHasTimeConflict?: (clinicianId: string, dateISO: string, rowId: string) => boolean;
+  enforceSameLocationPerDay?: boolean;
   onAddAssignment?: (args: { rowId: string; dateISO: string; clinicianId: string }) => void;
   onRemoveAssignment?: (args: { rowId: string; dateISO: string; assignmentId: string; clinicianId: string }) => void;
 };
@@ -99,6 +100,7 @@ export default function ScheduleGrid({
   clinicians = [],
   getIsOnRestDay,
   getHasTimeConflict,
+  enforceSameLocationPerDay = false,
   onAddAssignment,
   onRemoveAssignment,
 }: ScheduleGridProps) {
@@ -268,11 +270,31 @@ export default function ScheduleGrid({
       rows.flatMap((r) => r.slotRows ?? []).find((sr) => sr.id === rowId);
     if (!row || row.kind !== "class") return [];
     const classId = row.sectionId ?? row.id;
+    const slotLocationId = row.locationId ?? "loc-default";
 
     // Get already assigned clinicians for this specific slot
     const slotKey = `${rowId}__${dateISO}`;
     const slotAssignments = assignmentMap.get(slotKey) ?? [];
     const assignedClinicianIds = new Set(slotAssignments.map((a) => a.clinicianId));
+
+    // Build a map of clinician -> locations they're assigned to on this date
+    const clinicianLocationsOnDate = new Map<string, Set<string>>();
+    if (enforceSameLocationPerDay) {
+      for (const [key, assignments] of assignmentMap.entries()) {
+        if (!key.endsWith(`__${dateISO}`)) continue;
+        const keyRowId = key.split("__")[0];
+        const keyRow =
+          rows.find((r) => r.id === keyRowId) ??
+          rows.flatMap((r) => r.slotRows ?? []).find((sr) => sr.id === keyRowId);
+        if (!keyRow || keyRow.kind !== "class") continue;
+        const locationId = keyRow.locationId ?? "loc-default";
+        for (const assignment of assignments) {
+          const existing = clinicianLocationsOnDate.get(assignment.clinicianId) ?? new Set();
+          existing.add(locationId);
+          clinicianLocationsOnDate.set(assignment.clinicianId, existing);
+        }
+      }
+    }
 
     return clinicians.map((clinician) => {
       // Check qualification
@@ -304,6 +326,16 @@ export default function ScheduleGrid({
       const hasTimeConflict =
         getHasTimeConflict?.(clinician.id, dateISO, rowId) ?? fallbackConflict;
 
+      // Check location conflict (only if enforceSameLocationPerDay is enabled)
+      let hasLocationConflict = false;
+      if (enforceSameLocationPerDay) {
+        const clinicianLocations = clinicianLocationsOnDate.get(clinician.id);
+        if (clinicianLocations && clinicianLocations.size > 0) {
+          // If they're assigned to a different location, that's a conflict
+          hasLocationConflict = !clinicianLocations.has(slotLocationId);
+        }
+      }
+
       // Check if already assigned to this slot
       const alreadyAssigned = assignedClinicianIds.has(clinician.id);
 
@@ -317,6 +349,7 @@ export default function ScheduleGrid({
         isOnVacation,
         isOnRestDay,
         hasTimeConflict: effectiveTimeConflict,
+        hasLocationConflict,
         alreadyAssigned,
       };
     });

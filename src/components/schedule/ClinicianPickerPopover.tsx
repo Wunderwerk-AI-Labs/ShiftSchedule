@@ -49,6 +49,7 @@ export type ClinicianOption = {
   isOnVacation: boolean;
   isOnRestDay: boolean;
   hasTimeConflict: boolean;
+  hasLocationConflict: boolean;
   alreadyAssigned: boolean;
 };
 
@@ -154,6 +155,7 @@ export default function ClinicianPickerPopover({
               !clinician.isOnVacation &&
               !clinician.isOnRestDay &&
               !clinician.hasTimeConflict &&
+              !clinician.hasLocationConflict &&
               !clinician.alreadyAssigned;
 
             // Build all applicable warnings - order determines display priority
@@ -163,6 +165,7 @@ export default function ClinicianPickerPopover({
             if (clinician.isOnVacation) warnings.push("On vacation");
             if (clinician.isOnRestDay) warnings.push("Rest day");
             if (clinician.hasTimeConflict) warnings.push("Time conflict");
+            if (clinician.hasLocationConflict) warnings.push("Different location");
 
             return (
               <button

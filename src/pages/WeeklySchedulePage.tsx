@@ -2205,6 +2205,7 @@ export default function WeeklySchedulePage({
             }}
             clinicians={clinicians}
             getIsOnRestDay={isOnRestDay}
+            enforceSameLocationPerDay={solverSettings.enforceSameLocationPerDay}
             slotOverridesByKey={slotOverridesByKey}
             enableSlotOverrides={false}
             onClinicianClick={(clinicianId) => openClinicianEditor(clinicianId)}
