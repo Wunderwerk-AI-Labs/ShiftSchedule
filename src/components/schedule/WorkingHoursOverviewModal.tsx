@@ -58,8 +58,9 @@ function toISODate(date: Date): string {
 
 // Get all weeks in a year, starting Jan 1 and ending Dec 31
 // Returns daysInWeek to calculate fractional expected hours for partial weeks
-function getWeeksInYear(year: number): Array<{ weekNum: number; start: Date; end: Date; daysInWeek: number }> {
-  const weeks: Array<{ weekNum: number; start: Date; end: Date; daysInWeek: number }> = [];
+// Also returns weekMonday (the actual Monday) for matching assignments
+function getWeeksInYear(year: number): Array<{ weekNum: number; start: Date; end: Date; weekMonday: Date; daysInWeek: number }> {
+  const weeks: Array<{ weekNum: number; start: Date; end: Date; weekMonday: Date; daysInWeek: number }> = [];
 
   const jan1 = new Date(year, 0, 1);
   const dec31 = new Date(year, 11, 31);
@@ -85,6 +86,7 @@ function getWeeksInYear(year: number): Array<{ weekNum: number; start: Date; end
       weekNum,
       start: new Date(clampedStart),
       end: new Date(clampedEnd),
+      weekMonday: new Date(weekMonday), // Store the actual Monday for matching
       daysInWeek,
     });
 
@@ -154,7 +156,7 @@ export default function WorkingHoursOverviewModal({
     const today = new Date();
     if (today.getFullYear() !== selectedYear) return -1;
     const todayStart = getWeekStart(today);
-    return weeks.findIndex(w => toISODate(w.start) === toISODate(todayStart));
+    return weeks.findIndex(w => toISODate(w.weekMonday) === toISODate(todayStart));
   }, [weeks, selectedYear]);
 
   // Calculate working hours per week for all clinicians
@@ -174,9 +176,9 @@ export default function WorkingHoursOverviewModal({
         const assignmentDate = new Date(assignment.dateISO);
         if (assignmentDate.getFullYear() !== selectedYear) continue;
 
-        // Find which week this assignment belongs to
+        // Find which week this assignment belongs to (use weekMonday for matching)
         const weekStart = getWeekStart(assignmentDate);
-        const weekIndex = weeks.findIndex(w => toISODate(w.start) === toISODate(weekStart));
+        const weekIndex = weeks.findIndex(w => toISODate(w.weekMonday) === toISODate(weekStart));
         if (weekIndex === -1) continue;
 
         // Get duration from slot or use default

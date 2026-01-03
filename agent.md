@@ -51,7 +51,7 @@ Top bar
 
 Schedule card
 - Week navigator lives inside the card header; range label uses DD.MM.YYYY (or DD.MM.YYYY – DD.MM.YYYY); Today button sits next to the arrows.
-- **Week picker**: clicking on the date range label opens a native date picker; selecting any date navigates to the week containing that date. A small calendar icon appears next to the date label. Click-outside detection closes the picker when clicking elsewhere on the page.
+- **Week picker**: clicking on the date range label opens a custom calendar popover (not the native browser picker). The calendar displays weeks as selectable rows—hovering highlights the entire week, and clicking any day navigates to the Monday of that week. A small calendar icon appears next to the date label. "Select a week" hint text and a "This week" button are included. Click-outside detection closes the picker.
 - On mobile, the schedule renders a single day with a day navigator (label between arrows, Today next to them).
 - Today is shown by circling the day number in the header.
 - Week starts Monday; weekend/holiday styling is header-only: weekend header light gray, holiday header light lavender; holiday name is a tiny purple label under the day.

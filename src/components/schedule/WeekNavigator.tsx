@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
-import { formatRangeLabel, toISODate } from "../../lib/date";
+import { formatRangeLabel } from "../../lib/date";
 import { ChevronLeftIcon, ChevronRightIcon, CalendarIcon } from "./icons";
+import DatePickerPopover from "./DatePickerPopover";
 
 type WeekNavigatorProps = {
   rangeStart: Date;
@@ -22,40 +23,19 @@ export default function WeekNavigator({
   onGoToDate,
   variant = "page",
 }: WeekNavigatorProps) {
-  const dateInputRef = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  // Close date picker when clicking outside
-  useEffect(() => {
-    if (!showDatePicker) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
-        setShowDatePicker(false);
-      }
-    };
-    // Use capture phase to catch clicks before the picker might handle them
-    document.addEventListener("mousedown", handleClickOutside, true);
-    return () =>
-      document.removeEventListener("mousedown", handleClickOutside, true);
-  }, [showDatePicker]);
-
   const handleDateClick = () => {
-    if (onGoToDate && dateInputRef.current) {
-      dateInputRef.current.showPicker?.();
-      setShowDatePicker(true);
+    if (onGoToDate) {
+      setShowDatePicker((prev) => !prev);
     }
   };
 
-  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (value && onGoToDate) {
-      onGoToDate(new Date(value));
+  const handleSelectDate = (date: Date) => {
+    if (onGoToDate) {
+      onGoToDate(date);
     }
-    setShowDatePicker(false);
   };
 
   const panel = (
@@ -79,8 +59,9 @@ export default function WeekNavigator({
         >
           <ChevronLeftIcon className="h-4 w-4" />
         </button>
-        <div ref={containerRef} className="relative">
+        <div className="relative">
           <button
+            ref={buttonRef}
             type="button"
             onClick={handleDateClick}
             disabled={!onGoToDate}
@@ -88,6 +69,7 @@ export default function WeekNavigator({
               "flex min-w-[148px] items-center justify-center gap-1.5 text-center text-sm font-normal tracking-tight text-slate-700 dark:text-slate-200 sm:text-base",
               onGoToDate &&
                 "cursor-pointer rounded-lg px-2 py-1 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800",
+              showDatePicker && "bg-slate-100 dark:bg-slate-800",
             )}
             aria-label="Pick a week"
           >
@@ -96,18 +78,15 @@ export default function WeekNavigator({
               <CalendarIcon className="h-4 w-4 text-slate-400 dark:text-slate-500" />
             ) : null}
           </button>
-          {onGoToDate ? (
-            <input
-              ref={dateInputRef}
-              type="date"
-              value={toISODate(rangeStart)}
-              onChange={handleDateChange}
-              onBlur={() => setShowDatePicker(false)}
-              className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-              tabIndex={-1}
-              aria-hidden="true"
+          {onGoToDate && (
+            <DatePickerPopover
+              open={showDatePicker}
+              onClose={() => setShowDatePicker(false)}
+              onSelectDate={handleSelectDate}
+              selectedDate={rangeStart}
+              anchorRef={buttonRef}
             />
-          ) : null}
+          )}
         </div>
         <button
           type="button"
