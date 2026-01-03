@@ -47,7 +47,7 @@ Edit `.env`:
 DOMAIN=schedule.example.com
 LETSENCRYPT_EMAIL=admin@example.com
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=change-me
+ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s
 JWT_SECRET=change-me-too
 JWT_EXPIRE_MINUTES=720
 PUBLIC_BASE_URL=https://schedule.example.com/api
@@ -69,7 +69,7 @@ Edit `.env` to include:
 APP_ORIGIN=http://SERVER_IP
 VITE_API_URL=http://SERVER_IP:8000
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=change-me
+ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s
 JWT_SECRET=change-me-too
 JWT_EXPIRE_MINUTES=720
 PUBLIC_BASE_URL=http://SERVER_IP:8000

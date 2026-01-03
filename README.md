@@ -22,7 +22,7 @@ Prereqs:
 Auth setup (required for login):
 ```bash
 export ADMIN_USERNAME=admin
-export ADMIN_PASSWORD=change-me
+export ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s
 export JWT_SECRET=change-me-too
 ```
 On first startup, the admin user is created if it doesn't already exist.

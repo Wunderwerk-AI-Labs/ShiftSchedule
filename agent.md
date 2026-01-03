@@ -632,6 +632,37 @@ Prereqs
 - Python 3.9+
 - Node 18+
 
+**Quick start (Claude Code agent)**
+To start fresh with a clean database:
+```bash
+# Kill any existing processes
+lsof -ti:8000 | xargs kill -9 2>/dev/null
+lsof -ti:5173 | xargs kill -9 2>/dev/null
+
+# Delete database for fresh start (optional)
+rm /Users/danieltruhn/Workspace/ShiftSchedule/schedule.db
+
+# Start backend (env vars inline - IMPORTANT: must be on same line or exported first)
+ADMIN_USERNAME=admin ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s JWT_SECRET=change-me-too python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+
+# Start frontend
+npm run dev -- --host 0.0.0.0 --port 5173 &
+```
+- Default admin credentials: `admin` / `tE7vcYMzC7ycXXV234s`
+- Database location: `/Users/danieltruhn/Workspace/ShiftSchedule/schedule.db` (project root, not `backend/`)
+
+**Common pitfalls**
+1. **Admin password mismatch**: The admin user is created on first backend startup with the password from `ADMIN_PASSWORD`. If you delete the database and restart with a different password, or if the database already exists with a different password, login will fail.
+   - Fix: Delete the database file and restart the backend with the correct password.
+   - The password is hashed on user creation; changing `ADMIN_PASSWORD` after the user exists does NOT update the password.
+   - Use `ADMIN_PASSWORD_RESET=true` to force-reset an existing admin password.
+
+2. **Env vars not passed to backend**: If you start the backend without the env vars on the same command line (or without exporting them first), the admin user won't be created or will use wrong defaults.
+   - Wrong: `python3 -m uvicorn backend.main:app ...` (no env vars)
+   - Right: `ADMIN_USERNAME=admin ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s python3 -m uvicorn backend.main:app ...`
+
+3. **Database location**: The database is at project root (`schedule.db`), not `backend/schedule.db`.
+
 Auth env (required for login):
 ```bash
 export ADMIN_USERNAME=admin
@@ -651,16 +682,17 @@ npm install
 
 Step 3: start backend (Terminal 1)
 ```bash
-python3 -m uvicorn backend.main:app --host localhost --port 8000
+ADMIN_USERNAME=admin ADMIN_PASSWORD=tE7vcYMzC7ycXXV234s JWT_SECRET=change-me-too python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 ```
 
 Step 4: start frontend (Terminal 2)
 ```bash
-npm run dev -- --host localhost --port 5173
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
 Step 5: open the app
 - http://localhost:5173
+- Login: `admin` / `tE7vcYMzC7ycXXV234s`
 
 Codex CLI sandbox note (local dev)
 - You may see `operation not permitted` when binding to ports (8000/5173) if the sandbox disallows it.
@@ -668,6 +700,7 @@ Codex CLI sandbox note (local dev)
 - Also avoid `nohup` in this environment; it can trigger permission errors.
 
 If a port is already in use
+- Kill existing processes: `lsof -ti:8000 | xargs kill -9` and `lsof -ti:5173 | xargs kill -9`
 - Backend: pick another port, then set `VITE_API_URL` for the frontend:
 ```bash
 python3 -m uvicorn backend.main:app --host localhost --port 8001
@@ -689,7 +722,7 @@ Env note
 - `export ...` in a terminal is session-only (not permanent).
 
 Stopping servers
-- Press Ctrl+C in each terminal.
+- Press Ctrl+C in each terminal, or `lsof -ti:8000 | xargs kill -9` / `lsof -ti:5173 | xargs kill -9`.
 
 Deployment note
 - Build the frontend with `VITE_API_URL=https://your-api.example.com npm run build`, then serve `dist/`.
