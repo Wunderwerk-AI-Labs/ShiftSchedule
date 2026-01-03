@@ -669,11 +669,11 @@ function generateRadiologyState() {
     holidays: [],
     publishedWeekStartISOs: [],
     solverSettings: {
-      enforceSameLocationPerDay: false,
-      onCallRestEnabled: false, // Disabled to allow maximum slot coverage
+      enforceSameLocationPerDay: true,
+      onCallRestEnabled: true,
       onCallRestClassId: "class-oncall",
-      onCallRestDaysBefore: 0,
-      onCallRestDaysAfter: 0,
+      onCallRestDaysBefore: 1,
+      onCallRestDaysAfter: 1,
       workingHoursToleranceHours: 10, // Increased tolerance for better distribution
     },
     solverRules: [],
