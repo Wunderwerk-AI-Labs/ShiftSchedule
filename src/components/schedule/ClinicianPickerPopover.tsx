@@ -116,10 +116,10 @@ export default function ClinicianPickerPopover({
               !clinician.hasTimeConflict &&
               !clinician.alreadyAssigned;
 
+            // Build all applicable warnings - order determines display priority
             const warnings: string[] = [];
-            // "Already in slot" takes priority - if they're already assigned, that's the key info
             if (clinician.alreadyAssigned) warnings.push("Already in slot");
-            else if (!clinician.isQualified) warnings.push("Not qualified");
+            if (!clinician.isQualified) warnings.push("Not qualified");
             if (clinician.isOnVacation) warnings.push("On vacation");
             if (clinician.isOnRestDay) warnings.push("Rest day");
             if (clinician.hasTimeConflict) warnings.push("Time conflict");

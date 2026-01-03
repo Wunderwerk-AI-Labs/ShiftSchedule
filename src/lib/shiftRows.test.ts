@@ -89,7 +89,7 @@ describe("normalizeAppState", () => {
         name: "MRI",
         kind: "class",
         dotColorClass: "bg-slate-400",
-        subShifts: [{ id: "s1", name: "Shift 1", order: 1 }],
+        subShifts: [{ id: "s1", name: "Shift 1", order: 1, startTime: "08:00", endTime: "16:00" }],
       },
       {
         id: "pool-rest-day",
@@ -108,7 +108,13 @@ describe("normalizeAppState", () => {
     assignments: [],
     minSlotsByRowId: {},
     slotOverridesByKey: {},
-    solverSettings: {},
+    solverSettings: {
+      enforceSameLocationPerDay: false,
+      onCallRestEnabled: false,
+      onCallRestDaysBefore: 0,
+      onCallRestDaysAfter: 0,
+      workingHoursToleranceHours: 5,
+    },
     solverRules: [],
     weeklyTemplate: {
       version: 4,
@@ -202,33 +208,34 @@ describe("normalizeAppState", () => {
 
   describe("deprecated solver settings removal", () => {
     it("removes allowMultipleShiftsPerDay", () => {
+      // Using 'as any' to simulate loading legacy data with deprecated keys
       const state = makeMinimalState({
-        solverSettings: { allowMultipleShiftsPerDay: true },
+        solverSettings: { allowMultipleShiftsPerDay: true } as any,
       });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect("allowMultipleShiftsPerDay" in normalized.solverSettings).toBe(false);
+      expect("allowMultipleShiftsPerDay" in (normalized.solverSettings ?? {})).toBe(false);
     });
 
     it("removes showDistributionPool", () => {
       const state = makeMinimalState({
-        solverSettings: { showDistributionPool: true },
+        solverSettings: { showDistributionPool: true } as any,
       });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect("showDistributionPool" in normalized.solverSettings).toBe(false);
+      expect("showDistributionPool" in (normalized.solverSettings ?? {})).toBe(false);
     });
 
     it("removes showReservePool", () => {
       const state = makeMinimalState({
-        solverSettings: { showReservePool: true },
+        solverSettings: { showReservePool: true } as any,
       });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect("showReservePool" in normalized.solverSettings).toBe(false);
+      expect("showReservePool" in (normalized.solverSettings ?? {})).toBe(false);
     });
 
     it("preserves valid solver settings", () => {
@@ -236,45 +243,58 @@ describe("normalizeAppState", () => {
         solverSettings: {
           enforceSameLocationPerDay: true,
           onCallRestEnabled: true,
+          onCallRestDaysBefore: 1,
+          onCallRestDaysAfter: 1,
           workingHoursToleranceHours: 10,
         },
       });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect(normalized.solverSettings.enforceSameLocationPerDay).toBe(true);
-      expect(normalized.solverSettings.onCallRestEnabled).toBe(true);
-      expect(normalized.solverSettings.workingHoursToleranceHours).toBe(10);
+      expect(normalized.solverSettings?.enforceSameLocationPerDay).toBe(true);
+      expect(normalized.solverSettings?.onCallRestEnabled).toBe(true);
+      expect(normalized.solverSettings?.workingHoursToleranceHours).toBe(10);
     });
   });
 
   describe("solver settings defaults", () => {
     it("sets workingHoursToleranceHours default to 5", () => {
-      const state = makeMinimalState({ solverSettings: {} });
+      // Using 'as any' to simulate loading legacy data with incomplete settings
+      const state = makeMinimalState({ solverSettings: {} as any });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect(normalized.solverSettings.workingHoursToleranceHours).toBe(5);
+      expect(normalized.solverSettings?.workingHoursToleranceHours).toBe(5);
     });
 
     it("clamps onCallRestDaysBefore between 0 and 7", () => {
       const state = makeMinimalState({
-        solverSettings: { onCallRestDaysBefore: 20 },
+        solverSettings: {
+          enforceSameLocationPerDay: false,
+          onCallRestEnabled: false,
+          onCallRestDaysBefore: 20,
+          onCallRestDaysAfter: 0,
+        },
       });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect(normalized.solverSettings.onCallRestDaysBefore).toBe(7);
+      expect(normalized.solverSettings?.onCallRestDaysBefore).toBe(7);
     });
 
     it("clamps onCallRestDaysAfter between 0 and 7", () => {
       const state = makeMinimalState({
-        solverSettings: { onCallRestDaysAfter: -5 },
+        solverSettings: {
+          enforceSameLocationPerDay: false,
+          onCallRestEnabled: false,
+          onCallRestDaysBefore: 0,
+          onCallRestDaysAfter: -5,
+        },
       });
 
       const { state: normalized } = normalizeAppState(state);
 
-      expect(normalized.solverSettings.onCallRestDaysAfter).toBe(0);
+      expect(normalized.solverSettings?.onCallRestDaysAfter).toBe(0);
     });
   });
 
@@ -285,11 +305,12 @@ describe("normalizeAppState", () => {
           { id: "section-a", name: "MRI", kind: "class", dotColorClass: "bg-slate-400" },
           { id: "pool-not-allocated", name: "Distribution Pool", kind: "pool", dotColorClass: "bg-slate-200" },
         ],
-        solverSettings: { allowMultipleShiftsPerDay: true, showDistributionPool: true },
+        // Using 'as any' to simulate loading legacy data with deprecated keys
+        solverSettings: { allowMultipleShiftsPerDay: true, showDistributionPool: true } as any,
       });
 
       const { state: first } = normalizeAppState(state);
-      const { state: second, changed } = normalizeAppState(first);
+      const { state: second } = normalizeAppState(first);
 
       // Second normalization should produce same rows
       expect(second.rows.map((r) => r.id).sort()).toEqual(first.rows.map((r) => r.id).sort());
