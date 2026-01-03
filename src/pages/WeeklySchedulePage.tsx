@@ -2063,7 +2063,7 @@ export default function WeeklySchedulePage({
   const ruleViolationsCount = ruleViolations.length;
   const ruleViolationsBadge =
     ruleViolationsCount > 0 ? (
-      <div ref={ruleViolationsRef} className="relative">
+      <div ref={ruleViolationsRef} className="relative z-[1100]">
         <button
           type="button"
           onClick={() => setRuleViolationsOpen((open) => !open)}

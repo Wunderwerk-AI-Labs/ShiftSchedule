@@ -214,7 +214,7 @@ export default function ViolationLinesOverlay({
 
   return createPortal(
     <svg
-      className="pointer-events-none fixed inset-0 z-[1000]"
+      className="pointer-events-none fixed inset-0 z-[999]"
       style={{ width: "100vw", height: "100vh", overflow: "visible" }}
     >
       {lines.map((line) => (
