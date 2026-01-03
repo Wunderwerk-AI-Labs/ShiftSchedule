@@ -244,20 +244,6 @@ def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_
             if window_req == "preference" and fits_window:
                 time_window_terms.append(var)
 
-    if not solver_settings.allowMultipleShiftsPerDay:
-        for clinician in state.clinicians:
-            vars_for_clinician = [
-                var
-                for (cid, _sid), var in var_map.items()
-                if cid == clinician.id
-            ]
-            manual_count = len(manual_assignments.get(clinician.id, []))
-            if manual_count >= 1:
-                if vars_for_clinician:
-                    model.Add(sum(vars_for_clinician) == 0)
-            elif vars_for_clinician:
-                model.Add(sum(vars_for_clinician) <= 1)
-
     for clinician in state.clinicians:
         vars_for_clinician: List[Tuple[str, cp_model.IntVar, int, int, str]] = []
         for (cid, slot_id), var in var_map.items():
@@ -532,23 +518,6 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                 var_map[(clinician.id, date_iso, slot_id)] = var
                 if window and window[0] == "preference" and fits_window:
                     time_window_terms.append(var)
-
-    # At most once per day if disabled
-    if not solver_settings.allowMultipleShiftsPerDay:
-        for clinician in state.clinicians:
-            for date_iso in target_day_isos:
-                vars_for_day = [
-                    var
-                    for (cid, d, _sid), var in var_map.items()
-                    if cid == clinician.id and d == date_iso
-                ]
-                manual = len(manual_assignments.get((clinician.id, date_iso), []))
-                if manual >= 1:
-                    if vars_for_day:
-                        model.Add(sum(vars_for_day) == 0)
-                    continue
-                if vars_for_day:
-                    model.Add(sum(vars_for_day) <= 1)
 
     # Overlap + location constraints
     for clinician in state.clinicians:

@@ -67,7 +67,8 @@ Rows
 - Sections are stored as class rows (MRI, CT, Sonography, On Call, etc.) and are selected inside template blocks (no separate section/shift panel).
 - Calendar view groups template slots by location + row band (one row per row band with at least one placed slot); row labels show the row label centered with the location name directly beneath it.
 - Per day, additional sub-columns appear for day columns that have slots; header shows `Col N` for extra columns, and pool rows render only in the first column per day.
-- Pool rows (editable names, not deletable): Distribution Pool (id: pool-not-allocated), Reserve Pool (id: pool-manual), Rest Day (id: pool-rest-day), Vacation (id: pool-vacation).
+- Pool rows (editable names, not deletable): Rest Day (id: pool-rest-day), Vacation (id: pool-vacation).
+- **Deprecated pools (removed)**: Distribution Pool (pool-not-allocated) and Reserve Pool (pool-manual) were removed. State normalization automatically removes these rows and any assignments to them on load.
 - Pool rows appear below a separator line.
 - Row labels are uppercase, no colored dots, truncate around 20 characters (tighter on mobile).
 - Vacation row background stays the same gray even on weekends/holidays.

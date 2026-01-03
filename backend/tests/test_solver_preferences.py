@@ -112,7 +112,6 @@ def test_day_solver_enforces_mandatory_windows(monkeypatch) -> None:
         slots,
         col_bands,
         {
-            "allowMultipleShiftsPerDay": True,
             "enforceSameLocationPerDay": False,
             "onCallRestEnabled": False,
             "onCallRestDaysBefore": 1,
@@ -173,7 +172,6 @@ def test_day_solver_prefers_preferred_window(monkeypatch) -> None:
         slots,
         col_bands,
         {
-            "allowMultipleShiftsPerDay": False,
             "enforceSameLocationPerDay": False,
             "onCallRestEnabled": False,
             "onCallRestDaysBefore": 1,
@@ -242,7 +240,6 @@ def test_week_solver_hours_tolerance_nudges_distribution(monkeypatch) -> None:
         slots,
         col_bands,
         {
-            "allowMultipleShiftsPerDay": True,
             "enforceSameLocationPerDay": False,
             "onCallRestEnabled": False,
             "onCallRestDaysBefore": 1,

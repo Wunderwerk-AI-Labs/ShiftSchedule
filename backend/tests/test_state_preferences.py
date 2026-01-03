@@ -3,7 +3,7 @@ from backend.state import _default_state, _normalize_state
 
 def test_solver_settings_tolerance_defaulted() -> None:
     state = _default_state()
-    state.solverSettings = {"allowMultipleShiftsPerDay": True}
+    state.solverSettings = {}  # Empty settings - deprecated keys were removed
     normalized, _changed = _normalize_state(state)
     assert normalized.solverSettings["workingHoursToleranceHours"] == 5
 
