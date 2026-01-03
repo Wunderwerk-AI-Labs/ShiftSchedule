@@ -1205,9 +1205,7 @@ export default function WeeklySchedulePage({
               id: `rest-${clinician.id}-${dateISO}-${targetISO}-before-${offset}`,
               clinicianId: clinician.id,
               clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
-              summary: `Rest day required ${offset} day${offset === 1 ? "" : "s"} before ${onCallLabel} on ${formatEuropeanDate(
-                dateISO,
-              )}; assignment found on ${formatEuropeanDate(targetISO)}.`,
+              summary: `Scheduled on ${formatEuropeanDate(targetISO)}, but needs ${offset} rest day${offset === 1 ? "" : "s"} before ${onCallLabel} shift on ${formatEuropeanDate(dateISO)}.`,
               assignmentKeys,
             });
           }
@@ -1225,9 +1223,7 @@ export default function WeeklySchedulePage({
               id: `rest-${clinician.id}-${dateISO}-${targetISO}-after-${offset}`,
               clinicianId: clinician.id,
               clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
-              summary: `Rest day required ${offset} day${offset === 1 ? "" : "s"} after ${onCallLabel} on ${formatEuropeanDate(
-                dateISO,
-              )}; assignment found on ${formatEuropeanDate(targetISO)}.`,
+              summary: `Scheduled on ${formatEuropeanDate(targetISO)}, but needs ${offset} rest day${offset === 1 ? "" : "s"} after ${onCallLabel} shift on ${formatEuropeanDate(dateISO)}.`,
               assignmentKeys,
             });
           }
@@ -1256,7 +1252,7 @@ export default function WeeklySchedulePage({
             id: `location-${clinician.id}-${dateISO}`,
             clinicianId: clinician.id,
             clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
-            summary: `Same-location rule violated on ${formatEuropeanDate(dateISO)}.`,
+            summary: `Assigned to multiple locations on ${formatEuropeanDate(dateISO)}. Each person should only work at one location per day.`,
             assignmentKeys,
           });
         }
@@ -1295,7 +1291,7 @@ export default function WeeklySchedulePage({
           id: `overlap-${clinician.id}-${dateISO}`,
           clinicianId: clinician.id,
           clinicianName: clinicianNameById.get(clinician.id) ?? clinician.id,
-          summary: `Overlapping shift times on ${formatEuropeanDate(dateISO)}.`,
+          summary: `Assigned to overlapping shifts on ${formatEuropeanDate(dateISO)}. These shifts have conflicting time windows.`,
           assignmentKeys,
         });
       }
