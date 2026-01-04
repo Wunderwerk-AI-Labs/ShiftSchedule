@@ -364,38 +364,56 @@ export async function saveState(state: AppState): Promise<AppState> {
   return res.json();
 }
 
-export async function solveDay(
-  dateISO: string,
-  options?: { onlyFillRequired?: boolean },
-): Promise<{
-  dateISO: string;
-  assignments: Assignment[];
-  notes: string[];
-}> {
-  const res = await fetch(`${API_BASE}/v1/solve`, {
-    method: "POST",
-    headers: buildHeaders(),
-    body: JSON.stringify({
-      dateISO,
-      only_fill_required: options?.onlyFillRequired ?? false,
-    }),
-  });
-  if (res.status === 401) handleUnauthorized();
-  if (!res.ok) {
-    throw new Error(`Failed to solve day: ${res.status}`);
-  }
-  return res.json();
-}
+export type SolverDebugSolutionTime = {
+  solution: number;
+  time_ms: number;
+  objective: number;
+};
 
-export async function solveWeek(
-  startISO: string,
-  options?: { endISO?: string; onlyFillRequired?: boolean },
-): Promise<{
+export type SolverDebugCheckpoint = {
+  name: string;
+  duration_ms: number;
+};
+
+export type SolverDebugTiming = {
+  total_ms: number;
+  checkpoints: SolverDebugCheckpoint[];
+};
+
+export type SolverSubScores = {
+  slots_filled: number;
+  slots_unfilled: number;
+  total_assignments: number;
+  preference_score: number;
+  time_window_score: number;
+  continuous_shift_score: number;
+  hours_penalty: number;
+};
+
+export type SolverDebugInfo = {
+  timing: SolverDebugTiming;
+  solution_times: SolverDebugSolutionTime[];
+  num_variables: number;
+  num_days: number;
+  num_slots: number;
+  solver_status: string;
+  cpu_workers_used: number;
+  cpu_cores_available: number;
+  sub_scores?: SolverSubScores;
+};
+
+export type SolveWeekResult = {
   startISO: string;
   endISO: string;
   assignments: Assignment[];
   notes: string[];
-}> {
+  debugInfo?: SolverDebugInfo;
+};
+
+export async function solveWeek(
+  startISO: string,
+  options?: { endISO?: string; onlyFillRequired?: boolean; timeoutSeconds?: number; signal?: AbortSignal },
+): Promise<SolveWeekResult> {
   const res = await fetch(`${API_BASE}/v1/solve/week`, {
     method: "POST",
     headers: buildHeaders(),
@@ -403,13 +421,63 @@ export async function solveWeek(
       startISO,
       endISO: options?.endISO,
       only_fill_required: options?.onlyFillRequired ?? false,
+      timeout_seconds: options?.timeoutSeconds,
     }),
+    signal: options?.signal,
   });
   if (res.status === 401) handleUnauthorized();
   if (!res.ok) {
     throw new Error(`Failed to solve week: ${res.status}`);
   }
   return res.json();
+}
+
+export async function abortSolver(force = false): Promise<{ status: string; message: string }> {
+  const url = force
+    ? `${API_BASE}/v1/solve/abort?force=true`
+    : `${API_BASE}/v1/solve/abort`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: buildHeaders(),
+  });
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    throw new Error(`Failed to abort solver: ${res.status}`);
+  }
+  return res.json();
+}
+
+export type SolverProgressEvent =
+  | { event: "connected"; data: Record<string, never> }
+  | { event: "start"; data: { startISO: string; endISO: string | null; timeout_seconds: number | null } }
+  | { event: "solution"; data: { solution_num: number; time_ms: number; objective: number; assignments?: Assignment[] } }
+  | { event: "complete"; data: { startISO: string; endISO: string; status: "success" | "error"; error?: string } };
+
+export function subscribeSolverProgress(
+  onEvent: (event: SolverProgressEvent) => void,
+  onError?: (error: Event) => void,
+): () => void {
+  const token = localStorage.getItem("authToken");
+  const url = `${API_BASE}/v1/solve/progress?token=${encodeURIComponent(token ?? "")}`;
+  const eventSource = new EventSource(url);
+
+  eventSource.onmessage = (e) => {
+    try {
+      const parsed = JSON.parse(e.data) as SolverProgressEvent;
+      onEvent(parsed);
+    } catch {
+      // Ignore parse errors
+    }
+  };
+
+  eventSource.onerror = (e) => {
+    onError?.(e);
+  };
+
+  // Return cleanup function
+  return () => {
+    eventSource.close();
+  };
 }
 
 export async function getIcalPublishStatus(): Promise<IcalPublishStatus> {

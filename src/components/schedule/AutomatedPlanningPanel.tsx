@@ -8,6 +8,7 @@ import {
 import { cx } from "../../lib/classNames";
 import { toISODate } from "../../lib/date";
 import CustomDatePicker from "./CustomDatePicker";
+import { SolverInfoButton } from "./SolverInfoModal";
 
 type AutomatedPlanningPanelProps = {
   weekStartISO: string;
@@ -18,8 +19,10 @@ type AutomatedPlanningPanelProps = {
   lastRunTotalDays: number | null;
   lastRunDurationMs: number | null;
   error: string | null;
-  onRun: (args: { startISO: string; endISO: string; onlyFillRequired: boolean }) => void;
+  timeoutSeconds: number;
+  onRun: (args: { startISO: string; endISO: string; onlyFillRequired: boolean; timeoutSeconds: number }) => void;
   onReset: (args: { startISO: string; endISO: string }) => void;
+  onOpenInfo: () => void;
 };
 
 const formatEuropeanDate = (dateISO: string) => {
@@ -59,8 +62,10 @@ export default function AutomatedPlanningPanel({
   lastRunTotalDays,
   lastRunDurationMs,
   error,
+  timeoutSeconds,
   onRun,
   onReset,
+  onOpenInfo,
 }: AutomatedPlanningPanelProps) {
   const [startInput, setStartInput] = useState("");
   const [endInput, setEndInput] = useState("");
@@ -164,6 +169,7 @@ export default function AutomatedPlanningPanel({
       startISO: range.startISO,
       endISO: range.endISO,
       onlyFillRequired: strategy === "fill",
+      timeoutSeconds,
     });
   };
 
@@ -181,7 +187,11 @@ export default function AutomatedPlanningPanel({
   };
 
   return (
-    <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
+    <div className="relative w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
+      {/* Question mark icon in upper right corner inside the panel */}
+      <div className="absolute right-2 top-2">
+        <SolverInfoButton onClick={onOpenInfo} />
+      </div>
       <div className="flex flex-col gap-4">
         <div className={cx("-mt-7 inline-flex self-start", pillLabel.base)}>
           Automated Shift Planning

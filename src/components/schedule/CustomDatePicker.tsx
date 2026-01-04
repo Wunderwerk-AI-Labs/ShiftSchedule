@@ -66,6 +66,7 @@ function formatEuropeanDate(date: Date): string {
 }
 
 // Get days for a month grid (including padding days from prev/next months)
+// Always returns exactly 6 weeks to ensure consistent height
 function getMonthDays(year: number, month: number): (Date | null)[][] {
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
@@ -87,8 +88,8 @@ function getMonthDays(year: number, month: number): (Date | null)[][] {
     days.push(new Date(year, month, d));
   }
 
-  // Pad to complete the last week
-  while (days.length % 7 !== 0) {
+  // Always pad to exactly 6 weeks (42 days) for consistent height
+  while (days.length < 42) {
     days.push(null);
   }
 

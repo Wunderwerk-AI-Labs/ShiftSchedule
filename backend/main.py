@@ -1,5 +1,6 @@
 import logging
 import os
+import socket
 import time
 from contextlib import asynccontextmanager
 
@@ -15,8 +16,25 @@ from .state_routes import router as state_router
 from .web import router as web_router
 
 
+def _check_port_available(port: int = 8000) -> None:
+    """Check if port is available, raise error if already in use."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    try:
+        result = sock.connect_ex(("127.0.0.1", port))
+        if result == 0:
+            # Connection succeeded, meaning something is already listening
+            raise RuntimeError(
+                f"Port {port} is already in use by another process. "
+                f"Please stop the other backend instance first (e.g., kill the process using: lsof -ti:{port} | xargs kill -9)"
+            )
+    finally:
+        sock.close()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    _check_port_available(8000)
     conn = _get_connection()
     conn.close()
     _ensure_admin_user()

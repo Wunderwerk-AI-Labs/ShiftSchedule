@@ -1,10 +1,131 @@
+import asyncio
 from datetime import datetime, timedelta
+import json
+import multiprocessing
+import os
+import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from ortools.sat.python import cp_model
 
-from .auth import _get_current_user
+from .auth import _get_current_user, _verify_token_and_get_user
+
+# Global cancellation event for solver abort
+_solver_cancel_event = threading.Event()
+_solver_running_lock = threading.Lock()
+_solver_is_running = False
+_solver_process: Optional[multiprocessing.Process] = None  # The solver subprocess
+
+# Global list of queues for SSE clients to receive solver progress
+_solver_progress_subscribers: List[asyncio.Queue] = []
+_subscribers_lock = threading.Lock()
+
+# Multiprocessing context for spawning solver processes
+_mp_context = multiprocessing.get_context("spawn")
+
+# Debug mode: set DEBUG_SOLVER=true to enable detailed timing logs
+DEBUG_SOLVER = os.getenv("DEBUG_SOLVER", "").lower() == "true"
+
+# Number of CPU cores to use for solver (leave 2 free for system responsiveness)
+SOLVER_NUM_WORKERS = max(1, multiprocessing.cpu_count() - 2)
+
+
+class SolverTimer:
+    """Track timing for each step of the solver."""
+
+    def __init__(self):
+        self.start_time = time.time()
+        self.checkpoints: List[Tuple[str, float, float]] = []  # (name, timestamp, duration_ms)
+        self.last_checkpoint = self.start_time
+
+    def checkpoint(self, name: str) -> float:
+        """Record a checkpoint and return the duration since last checkpoint in ms."""
+        now = time.time()
+        duration_ms = (now - self.last_checkpoint) * 1000
+        self.checkpoints.append((name, now, duration_ms))
+        self.last_checkpoint = now
+        return duration_ms
+
+    def total_ms(self) -> float:
+        """Return total elapsed time in ms."""
+        return (time.time() - self.start_time) * 1000
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return timing data as a dictionary."""
+        return {
+            "total_ms": self.total_ms(),
+            "checkpoints": [
+                {"name": name, "duration_ms": round(dur, 2)}
+                for name, _, dur in self.checkpoints
+            ],
+        }
+
+    def summary(self) -> str:
+        """Return a human-readable summary."""
+        lines = [f"Total: {self.total_ms():.1f}ms"]
+        for name, _, dur in self.checkpoints:
+            lines.append(f"  {name}: {dur:.1f}ms")
+        return "\n".join(lines)
+
+
+def _dump_solver_debug(
+    timer: SolverTimer,
+    payload: Any,
+    state: Any,
+    model_stats: Dict[str, Any],
+    result_info: Dict[str, Any],
+) -> None:
+    """Dump detailed solver debug info to a JSON file."""
+    if not DEBUG_SOLVER:
+        return
+
+    debug_dir = "backend/logs/solver_debug"
+    os.makedirs(debug_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{debug_dir}/solve_{timestamp}.json"
+
+    # Prepare state summary (avoid dumping full state unless needed)
+    state_summary = {
+        "clinicians_count": len(state.clinicians) if hasattr(state, "clinicians") else 0,
+        "locations_count": len(state.locations) if hasattr(state, "locations") else 0,
+        "assignments_count": len(state.assignments) if hasattr(state, "assignments") else 0,
+        "holidays_count": len(state.holidays) if hasattr(state, "holidays") else 0,
+    }
+
+    # Add clinician details for debugging qualification issues
+    clinician_details = []
+    for c in (state.clinicians if hasattr(state, "clinicians") else []):
+        clinician_details.append({
+            "id": c.id,
+            "name": getattr(c, "name", "unknown"),
+            "qualified_sections": len(c.qualifiedClassIds) if hasattr(c, "qualifiedClassIds") else 0,
+            "vacations": len(c.vacations) if hasattr(c, "vacations") else 0,
+        })
+    state_summary["clinicians"] = clinician_details
+
+    debug_data = {
+        "timestamp": timestamp,
+        "request": {
+            "startISO": getattr(payload, "startISO", None),
+            "endISO": getattr(payload, "endISO", None),
+            "onlyFillRequired": getattr(payload, "onlyFillRequired", getattr(payload, "only_fill_required", None)),
+        },
+        "timing": timer.to_dict(),
+        "state_summary": state_summary,
+        "model_stats": model_stats,
+        "result": result_info,
+    }
+
+    try:
+        with open(filename, "w") as f:
+            json.dump(debug_data, f, indent=2, default=str)
+        print(f"[DEBUG_SOLVER] Wrote debug dump to {filename}")
+    except Exception as e:
+        print(f"[DEBUG_SOLVER] Failed to write debug dump: {e}")
 from .constants import (
     DEFAULT_LOCATION_ID,
     DEFAULT_SUB_SHIFT_MINUTES,
@@ -13,16 +134,146 @@ from .constants import (
 from .models import (
     Assignment,
     Holiday,
-    SolveDayRequest,
-    SolveDayResponse,
     SolveWeekRequest,
     SolveWeekResponse,
+    SolverDebugInfo,
+    SolverDebugSolutionTime,
     SolverSettings,
+    SolverSubScores,
     UserPublic,
 )
 from .state import _load_state
 
 router = APIRouter()
+
+
+def _solver_subprocess_worker(
+    username: str,
+    payload_dict: dict,
+    progress_queue: multiprocessing.Queue,
+    cancel_event: multiprocessing.Event,
+):
+    """
+    Worker function that runs in a subprocess.
+    Performs the actual CP-SAT solving and sends progress via queue.
+    """
+    try:
+        # Reconstruct payload from dict
+        payload = SolveWeekRequest(**payload_dict)
+
+        # Create a mock user for state loading
+        class MockUser:
+            def __init__(self, username: str):
+                self.username = username
+
+        mock_user = MockUser(username)
+
+        # Run the solver with a custom progress callback
+        def on_progress(event_type: str, data: dict):
+            try:
+                progress_queue.put_nowait({"type": "progress", "event": event_type, "data": data})
+            except:
+                pass  # Queue full, skip
+
+        result = _solve_week_impl_subprocess(payload, mock_user, cancel_event, on_progress)
+
+        # Send result
+        progress_queue.put({"type": "result", "data": result})
+    except Exception as e:
+        import traceback
+        progress_queue.put({"type": "error", "error": str(e), "traceback": traceback.format_exc()})
+
+
+def _broadcast_solver_progress(event_type: str, data: dict):
+    """Broadcast solver progress to all SSE subscribers."""
+    with _subscribers_lock:
+        for queue in _solver_progress_subscribers:
+            try:
+                # Use put_nowait since we're in a sync context
+                queue.put_nowait({"event": event_type, "data": data})
+            except asyncio.QueueFull:
+                pass  # Skip if queue is full (client too slow)
+
+
+@router.post("/v1/solve/abort")
+async def abort_solver(
+    force: bool = Query(False, description="Force immediate termination by killing subprocess"),
+    current_user: UserPublic = Depends(_get_current_user),
+):
+    """Abort any currently running solver operation.
+
+    This endpoint is async to ensure it can be processed even when the
+    sync thread pool is blocked by a running solver.
+
+    Args:
+        force: If True, immediately kills the solver subprocess.
+               Otherwise, signals graceful abort (stops at next solution).
+    """
+    global _solver_is_running, _solver_process
+    # Note: We don't use the lock here to avoid potential deadlock with the solver
+    # The worst case is a race condition that returns slightly stale status
+    if _solver_is_running:
+        _solver_cancel_event.set()
+        if force and _solver_process is not None:
+            # Immediately terminate the subprocess
+            try:
+                if _solver_process.is_alive():
+                    _solver_process.terminate()
+                    _solver_process.join(timeout=1.0)
+                    if _solver_process.is_alive():
+                        _solver_process.kill()
+                        _solver_process.join(timeout=1.0)
+                return {"status": "force_killed", "message": "Solver process terminated immediately"}
+            except Exception as e:
+                return {"status": "force_kill_error", "message": f"Error terminating solver: {e}"}
+        return {"status": "abort_requested", "message": "Solver abort signal sent"}
+    else:
+        return {"status": "no_solver_running", "message": "No solver is currently running"}
+
+
+@router.get("/v1/solve/progress")
+async def solver_progress_stream(token: str = Query(...)):
+    """SSE endpoint for real-time solver progress updates.
+
+    Uses query param for token since EventSource doesn't support Authorization headers.
+    """
+    # Verify token (will raise HTTPException if invalid)
+    _verify_token_and_get_user(token)
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+
+    with _subscribers_lock:
+        _solver_progress_subscribers.append(queue)
+
+    async def event_generator():
+        try:
+            # Send initial connection message
+            yield f"data: {json.dumps({'event': 'connected', 'data': {}})}\n\n"
+
+            while True:
+                try:
+                    # Wait for new events with timeout to keep connection alive
+                    msg = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(msg)}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive
+                    yield f": keepalive\n\n"
+        finally:
+            with _subscribers_lock:
+                if queue in _solver_progress_subscribers:
+                    _solver_progress_subscribers.remove(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 PREFERRED_WINDOW_WEIGHT = 5
 WORKING_HOURS_BLOCK_MINUTES = 15
 WORKING_HOURS_PENALTY_WEIGHT = 1
@@ -168,305 +419,161 @@ def _collect_slot_contexts(state) -> List[Dict[str, Any]]:
     return contexts
 
 
-@router.post("/v1/solve", response_model=SolveDayResponse)
-def solve_day(payload: SolveDayRequest, current_user: UserPublic = Depends(_get_current_user)):
-    state = _load_state(current_user.username)
-    date_iso = payload.dateISO
-    holidays = state.holidays or []
-    day_type = _get_day_type(date_iso, holidays)
-    weekday_key = _get_weekday_key(date_iso)
-
-    slot_contexts = _collect_slot_contexts(state)
-    slot_ids = {ctx["slot_id"] for ctx in slot_contexts}
-    active_slots = [
-        ctx
-        for ctx in slot_contexts
-        if ctx.get("day_type") == day_type
-    ]
-
-    vacation_ids = set()
-    for clinician in state.clinicians:
-        for vacation in clinician.vacations:
-            if vacation.startISO <= date_iso <= vacation.endISO:
-                vacation_ids.add(clinician.id)
-                break
-
-    manual_assignments: Dict[str, List[str]] = {}
-    for assignment in state.assignments:
-        if assignment.dateISO != date_iso:
-            continue
-        if assignment.rowId not in slot_ids:
-            continue
-        if assignment.clinicianId in vacation_ids:
-            continue
-        manual_assignments.setdefault(assignment.clinicianId, []).append(assignment.rowId)
-
-    solver_settings = SolverSettings.model_validate(state.solverSettings or {})
-
-    model = cp_model.CpModel()
-    var_map: Dict[Tuple[str, str], cp_model.IntVar] = {}
-    pref_weight: Dict[str, Dict[str, int]] = {}
-    time_window_terms: List[cp_model.IntVar] = []
-    section_by_slot_id = {ctx["slot_id"]: ctx["section_id"] for ctx in slot_contexts}
-    slot_intervals: Dict[str, Tuple[int, int, str]] = {}
-    for ctx in slot_contexts:
-        slot_intervals[ctx["slot_id"]] = _build_slot_interval(
-            ctx["slot"], ctx["location_id"]
-        )
-
-    for clinician in state.clinicians:
-        if clinician.id in vacation_ids:
-            continue
-        window_req, window_start, window_end = _get_clinician_time_window(
-            clinician, weekday_key
-        )
-        weights: Dict[str, int] = {}
-        preferred = clinician.preferredClassIds or []
-        for idx, class_id in enumerate(preferred):
-            weights[class_id] = max(1, len(preferred) - idx)
-        pref_weight[clinician.id] = weights
-        for ctx in active_slots:
-            if ctx["section_id"] not in clinician.qualifiedClassIds:
-                continue
-            interval = slot_intervals.get(ctx["slot_id"])
-            if not interval:
-                continue
-            start, end, _loc = interval
-            fits_window = (
-                window_start is not None
-                and window_end is not None
-                and start >= window_start
-                and end <= window_end
-            )
-            if window_req == "mandatory" and not fits_window:
-                continue
-            var = model.NewBoolVar(f"x_{clinician.id}_{ctx['slot_id']}")
-            var_map[(clinician.id, ctx["slot_id"])] = var
-            if window_req == "preference" and fits_window:
-                time_window_terms.append(var)
-
-    for clinician in state.clinicians:
-        vars_for_clinician: List[Tuple[str, cp_model.IntVar, int, int, str]] = []
-        for (cid, slot_id), var in var_map.items():
-            if cid != clinician.id:
-                continue
-            interval = slot_intervals.get(slot_id)
-            if not interval:
-                continue
-            start, end, loc = interval
-            vars_for_clinician.append((slot_id, var, start, end, loc))
-        for i in range(len(vars_for_clinician)):
-            _sid_i, var_i, start_i, end_i, loc_i = vars_for_clinician[i]
-            for j in range(i + 1, len(vars_for_clinician)):
-                _sid_j, var_j, start_j, end_j, loc_j = vars_for_clinician[j]
-                overlaps = not (end_i <= start_j or end_j <= start_i)
-                if overlaps:
-                    model.Add(var_i + var_j <= 1)
-                if (
-                    solver_settings.enforceSameLocationPerDay
-                    and loc_i
-                    and loc_j
-                    and loc_i != loc_j
-                ):
-                    model.Add(var_i + var_j <= 1)
-
-        manual_entries: List[Tuple[int, int, str]] = []
-        for slot_id in manual_assignments.get(clinician.id, []):
-            interval = slot_intervals.get(slot_id)
-            if not interval:
-                continue
-            start, end, loc = interval
-            manual_entries.append((start, end, loc))
-        for _sid, var, start_i, end_i, loc_i in vars_for_clinician:
-            for start_m, end_m, loc_m in manual_entries:
-                overlaps = not (end_i <= start_m or end_m <= start_i)
-                if overlaps:
-                    model.Add(var <= 0)
-                if (
-                    solver_settings.enforceSameLocationPerDay
-                    and loc_i
-                    and loc_m
-                    and loc_i != loc_m
-                ):
-                    model.Add(var <= 0)
-
-    coverage_terms = []
-    slack_terms = []
-    notes: List[str] = []
-    total_slots = len(slot_contexts)
-    total_required = 0
-    order_weight_by_slot_id: Dict[str, int] = {}
-
-    def get_manual_count(slot_id: str) -> int:
-        return sum(1 for rows in manual_assignments.values() if slot_id in rows)
-
-    # First pass: collect slot info for wave-based distribution
-    slot_info: List[Dict[str, Any]] = []
-    for index, ctx in enumerate(active_slots):
-        slot_id = ctx["slot_id"]
-        order_weight = max(1, total_slots - index) * 10
-        order_weight_by_slot_id[slot_id] = order_weight
-        raw_required = getattr(ctx["slot"], "requiredSlots", 0)
-        base_required = raw_required if isinstance(raw_required, int) else 0
-        override = state.slotOverridesByKey.get(f"{slot_id}__{date_iso}", 0)
-        target = max(0, base_required + override)
-        total_required += target
-        already = get_manual_count(slot_id)
-        missing = max(0, target - already)
-        vars_here = [
-            var for (cid, sid), var in var_map.items() if sid == slot_id
-        ]
-        slot_info.append({
-            "ctx": ctx,
-            "slot_id": slot_id,
-            "order_weight": order_weight,
-            "base_required": base_required,
-            "target": target,
-            "already": already,
-            "missing": missing,
-            "vars_here": vars_here,
-        })
-
-    # Calculate wave multiplier for equal distribution when not only_fill_required
-    # Wave multiplier determines how many times we can fill all slots proportionally
-    wave_multiplier = 1
-    if not payload.only_fill_required:
-        total_available_clinicians = len(set(cid for (cid, _) in var_map.keys()))
-        total_base_required = sum(info["base_required"] for info in slot_info if info["base_required"] > 0)
-        if total_base_required > 0:
-            # Calculate how many complete waves we can do with available clinicians
-            wave_multiplier = max(1, total_available_clinicians // total_base_required)
-
-    for info in slot_info:
-        slot_id = info["slot_id"]
-        order_weight = info["order_weight"]
-        target = info["target"]
-        base_required = info["base_required"]
-        already = info["already"]
-        missing = info["missing"]
-        vars_here = info["vars_here"]
-
-        if missing == 0:
-            if payload.only_fill_required and vars_here:
-                model.Add(sum(vars_here) == 0)
-            continue
-        if vars_here:
-            covered = model.NewBoolVar(f"covered_{slot_id}")
-            model.Add(sum(vars_here) + already >= covered)
-            coverage_terms.append(covered * order_weight)
-            # Calculate slot capacity based on wave distribution
-            if payload.only_fill_required:
-                # Only fill to required amount
-                slot_capacity = missing
-            else:
-                # Wave-based: allow up to (base_required * wave_multiplier) - already
-                wave_target = base_required * wave_multiplier
-                slot_capacity = max(missing, wave_target - already)
-            model.Add(sum(vars_here) <= slot_capacity)
-        slack = model.NewIntVar(0, missing, f"slack_{slot_id}")
-        if vars_here:
-            model.Add(sum(vars_here) + slack + already >= missing)
-        else:
-            model.Add(slack + already >= missing)
-        slack_terms.append(slack * order_weight)
-
-    # Continuous shift preference: reward assigning adjacent slots to same clinician
-    continuous_terms: List[cp_model.IntVar] = []
-    if solver_settings.preferContinuousShifts:
-        # Find adjacent slot pairs (where slot_a.end == slot_b.start, same location)
-        adjacent_pairs: List[Tuple[str, str]] = []
-        slot_ids_list = list(slot_intervals.keys())
-        for i, slot_id_a in enumerate(slot_ids_list):
-            start_a, end_a, loc_a = slot_intervals[slot_id_a]
-            for slot_id_b in slot_ids_list[i + 1 :]:
-                start_b, end_b, loc_b = slot_intervals[slot_id_b]
-                # Check if adjacent (end of A == start of B or vice versa) and same location
-                if loc_a == loc_b:
-                    if end_a == start_b or end_b == start_a:
-                        adjacent_pairs.append((slot_id_a, slot_id_b))
-
-        # For each adjacent pair, reward when same clinician is assigned to both
-        for slot_a, slot_b in adjacent_pairs:
-            for clinician in state.clinicians:
-                var_a = var_map.get((clinician.id, slot_a))
-                var_b = var_map.get((clinician.id, slot_b))
-                if var_a is None or var_b is None:
-                    continue
-                # Create variable that's 1 when both are assigned
-                both = model.NewBoolVar(f"cont_{clinician.id}_{slot_a}_{slot_b}")
-                model.Add(var_a + var_b >= 2).OnlyEnforceIf(both)
-                model.Add(var_a + var_b <= 1).OnlyEnforceIf(both.Not())
-                continuous_terms.append(both)
-
-    total_slack = sum(slack_terms) if slack_terms else 0
-    total_coverage = sum(coverage_terms) if coverage_terms else 0
-    total_priority = sum(
-        var * order_weight_by_slot_id.get(sid, 0)
-        for (cid, sid), var in var_map.items()
-    )
-    total_preference = sum(
-        var * pref_weight.get(cid, {}).get(section_by_slot_id.get(sid, ""), 0)
-        for (cid, sid), var in var_map.items()
-    )
-    total_time_window_preference = sum(time_window_terms) if time_window_terms else 0
-    total_continuous = sum(continuous_terms) if continuous_terms else 0
-
-    # Total assignments - used to maximize distribution when not only_fill_required
-    total_assignments = sum(var for var in var_map.values())
-
-    if payload.only_fill_required:
-        model.Minimize(
-            -total_coverage * 1000
-            + total_slack * 1000
-            - total_preference
-            - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
-            - total_continuous * CONTINUOUS_SHIFT_WEIGHT
-        )
-    else:
-        # When distributing all people, maximize total assignments
-        model.Minimize(
-            -total_coverage * 1000
-            + total_slack * 1000
-            - total_assignments * 100  # Strong incentive to assign everyone
-            - total_priority * 10
-            - total_preference
-            - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
-            - total_continuous * CONTINUOUS_SHIFT_WEIGHT
-        )
-
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 2.0
-    solver.parameters.num_search_workers = 8
-    result = solver.Solve(model)
-
-    if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return SolveDayResponse(dateISO=date_iso, assignments=[], notes=["No solution"])
-
-    new_assignments: List[Assignment] = []
-    for (clinician_id, slot_id), var in var_map.items():
-        if solver.Value(var) == 1:
-            new_assignments.append(
-                Assignment(
-                    id=f"as-{date_iso}-{clinician_id}-{slot_id}",
-                    rowId=slot_id,
-                    dateISO=date_iso,
-                    clinicianId=clinician_id,
-                )
-            )
-
-    if slack_terms and solver.Value(total_slack) > 0:
-        notes.append("Could not fill all required slots.")
-    if payload.only_fill_required and total_required == 0:
-        notes.append("No required slots detected for the selected day.")
-
-    return SolveDayResponse(dateISO=date_iso, assignments=new_assignments, notes=notes)
-
-
 @router.post("/v1/solve/week", response_model=SolveWeekResponse)
 def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_get_current_user)):
-    import time
-    t_start = time.time()
+    global _solver_is_running, _solver_process
+
+    # Set solver running flag and clear any previous cancel event
+    with _solver_running_lock:
+        _solver_is_running = True
+        _solver_cancel_event.clear()
+
+    # Broadcast start event
+    _broadcast_solver_progress("start", {
+        "startISO": payload.startISO,
+        "endISO": payload.endISO,
+        "timeout_seconds": payload.timeout_seconds,
+    })
+
+    # Create multiprocessing primitives
+    progress_queue = _mp_context.Queue(maxsize=1000)
+    cancel_event = _mp_context.Event()
+
+    # Spawn subprocess
+    _solver_process = _mp_context.Process(
+        target=_solver_subprocess_worker,
+        args=(
+            current_user.username,
+            payload.model_dump(),
+            progress_queue,
+            cancel_event,
+        ),
+    )
+    _solver_process.start()
+
+    result = None
+    error = None
+
+    try:
+        # Monitor the subprocess and relay progress to SSE
+        while True:
+            # Check if abort was requested
+            if _solver_cancel_event.is_set():
+                cancel_event.set()
+
+            # Check if process is still alive
+            if not _solver_process.is_alive():
+                # Process ended, drain remaining messages
+                while not progress_queue.empty():
+                    try:
+                        msg = progress_queue.get_nowait()
+                        if msg["type"] == "progress":
+                            _broadcast_solver_progress(msg["event"], msg["data"])
+                        elif msg["type"] == "result":
+                            result = msg["data"]
+                        elif msg["type"] == "error":
+                            error = msg
+                    except:
+                        break
+                break
+
+            # Try to get a message with timeout
+            try:
+                msg = progress_queue.get(timeout=0.1)
+                if msg["type"] == "progress":
+                    _broadcast_solver_progress(msg["event"], msg["data"])
+                elif msg["type"] == "result":
+                    result = msg["data"]
+                elif msg["type"] == "error":
+                    error = msg
+            except:
+                pass  # Timeout, continue loop
+
+        # Wait for process to finish
+        _solver_process.join(timeout=2.0)
+
+        if error:
+            raise Exception(error.get("error", "Unknown solver error"))
+
+        if result is None:
+            raise Exception("Solver process terminated without result")
+
+        # Convert dict result back to response
+        response = SolveWeekResponse(**result)
+
+        # Broadcast complete event
+        _broadcast_solver_progress("complete", {
+            "startISO": response.startISO,
+            "endISO": response.endISO,
+            "status": "success",
+        })
+        return response
+
+    except Exception as e:
+        # Broadcast error event
+        _broadcast_solver_progress("complete", {
+            "startISO": payload.startISO,
+            "endISO": payload.endISO,
+            "status": "error",
+            "error": str(e),
+        })
+        raise
+    finally:
+        # Cleanup subprocess if still running
+        if _solver_process is not None and _solver_process.is_alive():
+            _solver_process.terminate()
+            _solver_process.join(timeout=1.0)
+
+        # Always clear the running flag when done
+        with _solver_running_lock:
+            _solver_is_running = False
+            _solver_process = None
+            _solver_cancel_event.clear()
+
+
+def _solve_week_impl_subprocess(
+    payload: SolveWeekRequest,
+    current_user,
+    cancel_event,
+    on_progress,
+) -> dict:
+    """
+    Subprocess-compatible implementation of solve_week.
+    Returns a dict that can be serialized and sent back to main process.
+    """
+    result = _solve_week_impl(
+        payload,
+        current_user,
+        cancel_event=cancel_event,
+        on_progress=on_progress,
+    )
+    # Convert to dict for serialization
+    return result.model_dump()
+
+
+def _solve_week_impl(
+    payload: SolveWeekRequest,
+    current_user,
+    cancel_event=None,
+    on_progress=None,
+):
+    """Internal implementation of solve_week.
+
+    Args:
+        payload: The solve request
+        current_user: User object (must have .username attribute)
+        cancel_event: Optional event to check for cancellation (defaults to global)
+        on_progress: Optional callback(event_type, data) for progress updates (defaults to SSE broadcast)
+    """
+    # Use defaults if not provided
+    if cancel_event is None:
+        cancel_event = _solver_cancel_event
+    if on_progress is None:
+        on_progress = _broadcast_solver_progress
+
+    timer = SolverTimer()
     state = _load_state(current_user.username)
+    timer.checkpoint("load_state")
     diagnostics: List[str] = []  # Track potential issues for debugging
     try:
         range_start = datetime.fromisoformat(f"{payload.startISO}T00:00:00+00:00").date()
@@ -496,6 +603,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         cursor += timedelta(days=1)
     target_date_set = set(target_day_isos)
     day_index_by_iso = {date_iso: idx for idx, date_iso in enumerate(day_isos)}
+    timer.checkpoint("date_setup")
 
     slot_contexts = _collect_slot_contexts(state)
     slot_ids = {ctx["slot_id"] for ctx in slot_contexts}
@@ -505,6 +613,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         slot_intervals[ctx["slot_id"]] = _build_slot_interval(
             ctx["slot"], ctx["location_id"]
         )
+    timer.checkpoint("slot_contexts")
 
     holidays = state.holidays or []
     day_type_by_iso = {iso: _get_day_type(iso, holidays) for iso in day_isos}
@@ -596,6 +705,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                 var_map[(clinician.id, date_iso, slot_id)] = var
                 if window and window[0] == "preference" and fits_window:
                     time_window_terms.append(var)
+    timer.checkpoint("create_variables")
 
     # Diagnostic: check if we have any variables at all
     if not var_map:
@@ -650,6 +760,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                 continue
             start, end, loc = interval
             manual_by_clinician_date[cid][date_iso].append((start, end, loc))
+    timer.checkpoint("vacation_and_manual_setup")
 
     # Now process constraints per clinician, per day (O(slots_per_day²) instead of O(total_slots²))
     for clinician in state.clinicians:
@@ -727,6 +838,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                     overlaps = not (abs_end_c <= abs_start_m or abs_end_m <= abs_start_c)
                     if overlaps:
                         model.Add(var_c <= 0)
+    timer.checkpoint("overlap_constraints")
 
     # Coverage + rules
     coverage_terms = []
@@ -825,6 +937,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         else:
             model.Add(slack + already >= missing)
         slack_terms.append(slack * order_weight)
+    timer.checkpoint("coverage_constraints")
 
     # On-call rest days
     rest_class_id = solver_settings.onCallRestClassId
@@ -931,6 +1044,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
     # Add rest day conflict warnings to notes
     if rest_day_conflicts:
         notes.append(f"WARNING: {len(rest_day_conflicts)} manual assignment(s) violate on-call rest day rules.")
+    timer.checkpoint("on_call_rest_days")
 
     hours_penalty_terms: List[cp_model.IntVar] = []
     total_days = len(target_day_isos)
@@ -995,37 +1109,50 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         model.AddDivisionEquality(under_blocks, under, WORKING_HOURS_BLOCK_MINUTES)
         model.AddDivisionEquality(over_blocks, over, WORKING_HOURS_BLOCK_MINUTES)
         hours_penalty_terms.append(under_blocks + over_blocks)
+    timer.checkpoint("working_hours_constraints")
 
     # Continuous shift preference: reward assigning adjacent slots to same clinician
-    continuous_terms: List[cp_model.IntVar] = []
+    # We use AddMultiplicationEquality to create: both = var_a * var_b
+    # This is 1 only when both adjacent slots are assigned to the same clinician
+    continuous_terms: List[Any] = []
     if solver_settings.preferContinuousShifts:
-        # Find adjacent slot pairs (where slot_a.end == slot_b.start, same location)
-        adjacent_pairs: List[Tuple[str, str]] = []
-        slot_ids_list = list(slot_intervals.keys())
-        for i, slot_id_a in enumerate(slot_ids_list):
-            start_a, end_a, loc_a = slot_intervals[slot_id_a]
-            for slot_id_b in slot_ids_list[i + 1 :]:
-                start_b, end_b, loc_b = slot_intervals[slot_id_b]
-                # Check if adjacent (end of A == start of B or vice versa) and same location
-                if loc_a == loc_b:
-                    if end_a == start_b or end_b == start_a:
-                        adjacent_pairs.append((slot_id_a, slot_id_b))
+        # Build index: (end_time, location) -> list of slot_ids that END at this time
+        slots_ending_at: Dict[Tuple[int, str], List[str]] = {}
+        slots_starting_at: Dict[Tuple[int, str], List[str]] = {}
+        for slot_id, (start, end, loc) in slot_intervals.items():
+            slots_ending_at.setdefault((end, loc), []).append(slot_id)
+            slots_starting_at.setdefault((start, loc), []).append(slot_id)
 
-        # For each adjacent pair and each day, reward when same clinician is assigned to both
-        for slot_a, slot_b in adjacent_pairs:
-            for date_iso in target_day_isos:
-                for clinician in state.clinicians:
-                    var_a = var_map.get((clinician.id, date_iso, slot_a))
-                    var_b = var_map.get((clinician.id, date_iso, slot_b))
-                    if var_a is None or var_b is None:
+        # Build lookup: (clinician_id, date, slot_id) -> var (fast access)
+        var_by_cid_date_slot: Dict[Tuple[str, str, str], Any] = {}
+        for cid, clinician_dates in vars_by_clinician_date.items():
+            for date_iso, day_vars in clinician_dates.items():
+                for (sid, var, _s, _e, _l) in day_vars:
+                    var_by_cid_date_slot[(cid, date_iso, sid)] = var
+
+        # Find adjacent pairs and create reward terms
+        # Use short variable names and batch creation for speed
+        cont_idx = 0
+        for (end_time, loc), ending_slots in slots_ending_at.items():
+            starting_slots = slots_starting_at.get((end_time, loc), [])
+            if not starting_slots:
+                continue
+            for slot_a in ending_slots:
+                for slot_b in starting_slots:
+                    if slot_a == slot_b:
                         continue
-                    # Create variable that's 1 when both are assigned
-                    both = model.NewBoolVar(
-                        f"cont_{clinician.id}_{date_iso}_{slot_a}_{slot_b}"
-                    )
-                    model.Add(var_a + var_b >= 2).OnlyEnforceIf(both)
-                    model.Add(var_a + var_b <= 1).OnlyEnforceIf(both.Not())
-                    continuous_terms.append(both)
+                    # For this adjacent pair, iterate days and clinicians
+                    for date_iso in target_day_isos:
+                        for cid in vars_by_clinician_date:
+                            var_a = var_by_cid_date_slot.get((cid, date_iso, slot_a))
+                            var_b = var_by_cid_date_slot.get((cid, date_iso, slot_b))
+                            if var_a is not None and var_b is not None:
+                                # both = var_a AND var_b (1 only when same clinician does both)
+                                both = model.NewBoolVar(f"c{cont_idx}")
+                                cont_idx += 1
+                                model.AddMultiplicationEquality(both, [var_a, var_b])
+                                continuous_terms.append(both)
+    timer.checkpoint("continuous_shift_constraints")
 
     total_slack = sum(slack_terms) if slack_terms else 0
     total_coverage = sum(coverage_terms) if coverage_terms else 0
@@ -1070,24 +1197,63 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
             - total_continuous * CONTINUOUS_SHIFT_WEIGHT
             + total_hours_penalty * WORKING_HOURS_PENALTY_WEIGHT
         )
+    timer.checkpoint("objective_setup")
 
-    t_model_built = time.time()
-    model_build_time = t_model_built - t_start
+    # Solution callback to track when solutions are found and check for cancellation
+    class SolutionCallback(cp_model.CpSolverSolutionCallback):
+        def __init__(self, timer: SolverTimer, cancel_event_ref, var_map: Dict, progress_callback):
+            super().__init__()
+            self.timer = timer
+            self.cancel_event = cancel_event_ref
+            self.var_map = var_map
+            self.progress_callback = progress_callback
+            self.solution_times: List[Tuple[int, float, float]] = []  # (solution_num, time_ms, objective)
+            self.solve_start = time.time()
+            self.was_aborted = False
+            self.last_assignments: List[Dict] = []  # Store last solution's assignments
+
+        def on_solution_callback(self):
+            elapsed_ms = (time.time() - self.solve_start) * 1000
+            solution_num = len(self.solution_times) + 1
+            objective = self.ObjectiveValue()
+            self.solution_times.append((solution_num, elapsed_ms, objective))
+
+            # Extract current assignments from this solution
+            current_assignments = []
+            for (clinician_id, date_iso, row_id), var in self.var_map.items():
+                if self.Value(var) == 1:
+                    current_assignments.append({
+                        "id": f"as-{date_iso}-{clinician_id}-{row_id}",
+                        "rowId": row_id,
+                        "dateISO": date_iso,
+                        "clinicianId": clinician_id,
+                    })
+            self.last_assignments = current_assignments
+
+            # Send progress via callback (SSE broadcast or queue)
+            self.progress_callback("solution", {
+                "solution_num": solution_num,
+                "time_ms": round(elapsed_ms, 1),
+                "objective": objective,
+                "assignments": current_assignments,
+            })
+
+            # Check if abort was requested
+            if self.cancel_event.is_set():
+                self.was_aborted = True
+                self.StopSearch()
+
+    solution_callback = SolutionCallback(timer, cancel_event, var_map, on_progress)
 
     solver = cp_model.CpSolver()
-    # Scale timeout based on problem size: base 60s for small problems, up to 1800s for large ones
-    num_days = len(target_day_isos)
-    if num_days <= 14:
-        timeout_seconds = 60.0
-    elif num_days <= 60:
-        timeout_seconds = 300.0
-    else:
-        timeout_seconds = 1800.0
-    solver.parameters.max_time_in_seconds = timeout_seconds
-    solver.parameters.num_search_workers = 8
-    result = solver.Solve(model)
-    t_solved = time.time()
-    solve_time = t_solved - t_model_built
+    total_timeout_seconds = payload.timeout_seconds if payload.timeout_seconds is not None else 60.0
+    # Subtract preparation time from total budget to get remaining time for actual solving
+    prep_time_seconds = timer.total_ms() / 1000.0
+    remaining_timeout = max(1.0, total_timeout_seconds - prep_time_seconds)  # At least 1 second
+    solver.parameters.max_time_in_seconds = remaining_timeout
+    solver.parameters.num_search_workers = SOLVER_NUM_WORKERS
+    result = solver.SolveWithSolutionCallback(model, solution_callback)
+    timer.checkpoint("solve")
 
     if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         # Add more diagnostics about why no solution was found
@@ -1129,7 +1295,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
 
         # Try to provide more specific infeasibility info
         diagnostics.append(f"Solver status: {solver.StatusName(result)}")
-        diagnostics.append(f"Model build: {model_build_time:.1f}s, Solver: {solve_time:.1f}s (limit: {timeout_seconds}s)")
+        diagnostics.append(f"Total time: {timer.total_ms():.0f}ms (budget: {total_timeout_seconds}s, solver limit: {remaining_timeout:.1f}s)")
         if result == cp_model.UNKNOWN:
             diagnostics.append("Solver timed out. Problem may be too large or have complex constraints.")
 
@@ -1138,7 +1304,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         if total_days > 14:
             # Attempt week-by-week solving as fallback
             week_assignments: List[Assignment] = []
-            week_notes: List[str] = [f"Full-range solver failed after {model_build_time:.1f}s build + {solve_time:.1f}s solve. Trying week-by-week..."]
+            week_notes: List[str] = [f"Full-range solver failed after {timer.total_ms():.0f}ms. Trying week-by-week..."]
 
             week_cursor = range_start
             week_num = 0
@@ -1151,7 +1317,8 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                 week_payload = SolveWeekRequest(
                     startISO=week_cursor.isoformat(),
                     endISO=week_end.isoformat(),
-                    onlyFillRequired=payload.onlyFillRequired,
+                    only_fill_required=payload.only_fill_required,
+                    timeout_seconds=payload.timeout_seconds,
                 )
 
                 # Recursively solve this week (will use shorter timeout for smaller range)
@@ -1259,13 +1426,79 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         notes.append("Could not fill all required slots.")
     if payload.only_fill_required and total_required == 0:
         notes.append("No required slots detected for the selected timeframe.")
+    timer.checkpoint("result_extraction")
 
     # Always include timing info
-    notes.append(f"Solver completed in {model_build_time:.1f}s (build) + {solve_time:.1f}s (solve).")
+    notes.append(f"Solver completed in {timer.total_ms():.0f}ms.")
+
+    # Dump debug info if DEBUG_SOLVER is enabled
+    _dump_solver_debug(
+        timer=timer,
+        payload=payload,
+        state=state,
+        model_stats={
+            "num_variables": len(var_map),
+            "num_clinicians": len(state.clinicians),
+            "num_days": len(target_day_isos),
+            "num_slots": len(slot_contexts),
+            "solver_status": solver.StatusName(result),
+            "solver_objective": solver.ObjectiveValue() if result in (cp_model.OPTIMAL, cp_model.FEASIBLE) else None,
+            "solution_times": [
+                {"solution": num, "time_ms": round(t, 1), "objective": obj}
+                for num, t, obj in solution_callback.solution_times
+            ],
+        },
+        result_info={
+            "num_assignments": len(new_assignments),
+            "total_slack": solver.Value(total_slack) if slack_terms else 0,
+        },
+    )
+
+    # Add note if solver was aborted
+    if solution_callback.was_aborted:
+        notes.append("Solver was aborted by user request.")
+
+    # Compute sub-scores for the final solution
+    sub_scores = None
+    if result in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        # Evaluate each component by summing the values of individual terms
+        eval_coverage = sum(solver.Value(t) for t in coverage_terms) if coverage_terms else 0
+        eval_slack = sum(solver.Value(t) for t in slack_terms) if slack_terms else 0
+        eval_preference = sum(solver.Value(t) for t in preference_terms) if preference_terms else 0
+        eval_time_window = sum(solver.Value(t) for t in time_window_terms) if time_window_terms else 0
+        eval_continuous = sum(solver.Value(t) for t in continuous_terms) if continuous_terms else 0
+        eval_hours_penalty = sum(solver.Value(t) for t in hours_penalty_terms) if hours_penalty_terms else 0
+
+        sub_scores = SolverSubScores(
+            slots_filled=eval_coverage,
+            slots_unfilled=eval_slack,
+            total_assignments=len(new_assignments),
+            preference_score=eval_preference,
+            time_window_score=eval_time_window,
+            continuous_shift_score=eval_continuous,
+            hours_penalty=eval_hours_penalty,
+        )
+
+    # Build debug info (always included for frontend timing display)
+    debug_info = SolverDebugInfo(
+        timing=timer.to_dict(),
+        solution_times=[
+            SolverDebugSolutionTime(solution=num, time_ms=round(t, 1), objective=obj)
+            for num, t, obj in solution_callback.solution_times
+        ],
+        num_variables=len(var_map),
+        num_days=len(target_day_isos),
+        num_slots=len(slot_contexts),
+        solver_status="ABORTED" if solution_callback.was_aborted else solver.StatusName(result),
+        cpu_workers_used=SOLVER_NUM_WORKERS,
+        cpu_cores_available=multiprocessing.cpu_count(),
+        sub_scores=sub_scores,
+    )
 
     return SolveWeekResponse(
         startISO=range_start.isoformat(),
         endISO=range_end.isoformat(),
         assignments=new_assignments,
         notes=notes,
+        debugInfo=debug_info,
     )

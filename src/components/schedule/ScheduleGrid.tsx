@@ -472,7 +472,7 @@ export default function ScheduleGrid({
                 <div
                   ref={gridRef}
                   data-schedule-grid="true"
-                  className="grid"
+                  className="relative grid"
                   onMouseMove={readOnly ? undefined : handleMouseMove}
                   onMouseLeave={readOnly ? undefined : clearHoveredCell}
                   onDragOver={

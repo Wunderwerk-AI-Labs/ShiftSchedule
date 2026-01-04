@@ -155,6 +155,11 @@ def _get_current_user(authorization: Optional[str] = Header(default=None)) -> Us
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
+    return _verify_token_and_get_user(token)
+
+
+def _verify_token_and_get_user(token: str) -> UserPublic:
+    """Verify JWT token and return user. Used by SSE endpoints that get token via query param."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError as exc:

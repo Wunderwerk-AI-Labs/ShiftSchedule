@@ -553,7 +553,7 @@ export default function VacationOverviewModal({
                     "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800",
                   )}
                 >
-                  Reference bands
+                  Display items
                 </button>
                 {referencePanelOpen ? (
                   <div

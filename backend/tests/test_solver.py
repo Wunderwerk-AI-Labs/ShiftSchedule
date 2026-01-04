@@ -21,8 +21,6 @@ from backend.models import (
     Assignment,
     Clinician,
     Location,
-    SolveDayRequest,
-    SolveDayResponse,
     SolveWeekRequest,
     SolveWeekResponse,
     TemplateBlock,
@@ -35,7 +33,7 @@ from backend.models import (
     WeeklyTemplateLocation,
     WorkplaceRow,
 )
-from backend.solver import solve_day, solve_week
+from backend.solver import solve_week
 
 from .conftest import (
     DAY_TYPES,
@@ -126,8 +124,8 @@ class TestDaySolverBasics:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -162,8 +160,8 @@ class TestDaySolverBasics:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -199,8 +197,8 @@ class TestDaySolverBasics:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -243,8 +241,8 @@ class TestDaySolverOverlapConstraints:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -283,8 +281,8 @@ class TestDaySolverOverlapConstraints:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -395,8 +393,8 @@ class TestDaySolverLocationConstraints:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -436,8 +434,8 @@ class TestDaySolverManualAssignments:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -468,14 +466,14 @@ class TestDaySolverInfeasible:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
         # Empty response but valid structure
         assert response.assignments == []
-        assert isinstance(response, SolveDayResponse)
+        assert isinstance(response, SolveWeekResponse)
 
 
 class TestWeekSolverRestDays:
@@ -653,8 +651,8 @@ class TestSolverTimeIntervals:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 
@@ -694,8 +692,8 @@ class TestSolverPoolNonInterference:
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
-        response = solve_day(
-            SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+        response = solve_week(
+            SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
             current_user=TEST_USER,
         )
 

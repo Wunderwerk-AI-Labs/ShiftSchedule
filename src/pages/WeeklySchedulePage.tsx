@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
 import AutomatedPlanningPanel from "../components/schedule/AutomatedPlanningPanel";
+import SolverOverlay, { type LiveSolution } from "../components/schedule/SolverOverlay";
 import HelpView from "../components/schedule/HelpView";
 import IcalExportModal from "../components/schedule/IcalExportModal";
 import ScheduleGrid from "../components/schedule/ScheduleGrid";
@@ -21,20 +22,24 @@ import {
   getState,
   publishIcal,
   publishWeb,
+  abortSolver,
   rotateIcalToken,
   saveState,
-  solveDay,
   solveWeek,
   rotateWeb,
   unpublishIcal,
   unpublishWeb,
+  subscribeSolverProgress,
   type AuthUser,
   type Holiday,
   type IcalPublishStatus,
+  type SolverDebugInfo,
   type SolverSettings,
   type WeeklyCalendarTemplate,
   type WebPublishStatus,
 } from "../api/client";
+import SolverDebugPanel from "../components/schedule/SolverDebugPanel";
+import SolverInfoModal, { type SolverHistoryEntry } from "../components/schedule/SolverInfoModal";
 import {
   Assignment,
   assignments,
@@ -256,7 +261,10 @@ export default function WeeklySchedulePage({
   const [workingHoursOverviewOpen, setWorkingHoursOverviewOpen] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [loadedUserId, setLoadedUserId] = useState<string>("");
-  const [solverNotice, setSolverNotice] = useState<string | null>(null);
+  const [solverNotice, setSolverNotice] = useState<{
+    notes: string;
+    debugInfo?: SolverDebugInfo;
+  } | null>(null);
   const [autoPlanProgress, setAutoPlanProgress] = useState<{
     current: number;
     total: number;
@@ -268,6 +276,17 @@ export default function WeeklySchedulePage({
   } | null>(null);
   const [autoPlanError, setAutoPlanError] = useState<string | null>(null);
   const [autoPlanRunning, setAutoPlanRunning] = useState(false);
+  const [autoPlanElapsedMs, setAutoPlanElapsedMs] = useState(0);
+  const [autoPlanDateRange, setAutoPlanDateRange] = useState<{
+    startISO: string;
+    endISO: string;
+  } | null>(null);
+  const autoPlanAbortRef = useRef<AbortController | null>(null);
+  const [liveSolutions, setLiveSolutions] = useState<LiveSolution[]>([]);
+  const liveSolutionsRef = useRef<LiveSolution[]>([]);
+  const [solverHistory, setSolverHistory] = useState<SolverHistoryEntry[]>([]);
+  const [solverInfoOpen, setSolverInfoOpen] = useState(false);
+  const [solverTimeoutSeconds, setSolverTimeoutSeconds] = useState(60);
   const [holidays, setHolidays] = useState<Holiday[]>(defaultAppState.holidays ?? []);
   const [holidayCountry, setHolidayCountry] = useState(
     defaultAppState.holidayCountry ?? "DE",
@@ -303,6 +322,50 @@ export default function WeeklySchedulePage({
       setActiveRuleViolationId(null);
     }
   }, [ruleViolationsOpen]);
+
+  // Track elapsed time during solver run
+  useEffect(() => {
+    if (!autoPlanRunning || !autoPlanStartedAt) {
+      return;
+    }
+    const updateElapsed = () => {
+      setAutoPlanElapsedMs(Date.now() - autoPlanStartedAt);
+    };
+    updateElapsed();
+    const intervalId = window.setInterval(updateElapsed, 100);
+    return () => window.clearInterval(intervalId);
+  }, [autoPlanRunning, autoPlanStartedAt]);
+
+  // Subscribe to SSE for live solver progress when solver is running
+  useEffect(() => {
+    if (!autoPlanRunning) {
+      return;
+    }
+    // Clear previous solutions when starting a new solve
+    setLiveSolutions([]);
+    liveSolutionsRef.current = [];
+
+    const unsubscribe = subscribeSolverProgress(
+      (event) => {
+        if (event.event === "solution") {
+          const newSolution = {
+            solution_num: event.data.solution_num,
+            time_ms: event.data.time_ms,
+            objective: event.data.objective,
+            assignments: event.data.assignments,
+          };
+          setLiveSolutions((prev) => [...prev, newSolution]);
+          liveSolutionsRef.current = [...liveSolutionsRef.current, newSolution];
+        }
+      },
+      () => {
+        // SSE error - ignore, the overlay will still work without live updates
+      },
+    );
+
+    return unsubscribe;
+  }, [autoPlanRunning]);
+
   const weekStart = useMemo(() => startOfWeek(anchorDate, 1), [anchorDate]);
   const currentWeekStartISO = useMemo(() => toISODate(weekStart), [weekStart]);
   const fullWeekDays = useMemo(
@@ -828,10 +891,19 @@ export default function WeeklySchedulePage({
     return dates;
   };
 
+  const addSolverHistoryEntry = (entry: SolverHistoryEntry) => {
+    setSolverHistory((prev) => {
+      const updated = [entry, ...prev];
+      // Keep only the last 5 entries
+      return updated.slice(0, 5);
+    });
+  };
+
   const handleRunAutomatedPlanning = async (args: {
     startISO: string;
     endISO: string;
     onlyFillRequired: boolean;
+    timeoutSeconds: number;
   }) => {
     if (autoPlanRunning) return;
     setAutoPlanError(null);
@@ -840,10 +912,19 @@ export default function WeeklySchedulePage({
       setAutoPlanError("Select a valid timeframe to run the solver.");
       return;
     }
+    const abortController = new AbortController();
+    autoPlanAbortRef.current = abortController;
     setAutoPlanRunning(true);
+    setAutoPlanElapsedMs(0);
+    setAutoPlanDateRange({ startISO: args.startISO, endISO: args.endISO });
     const startedAt = Date.now();
     setAutoPlanStartedAt(startedAt);
     setAutoPlanProgress({ current: 0, total: dateRange.length });
+
+    let historyStatus: "success" | "aborted" | "error" = "success";
+    let historyNotes: string[] = [];
+    let historyDebugInfo: SolverDebugInfo | undefined;
+
     try {
       if (hasLoaded && loadedUserId === currentUser.username) {
         const { state: normalized } = normalizeAppState({
@@ -866,9 +947,23 @@ export default function WeeklySchedulePage({
       const result = await solveWeek(args.startISO, {
         endISO: args.endISO,
         onlyFillRequired: args.onlyFillRequired,
+        timeoutSeconds: args.timeoutSeconds,
+        signal: abortController.signal,
       });
-      if (result.notes.length > 0) {
-        setSolverNotice(result.notes.join("\n"));
+
+      historyNotes = result.notes;
+      historyDebugInfo = result.debugInfo;
+
+      // Check if solver was aborted (based on notes or status)
+      if (result.notes.some((n) => n.includes("aborted"))) {
+        historyStatus = "aborted";
+      }
+
+      if (result.notes.length > 0 || result.debugInfo) {
+        setSolverNotice({
+          notes: result.notes.join("\n"),
+          debugInfo: result.debugInfo,
+        });
         // Notice stays open until user clicks to dismiss
       }
       const filtered = result.assignments.filter(
@@ -880,18 +975,105 @@ export default function WeeklySchedulePage({
         totalDays: dateRange.length,
         durationMs: Date.now() - startedAt,
       });
-    } catch {
-      setAutoPlanError(
-        `Solver failed for the selected timeframe starting ${formatEuropeanDate(
-          args.startISO,
-        )}.`,
-      );
-      setSolverNotice("Solver service is not responding.");
-      window.setTimeout(() => setSolverNotice(null), 4000);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        // User aborted - construct partial debug info from live solutions
+        historyStatus = "aborted";
+        historyNotes = ["Solver was aborted by user request."];
+        // Build partial debug info from SSE live solutions
+        const capturedSolutions = liveSolutionsRef.current;
+        if (capturedSolutions.length > 0) {
+          const elapsedMs = Date.now() - startedAt;
+          historyDebugInfo = {
+            timing: {
+              total_ms: elapsedMs,
+              checkpoints: [],
+            },
+            solution_times: capturedSolutions.map((s) => ({
+              solution: s.solution_num,
+              time_ms: s.time_ms,
+              objective: s.objective,
+            })),
+            num_variables: 0,
+            num_days: dateRange.length,
+            num_slots: 0,
+            solver_status: "ABORTED",
+            cpu_workers_used: 0,
+            cpu_cores_available: 0,
+          };
+
+          // Apply the last solution's assignments if available (from SSE stream)
+          const lastSolution = capturedSolutions[capturedSolutions.length - 1];
+          if (lastSolution?.assignments && lastSolution.assignments.length > 0) {
+            // Clear existing assignments for the solve range, then apply new ones
+            setAssignmentMap((prev) => {
+              const next = new Map(prev);
+              for (const [key, list] of next.entries()) {
+                const { rowId, dateISO: keyDate } = splitAssignmentKey(key);
+                if (keyDate >= args.startISO && keyDate <= args.endISO) {
+                  const filtered = list.filter((a) => a.rowId !== rowId || a.dateISO !== keyDate);
+                  if (filtered.length === 0) {
+                    next.delete(key);
+                  } else {
+                    next.set(key, filtered);
+                  }
+                }
+              }
+              return next;
+            });
+            applySolverAssignments(lastSolution.assignments);
+            historyNotes = ["Solver was aborted - applied last available solution."];
+          }
+        }
+      } else {
+        historyStatus = "error";
+        historyNotes = ["Solver service is not responding."];
+        setAutoPlanError(
+          `Solver failed for the selected timeframe starting ${formatEuropeanDate(
+            args.startISO,
+          )}.`,
+        );
+        setSolverNotice({ notes: "Solver service is not responding." });
+        window.setTimeout(() => setSolverNotice(null), 4000);
+      }
     } finally {
+      // Add to history
+      addSolverHistoryEntry({
+        id: `solver-${startedAt}`,
+        startISO: args.startISO,
+        endISO: args.endISO,
+        startedAt,
+        endedAt: Date.now(),
+        status: historyStatus,
+        notes: historyNotes,
+        debugInfo: historyDebugInfo,
+      });
+
+      autoPlanAbortRef.current = null;
       setAutoPlanRunning(false);
       setAutoPlanProgress(null);
       setAutoPlanStartedAt(null);
+      setAutoPlanElapsedMs(0);
+      setAutoPlanDateRange(null);
+    }
+  };
+
+  const handleAbortAutomatedPlanning = async () => {
+    // Check if we have any solutions via SSE
+    const hasSolutions = liveSolutionsRef.current.length > 0;
+
+    // Signal the backend to stop the solver
+    // Use force=true when we have solutions to trigger immediate stop
+    try {
+      await abortSolver(hasSolutions);
+    } catch {
+      // Ignore errors - the abort request is best-effort
+    }
+
+    // Abort the fetch immediately - we'll use the SSE solution if available
+    // The backend may continue running briefly but that's fine
+    if (autoPlanAbortRef.current) {
+      autoPlanAbortRef.current.abort();
     }
   };
 
@@ -2400,8 +2582,10 @@ export default function WeeklySchedulePage({
                   lastRunTotalDays={autoPlanLastRunStats?.totalDays ?? null}
                   lastRunDurationMs={autoPlanLastRunStats?.durationMs ?? null}
                   error={autoPlanError}
+                  timeoutSeconds={solverTimeoutSeconds}
                   onRun={handleRunAutomatedPlanning}
                   onReset={handleResetAutomatedRange}
+                  onOpenInfo={() => setSolverInfoOpen(true)}
                 />
                 <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
                   <div className="flex flex-col gap-4">
@@ -2743,20 +2927,42 @@ export default function WeeklySchedulePage({
           onClick={() => setSolverNotice(null)}
         >
           <div
-            className="relative max-w-lg max-h-[80vh] overflow-auto rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-700 shadow-xl dark:border-amber-500/40 dark:bg-amber-900/40 dark:text-amber-200"
+            className={cx(
+              "relative max-h-[80vh] overflow-auto rounded-2xl border px-4 py-3 text-xs font-medium shadow-xl",
+              solverNotice.debugInfo
+                ? "max-w-xl border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                : "max-w-lg border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-900/40 dark:text-amber-200"
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <button
               type="button"
               onClick={() => setSolverNotice(null)}
-              className="absolute top-2 right-2 p-1 rounded-full hover:bg-amber-200/50 dark:hover:bg-amber-800/50 transition-colors"
+              className={cx(
+                "absolute top-2 right-2 p-1 rounded-full transition-colors",
+                solverNotice.debugInfo
+                  ? "hover:bg-slate-100 dark:hover:bg-slate-800"
+                  : "hover:bg-amber-200/50 dark:hover:bg-amber-800/50"
+              )}
               aria-label="Dismiss"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-            <div className="pr-6 whitespace-pre-wrap">{solverNotice}</div>
+            {solverNotice.notes && (
+              <div
+                className={cx(
+                  "pr-6 whitespace-pre-wrap",
+                  solverNotice.debugInfo && "mb-4 pb-4 border-b border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200"
+                )}
+              >
+                {solverNotice.notes}
+              </div>
+            )}
+            {solverNotice.debugInfo && (
+              <SolverDebugPanel debugInfo={solverNotice.debugInfo} />
+            )}
           </div>
         </div>
       ) : null}
@@ -2764,6 +2970,27 @@ export default function WeeklySchedulePage({
       <ViolationLinesOverlay
         violations={visibleViolationsForLines}
         visible={showViolationLines}
+      />
+
+      <SolverOverlay
+        isVisible={autoPlanRunning}
+        progress={autoPlanProgress}
+        elapsedMs={autoPlanElapsedMs}
+        solveRange={autoPlanDateRange}
+        displayedRange={{
+          startISO: toISODate(weekStart),
+          endISO: toISODate(weekEndInclusive),
+        }}
+        onAbort={handleAbortAutomatedPlanning}
+        liveSolutions={liveSolutions}
+      />
+
+      <SolverInfoModal
+        isOpen={solverInfoOpen}
+        onClose={() => setSolverInfoOpen(false)}
+        history={solverHistory}
+        timeoutSeconds={solverTimeoutSeconds}
+        onTimeoutChange={setSolverTimeoutSeconds}
       />
     </div>
   );

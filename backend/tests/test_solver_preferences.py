@@ -4,7 +4,6 @@ from backend.models import (
     AppState,
     Clinician,
     Location,
-    SolveDayRequest,
     SolveWeekRequest,
     TemplateBlock,
     TemplateColBand,
@@ -15,7 +14,7 @@ from backend.models import (
     WorkplaceRow,
     UserPublic,
 )
-from backend.solver import solve_day, solve_week
+from backend.solver import solve_week
 
 
 def _build_state(
@@ -120,8 +119,8 @@ def test_day_solver_enforces_mandatory_windows(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
-    response = solve_day(
-        SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+    response = solve_week(
+        SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
         current_user=UserPublic(username="test", role="admin", active=True),
     )
     assigned_ids = {assignment.rowId for assignment in response.assignments}
@@ -180,8 +179,8 @@ def test_day_solver_prefers_preferred_window(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
-    response = solve_day(
-        SolveDayRequest(dateISO="2026-01-05", only_fill_required=True),
+    response = solve_week(
+        SolveWeekRequest(startISO="2026-01-05", endISO="2026-01-05", only_fill_required=True),
         current_user=UserPublic(username="test", role="admin", active=True),
     )
     assert response.assignments

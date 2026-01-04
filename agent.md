@@ -549,10 +549,23 @@ Performance optimizations:
 - Lookup tables: `vars_by_clinician_date`, `vars_by_date_slot`, `manual_count_by_date_slot`.
 - Model build time ~25s for 100+ day ranges (down from ~100s before optimization).
 
+Debug mode (development only):
+- Set `DEBUG_SOLVER=true` environment variable to enable detailed timing instrumentation.
+- When enabled, each solve writes a JSON file to `backend/logs/solver_debug/` with:
+  - Checkpoint timings for each major step (load_state, date_setup, slot_contexts, create_variables, overlap_constraints, coverage_constraints, on_call_rest_days, working_hours_constraints, continuous_shift_constraints, objective_setup, solve, result_extraction).
+  - State summary (clinician count, location count, assignments, etc.).
+  - Model statistics (num_variables, solver status, objective value).
+  - Result info (assignments created, slack remaining).
+- **Production warning**: Do NOT deploy with `DEBUG_SOLVER=true`. Remove or unset the environment variable for production builds. The debug logs consume disk space and may impact performance.
+- Files are named `solve_YYYYMMDD_HHMMSS_microseconds.json` for easy identification.
+- Frontend debug panel: When DEBUG_SOLVER is enabled, the solver response includes `debugInfo` which the frontend displays in the solver notice modal:
+  - Summary stats: solver status, variable count, days, slots, solutions found, improvement percentage.
+  - Objective value chart: SVG line chart showing objective value (Y-axis) vs. time in seconds (X-axis) for each solution found during the solve.
+  - Timing breakdown table: shows each phase name, time (ms/s), percentage of total, and a visual bar chart.
+  - Component: `SolverDebugPanel.tsx` renders the debug visualization.
+
 Timeouts:
-- ≤14 days: 60s
-- 15-60 days: 300s
-- >60 days: 1800s (30 minutes)
+- All ranges: 60s (flat timeout regardless of range size)
 
 Week-by-week fallback:
 - If full-range solver fails for >14 day ranges, automatically retries solving each week individually.
@@ -564,6 +577,40 @@ Solver notice panel (frontend):
 - Displays timing info (build + solve time) on success and failure.
 - Stays open until user clicks to dismiss (click backdrop or X button).
 - Centered modal with scrollable content for long diagnostics.
+
+Subprocess architecture (force abort):
+- Solver runs in a separate subprocess using `multiprocessing.get_context("spawn")`.
+- Main process spawns `_solver_subprocess_worker` which runs the actual CP-SAT solving.
+- Progress is relayed via `multiprocessing.Queue` from subprocess to main process, then broadcast to SSE subscribers.
+- Abort endpoint (`POST /v1/solve/abort`) supports two modes:
+  - Default: Sets cancel event flag, solver stops at next solution callback (graceful).
+  - `force=true`: Immediately terminates the subprocess via `Process.terminate()` then `Process.kill()` if needed.
+- This enables instant abort even when the solver is stuck without finding new solutions.
+- Global tracking: `_solver_process` holds the subprocess reference, `_solver_cancel_event` for graceful abort.
+
+SSE live updates (real-time progress):
+- Endpoint: `GET /v1/solve/progress?token=<jwt>` (Server-Sent Events stream).
+- Events:
+  - `connected`: Initial connection confirmation.
+  - `start`: Solver started with `{startISO, endISO, timeout_seconds}`.
+  - `solution`: New solution found with `{solution_num, time_ms, objective, assignments}`.
+  - `complete`: Solver finished with `{startISO, endISO, status, error?}`.
+- Solution events include full assignments array, allowing the frontend to apply intermediate solutions.
+- Frontend subscribes via `subscribeSolverProgress()` in `src/api/client.ts`.
+- When aborted, the last solution's assignments can be applied immediately.
+
+Solver overlay (SolverOverlay.tsx):
+- Renders inside the schedule grid element via `createPortal(content, gridElement)`.
+- Uses absolute positioning (`absolute inset-0`) so it scrolls with the grid content.
+- Only shows when the displayed week overlaps with the solve range.
+- Components:
+  - Animated spinner with indigo accent.
+  - Date range label (DD.MM.YYYY format).
+  - Live solution chart: SVG line chart showing objective value over time (log scale, inverted so better scores appear higher).
+  - Collapsible details table: solution number, time, score, and delta percentage.
+  - Elapsed time counter (MM:SS format).
+  - Action button: "Abort" (rose/red) when no solutions yet, "Apply Solution" (indigo/blue) once a solution is found.
+- Grid element requires `position: relative` for absolute positioning to work (added to ScheduleGrid.tsx).
 
 Automated Shift Planning panel (frontend):
 - Timeframe: "Current week" and "Today" quick buttons; custom date pickers (DD.MM.YYYY) for start/end displayed inline with dash separator.
@@ -641,6 +688,8 @@ Endpoints
 - `POST /v1/state`
 - `POST /v1/solve`
 - `POST /v1/solve/week`
+- `POST /v1/solve/abort` (abort solver; `?force=true` kills subprocess immediately)
+- `GET /v1/solve/progress` (SSE stream for live solver updates; requires `?token=<jwt>`)
 - `GET /v1/ical/publish`
 - `POST /v1/ical/publish`
 - `POST /v1/ical/publish/rotate`
@@ -732,6 +781,7 @@ Codex CLI sandbox note (local dev)
 - Also avoid `nohup` in this environment; it can trigger permission errors.
 
 If a port is already in use
+- The backend has a startup check that errors if port 8000 is already in use, with a message like: "Port 8000 is already in use by another process."
 - Kill existing processes: `lsof -ti:8000 | xargs kill -9` and `lsof -ti:5173 | xargs kill -9`
 - Backend: pick another port, then set `VITE_API_URL` for the frontend:
 ```bash
@@ -789,6 +839,10 @@ Frontend
 - `src/components/schedule/AssignmentPill.tsx`
 - `src/components/schedule/VacationOverviewModal.tsx` (vacation planner, scrolls to today on open)
 - `src/components/schedule/WorkingHoursOverviewModal.tsx` (yearly working hours overview for all clinicians)
+- `src/components/schedule/SolverOverlay.tsx` (live solver progress overlay with chart and abort/apply)
+- `src/components/schedule/SolverDebugPanel.tsx` (debug info visualization after solve completes)
+- `src/components/schedule/SolverInfoModal.tsx` (solver info modal with history and settings)
+- `src/components/schedule/AutomatedPlanningPanel.tsx` (solver control panel with date range and strategy)
 - `src/api/client.ts`
 - `src/lib/shiftRows.ts` (weeklyTemplate normalization, colBand safeguards, legacy shiftRowId helpers)
 - `src/lib/schedule.ts` (rendered assignment map, time intervals, Rest Day pool logic)

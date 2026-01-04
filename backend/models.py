@@ -178,17 +178,6 @@ class UserStateExport(BaseModel):
     state: AppState
 
 
-class SolveDayRequest(BaseModel):
-    dateISO: str
-    only_fill_required: bool = False
-
-
-class SolveDayResponse(BaseModel):
-    dateISO: str
-    assignments: List[Assignment]
-    notes: List[str]
-
-
 class SolverSettings(BaseModel):
     enforceSameLocationPerDay: bool = True
     onCallRestEnabled: bool = False
@@ -212,6 +201,41 @@ class SolveWeekRequest(BaseModel):
     startISO: str
     endISO: Optional[str] = None
     only_fill_required: bool = False
+    timeout_seconds: Optional[float] = None  # None means use default (60s)
+
+
+class SolverDebugCheckpoint(BaseModel):
+    name: str
+    duration_ms: float
+
+
+class SolverDebugSolutionTime(BaseModel):
+    solution: int
+    time_ms: float
+    objective: float
+
+
+class SolverSubScores(BaseModel):
+    """Breakdown of the objective into individual components."""
+    slots_filled: int = 0  # Number of slots filled
+    slots_unfilled: int = 0  # Number of required slots not filled (slack)
+    total_assignments: int = 0  # Total assignments made
+    preference_score: int = 0  # Clinician section preferences satisfied
+    time_window_score: int = 0  # Preferred working hours satisfied
+    continuous_shift_score: int = 0  # Consecutive shift bonuses
+    hours_penalty: int = 0  # Working hours violations
+
+
+class SolverDebugInfo(BaseModel):
+    timing: Dict[str, Any]
+    solution_times: List[SolverDebugSolutionTime]
+    num_variables: int
+    num_days: int
+    num_slots: int
+    solver_status: str
+    cpu_workers_used: int
+    cpu_cores_available: int
+    sub_scores: Optional[SolverSubScores] = None
 
 
 class SolveWeekResponse(BaseModel):
@@ -219,6 +243,7 @@ class SolveWeekResponse(BaseModel):
     endISO: str
     assignments: List[Assignment]
     notes: List[str]
+    debugInfo: Optional[SolverDebugInfo] = None
 
 
 class IcalPublishRequest(BaseModel):
