@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buttonPrimary,
   buttonSecondary,
@@ -21,7 +21,8 @@ type AutomatedPlanningPanelProps = {
   error: string | null;
   timeoutSeconds: number;
   onRun: (args: { startISO: string; endISO: string; onlyFillRequired: boolean; timeoutSeconds: number }) => void;
-  onReset: (args: { startISO: string; endISO: string }) => void;
+  onResetSolver: (args: { startISO: string; endISO: string }) => void;
+  onResetAll: (args: { startISO: string; endISO: string }) => void;
   onOpenInfo: () => void;
 };
 
@@ -64,7 +65,8 @@ export default function AutomatedPlanningPanel({
   error,
   timeoutSeconds,
   onRun,
-  onReset,
+  onResetSolver,
+  onResetAll,
   onOpenInfo,
 }: AutomatedPlanningPanelProps) {
   const [startInput, setStartInput] = useState("");
@@ -72,6 +74,10 @@ export default function AutomatedPlanningPanel({
   const [hasTouched, setHasTouched] = useState(false);
   const [strategy, setStrategy] = useState<"fill" | "distribute">("fill");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [resetPanelOpen, setResetPanelOpen] = useState(false);
+  const [resetPanelAbove, setResetPanelAbove] = useState(false);
+  const resetButtonRef = useRef<HTMLButtonElement>(null);
+  const resetPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (hasTouched) return;
@@ -173,17 +179,46 @@ export default function AutomatedPlanningPanel({
     });
   };
 
-  const handleReset = () => {
+  // Close reset panel on click outside
+  useEffect(() => {
+    if (!resetPanelOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        resetPanelRef.current &&
+        !resetPanelRef.current.contains(e.target as Node) &&
+        resetButtonRef.current &&
+        !resetButtonRef.current.contains(e.target as Node)
+      ) {
+        setResetPanelOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [resetPanelOpen]);
+
+  const handleResetButtonClick = () => {
+    if (!resetPanelOpen && resetButtonRef.current) {
+      // Determine if panel should open above or below
+      const rect = resetButtonRef.current.getBoundingClientRect();
+      const panelHeight = 220; // Approximate panel height
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setResetPanelAbove(spaceBelow < panelHeight + 16);
+    }
+    setResetPanelOpen(!resetPanelOpen);
+  };
+
+  const handleResetSolverClick = () => {
     const range = parseRange();
     if (!range) return;
-    const label = `${formatEuropeanDate(range.startISO)} - ${formatEuropeanDate(
-      range.endISO,
-    )}`;
-    const confirmed = window.confirm(
-      `Reset assignments for ${label}?`,
-    );
-    if (!confirmed) return;
-    onReset({ startISO: range.startISO, endISO: range.endISO });
+    onResetSolver({ startISO: range.startISO, endISO: range.endISO });
+    setResetPanelOpen(false);
+  };
+
+  const handleResetAllClick = () => {
+    const range = parseRange();
+    if (!range) return;
+    onResetAll({ startISO: range.startISO, endISO: range.endISO });
+    setResetPanelOpen(false);
   };
 
   return (
@@ -285,15 +320,57 @@ export default function AutomatedPlanningPanel({
               </div>
             ) : null}
           </div>
-          <div className="flex sm:justify-end">
+          <div className="relative">
             <button
+              ref={resetButtonRef}
               type="button"
-              onClick={handleReset}
+              onClick={handleResetButtonClick}
               disabled={isRunning}
               className={buttonSecondary.base}
             >
               Reset
             </button>
+            {resetPanelOpen && (
+              <div
+                ref={resetPanelRef}
+                className={cx(
+                  "absolute right-0 z-50 w-72 rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900",
+                  resetPanelAbove ? "bottom-full mb-2" : "top-full mt-2",
+                )}
+              >
+                <div className="flex flex-col gap-3">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Reset Assignments
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetSolverClick}
+                    className="flex flex-col gap-1 rounded-lg border border-slate-200 p-3 text-left transition-colors hover:border-sky-300 hover:bg-sky-50 dark:border-slate-700 dark:hover:border-sky-600 dark:hover:bg-sky-900/30"
+                  >
+                    <span className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                      Reset Solver Only
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      Removes only assignments created by the automated planner.
+                      Your manually placed assignments will be kept.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetAllClick}
+                    className="flex flex-col gap-1 rounded-lg border border-slate-200 p-3 text-left transition-colors hover:border-rose-300 hover:bg-rose-50 dark:border-slate-700 dark:hover:border-rose-600 dark:hover:bg-rose-900/30"
+                  >
+                    <span className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                      Reset All
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      Removes all assignments in the selected timeframe,
+                      including both manual and solver-generated ones.
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

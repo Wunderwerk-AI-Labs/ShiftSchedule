@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cx } from "../../lib/classNames";
 import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 
@@ -82,12 +83,25 @@ export default function DatePickerPopover({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [viewDate, setViewDate] = useState(() => new Date(selectedDate));
   const [hoveredWeek, setHoveredWeek] = useState<Date | null>(null);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
   const today = new Date();
 
   // Update viewDate when selectedDate changes
   useEffect(() => {
     setViewDate(new Date(selectedDate));
   }, [selectedDate]);
+
+  // Calculate position based on anchor element
+  useEffect(() => {
+    if (!open || !anchorRef.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    const popoverWidth = 280;
+    // Position below the anchor, centered horizontally
+    setPosition({
+      top: rect.bottom + 8,
+      left: rect.left + rect.width / 2 - popoverWidth / 2,
+    });
+  }, [open, anchorRef]);
 
   // Close on click outside
   useEffect(() => {
@@ -139,11 +153,11 @@ export default function DatePickerPopover({
     onClose();
   };
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
-      className="absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-800"
-      style={{ minWidth: 280 }}
+      className="fixed z-[1000] rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+      style={{ minWidth: 280, top: position.top, left: position.left }}
     >
       {/* Header with month/year navigation */}
       <div className="mb-2 flex items-center justify-between">
@@ -255,6 +269,7 @@ export default function DatePickerPopover({
           This week
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

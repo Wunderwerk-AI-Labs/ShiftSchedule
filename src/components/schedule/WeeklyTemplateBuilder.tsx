@@ -11,6 +11,7 @@ import {
 import { cx } from "../../lib/classNames";
 import { DAY_TYPES, DAY_TYPE_LABELS } from "../../lib/dayTypes";
 import { DEFAULT_LOCATION_ID } from "../../lib/shiftRows";
+import { useConfirm } from "../ui/ConfirmDialog";
 import type {
   DayType,
   Location,
@@ -192,6 +193,8 @@ export default function WeeklyTemplateBuilder({
   onRemoveLocation,
   onReorderLocations,
 }: WeeklyTemplateBuilderProps) {
+  const confirm = useConfirm();
+
   // Track previous locations for logging (using ref to avoid dependency issues)
   const prevLocationsRef = useRef<WeeklyTemplateLocation[]>(template.locations ?? []);
   useEffect(() => {
@@ -685,12 +688,14 @@ export default function WeeklyTemplateBuilder({
     updateBlocks((prev) => [...prev, nextBlock]);
   };
 
-  const handleDeleteBlock = (blockId: string) => {
-    if (
-      !window.confirm(
-        "Delete this block? Any placed slots using it will be removed from the grid.",
-      )
-    ) {
+  const handleDeleteBlock = async (blockId: string) => {
+    const confirmed = await confirm({
+      title: "Delete Block",
+      message: "Delete this block? Any placed slots using it will be removed from the grid.",
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
+    if (!confirmed) {
       return;
     }
     const block = blockById.get(blockId);
@@ -1514,20 +1519,21 @@ export default function WeeklyTemplateBuilder({
                       />
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           if (locations.length <= 1) {
                             window.alert("At least one location is required.");
                             return;
                           }
                           setPendingDeleteLocationId(location.id);
-                          window.setTimeout(() => {
-                            const confirmed = window.confirm(
-                              "Delete this location and all of its rows/slots?",
-                            );
-                            setPendingDeleteLocationId(null);
-                            if (!confirmed) return;
-                            onRemoveLocation(location.id);
-                          }, 0);
+                          const confirmed = await confirm({
+                            title: "Delete Location",
+                            message: "Delete this location and all of its rows/slots?",
+                            confirmLabel: "Delete",
+                            variant: "danger",
+                          });
+                          setPendingDeleteLocationId(null);
+                          if (!confirmed) return;
+                          onRemoveLocation(location.id);
                         }}
                         onMouseEnter={() =>
                           setHoveredDeleteLocationId(location.id)
@@ -1579,17 +1585,18 @@ export default function WeeklyTemplateBuilder({
                           <div className="absolute left-0 top-0 bottom-0 z-20 flex items-center justify-center">
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={async () => {
                                 const hasSlots = templateLocation.slots.some(
                                   (slot) => slot.rowBandId === band.id,
                                 );
-                                if (
-                                  hasSlots &&
-                                  !window.confirm(
-                                    "Delete this row? Any slots in this row will be removed.",
-                                  )
-                                ) {
-                                  return;
+                                if (hasSlots) {
+                                  const confirmed = await confirm({
+                                    title: "Delete Row",
+                                    message: "Delete this row? Any slots in this row will be removed.",
+                                    confirmLabel: "Delete",
+                                    variant: "danger",
+                                  });
+                                  if (!confirmed) return;
                                 }
                                 handleDeleteRowBand(location.id, band.id);
                               }}
@@ -1762,7 +1769,7 @@ export default function WeeklyTemplateBuilder({
                                           : prev,
                                       )
                                     }
-                                    onClick={(event) => {
+                                    onClick={async (event) => {
                                       event.stopPropagation();
                                       const dayBands =
                                         headerColBandsByDay.get(dayType) ?? [];
@@ -1784,14 +1791,15 @@ export default function WeeklyTemplateBuilder({
                                         dayType,
                                         index: colIndex,
                                       });
-                                      window.setTimeout(() => {
-                                        const confirmed = window.confirm(
-                                          "Delete this column? Any slots in this column will be removed.",
-                                        );
-                                        setPendingDeleteColumn(null);
-                                        if (!confirmed) return;
-                                        handleDeleteColBand(dayType, colIndex);
-                                      }, 0);
+                                      const confirmed = await confirm({
+                                        title: "Delete Column",
+                                        message: "Delete this column? Any slots in this column will be removed.",
+                                        confirmLabel: "Delete",
+                                        variant: "danger",
+                                      });
+                                      setPendingDeleteColumn(null);
+                                      if (!confirmed) return;
+                                      handleDeleteColBand(dayType, colIndex);
                                     }}
                                   >
                                     Delete Column
@@ -1929,7 +1937,7 @@ export default function WeeklyTemplateBuilder({
                                   isColumnHovered ? "opacity-100" : "opacity-0",
                                 )}
                                 data-testid={`delete-column-${dayType}-${colIndex}`}
-                                onClick={(event) => {
+                                onClick={async (event) => {
                                   event.stopPropagation();
                                   const dayBands =
                                     headerColBandsByDay.get(dayType) ?? [];
@@ -1951,14 +1959,15 @@ export default function WeeklyTemplateBuilder({
                                     dayType,
                                     index: colIndex,
                                   });
-                                  window.setTimeout(() => {
-                                    const confirmed = window.confirm(
-                                      "Delete this column? Any slots in this column will be removed.",
-                                    );
-                                    setPendingDeleteColumn(null);
-                                    if (!confirmed) return;
-                                    handleDeleteColBand(dayType, colIndex);
-                                  }, 0);
+                                  const confirmed = await confirm({
+                                    title: "Delete Column",
+                                    message: "Delete this column? Any slots in this column will be removed.",
+                                    confirmLabel: "Delete",
+                                    variant: "danger",
+                                  });
+                                  setPendingDeleteColumn(null);
+                                  if (!confirmed) return;
+                                  handleDeleteColBand(dayType, colIndex);
                                 }}
                               >
                                 Delete Column

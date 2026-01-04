@@ -53,6 +53,7 @@ type ScheduleGridProps = {
   }) => void;
   separatorBeforeRowIds?: string[];
   locationSeparatorRowIds?: string[];
+  locationColumnTimeMetaByKey?: Map<string, { label?: string; mixed: boolean }>;
   minSlotsByRowId?: Record<string, { weekday: number; weekend: number }>;
   slotOverridesByKey?: Record<string, number>;
   onRemoveEmptySlot?: (args: { rowId: string; dateISO: string }) => void;
@@ -91,6 +92,7 @@ export default function ScheduleGrid({
   onMoveWithinDay,
   separatorBeforeRowIds = [],
   locationSeparatorRowIds = [],
+  locationColumnTimeMetaByKey,
   minSlotsByRowId = {},
   slotOverridesByKey = {},
   onRemoveEmptySlot,
@@ -614,7 +616,6 @@ export default function ScheduleGrid({
                     !!dragState.dragging && dragState.dragging.dateISO !== dateISO;
                   const isActiveDay =
                     !!dragState.dragging && dragState.dragging.dateISO === dateISO;
-                  const timeLabel = column.columnTimeLabel;
                   return (
                     <div
                       key={`time-${dateISO}-${column.colOrder}-${index}`}
@@ -635,9 +636,7 @@ export default function ScheduleGrid({
                         top: dayHeaderHeight,
                         borderRightStyle: isDayDivider ? "solid" : "dashed",
                       }}
-                    >
-                      {timeLabel ?? ""}
-                    </div>
+                    />
                   );
                 })}
 
@@ -653,7 +652,15 @@ export default function ScheduleGrid({
                   const hasNextSubShift = false;
                   return (
                     <Fragment key={row.id}>
-                      {showLocationSeparator ? <LocationSeparatorRow /> : null}
+                      {showLocationSeparator ? (
+                        <LocationSeparatorRow
+                          columns={columns}
+                          locationId={row.locationId}
+                          locationColumnTimeMetaByKey={locationColumnTimeMetaByKey}
+                          holidayDates={holidayDates}
+                          holidayNameByDate={holidayNameByDate}
+                        />
+                      ) : null}
                       {showSeparator ? <SeparatorRow /> : null}
                       <RowSection
                         row={row}
@@ -1647,11 +1654,89 @@ function SeparatorRow() {
   );
 }
 
-function LocationSeparatorRow() {
+function LocationSeparatorRow({
+  columns,
+  locationId,
+  locationColumnTimeMetaByKey,
+  holidayDates,
+  holidayNameByDate,
+}: {
+  columns: {
+    date: Date;
+    dateISO: string;
+    dayType: string;
+    colOrder: number;
+    isFirstInDay: boolean;
+    dayIndex: number;
+    columnIndex: number;
+    columnTimeLabel?: string;
+    columnHasMixedTimes?: boolean;
+  }[];
+  locationId?: string;
+  locationColumnTimeMetaByKey?: Map<string, { label?: string; mixed: boolean }>;
+  holidayDates?: Set<string>;
+  holidayNameByDate?: Record<string, string>;
+}) {
+  // Check if any column has a location-specific time label for this location
+  const hasAnyTimeLabel =
+    locationId &&
+    locationColumnTimeMetaByKey &&
+    columns.some((col) => {
+      const key = `${locationId}__${col.dayType}-${col.colOrder}`;
+      const meta = locationColumnTimeMetaByKey.get(key);
+      return meta?.label && !meta.mixed;
+    });
+
+  // If no time labels to show, just render the simple separator line
+  if (!hasAnyTimeLabel) {
+    return (
+      <div
+        className="row h-0 border-t-2 border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
+        style={{ gridColumn: "1 / -1" }}
+      />
+    );
+  }
+
+  // Render a row with time labels for each column
   return (
-    <div
-      className="row h-0 border-t-2 border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
-      style={{ gridColumn: "1 / -1" }}
-    />
+    <>
+      {/* Left header cell - empty */}
+      <div className="row border-t-2 border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900" />
+      {/* Time label cells for each column */}
+      {columns.map((column, index) => {
+        const key = locationId
+          ? `${locationId}__${column.dayType}-${column.colOrder}`
+          : "";
+        const meta = locationColumnTimeMetaByKey?.get(key);
+        const timeLabel = meta?.label && !meta.mixed ? meta.label : "";
+        const isLastCol = index === columns.length - 1;
+        const nextColumn = columns[index + 1];
+        const isDayDivider = !isLastCol && nextColumn?.dateISO !== column.dateISO;
+        const holidayName = holidayNameByDate?.[column.dateISO];
+        const isHoliday =
+          Boolean(holidayName) || (holidayDates?.has(column.dateISO) ?? false);
+        const isWeekend = column.date.getDay() === 0 || column.date.getDay() === 6;
+
+        return (
+          <div
+            key={`loc-time-${column.dateISO}-${column.colOrder}-${index}`}
+            className={cx(
+              "row border-t-2 border-r-2 border-slate-300 px-1 py-0.5 text-center text-[8px] font-medium text-slate-400 dark:border-slate-700",
+              isHoliday
+                ? "bg-[#F3E8FF] dark:bg-slate-800"
+                : isWeekend
+                  ? "bg-[#F3F4F6] dark:bg-slate-800"
+                  : "bg-slate-50 dark:bg-slate-900",
+              { "border-r-0": isLastCol },
+            )}
+            style={{
+              borderRightStyle: isDayDivider ? "solid" : "dashed",
+            }}
+          >
+            {timeLabel}
+          </div>
+        );
+      })}
+    </>
   );
 }

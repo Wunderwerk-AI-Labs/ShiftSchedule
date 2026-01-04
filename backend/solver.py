@@ -34,6 +34,9 @@ DEBUG_SOLVER = os.getenv("DEBUG_SOLVER", "").lower() == "true"
 # Number of CPU cores to use for solver (leave 2 free for system responsiveness)
 SOLVER_NUM_WORKERS = max(1, multiprocessing.cpu_count() - 2)
 
+# Heartbeat timeout: if no heartbeat received for this long, subprocess terminates itself
+SUBPROCESS_HEARTBEAT_TIMEOUT_SECONDS = 10.0
+
 
 def _cleanup_solver_process():
     """Aggressively cleanup any running solver subprocess."""
@@ -57,6 +60,44 @@ def _cleanup_solver_process():
 
 # Register cleanup on process exit
 atexit.register(_cleanup_solver_process)
+
+
+def _cleanup_orphaned_solver_processes():
+    """
+    Clean up any orphaned solver subprocesses from previous runs.
+    Called on backend startup to ensure no stale processes are running.
+    """
+    import subprocess
+    import sys
+
+    try:
+        # Find processes that match our solver subprocess pattern
+        # On macOS/Linux, look for python processes with _solver_subprocess_worker
+        if sys.platform == "darwin" or sys.platform.startswith("linux"):
+            # Use pgrep to find python processes, then filter by command line
+            result = subprocess.run(
+                ["pgrep", "-f", "_solver_subprocess_worker"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                pids = result.stdout.strip().split("\n")
+                current_pid = os.getpid()
+                for pid_str in pids:
+                    try:
+                        pid = int(pid_str.strip())
+                        # Don't kill ourselves
+                        if pid != current_pid:
+                            print(f"[solver] Killing orphaned solver subprocess: {pid}")
+                            os.kill(pid, signal.SIGKILL)
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        pass
+    except Exception as e:
+        print(f"[solver] Error cleaning up orphaned processes: {e}")
+
+
+# Clean up orphans on module load (backend startup)
+_cleanup_orphaned_solver_processes()
 
 
 class SolverTimer:
@@ -178,11 +219,53 @@ def _solver_subprocess_worker(
     payload_dict: dict,
     progress_queue: multiprocessing.Queue,
     cancel_event: multiprocessing.Event,
+    heartbeat_value: multiprocessing.Value,
+    start_time: float,
 ):
     """
     Worker function that runs in a subprocess.
     Performs the actual CP-SAT solving and sends progress via queue.
+
+    The heartbeat_value is a shared counter that the parent process increments.
+    If it doesn't change for SUBPROCESS_HEARTBEAT_TIMEOUT_SECONDS, we assume
+    the parent is gone (e.g., browser tab closed) and terminate ourselves.
+
+    start_time is the timestamp when the solve request started (for accurate timeout).
     """
+    import sys
+
+    # Set up signal handlers for graceful termination
+    def signal_handler(signum, frame):
+        print(f"[solver subprocess] Received signal {signum}, setting cancel event", file=sys.stderr)
+        cancel_event.set()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Start a watchdog thread to monitor heartbeat
+    last_heartbeat = heartbeat_value.value
+    last_heartbeat_time = time.time()
+    watchdog_stop = threading.Event()
+
+    def heartbeat_watchdog():
+        nonlocal last_heartbeat, last_heartbeat_time
+        while not watchdog_stop.is_set():
+            current_heartbeat = heartbeat_value.value
+            if current_heartbeat != last_heartbeat:
+                last_heartbeat = current_heartbeat
+                last_heartbeat_time = time.time()
+            elif time.time() - last_heartbeat_time > SUBPROCESS_HEARTBEAT_TIMEOUT_SECONDS:
+                # Parent is gone, terminate ourselves
+                print("[solver subprocess] Heartbeat timeout - parent process gone, terminating", file=sys.stderr)
+                cancel_event.set()
+                # Give a moment for graceful shutdown, then force exit
+                time.sleep(0.5)
+                os._exit(1)
+            time.sleep(1.0)
+
+    watchdog_thread = threading.Thread(target=heartbeat_watchdog, daemon=True)
+    watchdog_thread.start()
+
     try:
         # Reconstruct payload from dict
         payload = SolveWeekRequest(**payload_dict)
@@ -201,13 +284,15 @@ def _solver_subprocess_worker(
             except:
                 pass  # Queue full, skip
 
-        result = _solve_week_impl_subprocess(payload, mock_user, cancel_event, on_progress)
+        result = _solve_week_impl_subprocess(payload, mock_user, cancel_event, on_progress, start_time)
 
         # Send result
         progress_queue.put({"type": "result", "data": result})
     except Exception as e:
         import traceback
         progress_queue.put({"type": "error", "error": str(e), "traceback": traceback.format_exc()})
+    finally:
+        watchdog_stop.set()
 
 
 def _broadcast_solver_progress(event_type: str, data: dict):
@@ -300,10 +385,17 @@ async def solver_progress_stream(token: str = Query(...)):
     )
 
 
-PREFERRED_WINDOW_WEIGHT = 5
 WORKING_HOURS_BLOCK_MINUTES = 15
-WORKING_HOURS_PENALTY_WEIGHT = 1
-CONTINUOUS_SHIFT_WEIGHT = 3
+
+# Default weights (used if not configured in solver_settings)
+DEFAULT_WEIGHT_COVERAGE = 1000
+DEFAULT_WEIGHT_SLACK = 1000
+DEFAULT_WEIGHT_TOTAL_ASSIGNMENTS = 100
+DEFAULT_WEIGHT_SLOT_PRIORITY = 10
+DEFAULT_WEIGHT_TIME_WINDOW = 5
+DEFAULT_WEIGHT_CONTINUOUS_SHIFTS = 3
+DEFAULT_WEIGHT_SECTION_PREFERENCE = 1
+DEFAULT_WEIGHT_WORKING_HOURS = 1
 
 
 def _get_day_type(date_iso: str, holidays: List[Holiday]) -> str:
@@ -449,6 +541,9 @@ def _collect_slot_contexts(state) -> List[Dict[str, Any]]:
 def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_get_current_user)):
     global _solver_is_running, _solver_process
 
+    # Capture start time BEFORE anything else - this is used for accurate timeout calculation
+    request_start_time = time.time()
+
     # Set solver running flag and clear any previous cancel event
     with _solver_running_lock:
         _solver_is_running = True
@@ -464,8 +559,9 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
     # Create multiprocessing primitives
     progress_queue = _mp_context.Queue(maxsize=1000)
     cancel_event = _mp_context.Event()
+    heartbeat_value = _mp_context.Value('i', 0)  # Shared integer for heartbeat
 
-    # Spawn subprocess
+    # Spawn subprocess - pass start_time for accurate timeout calculation
     _solver_process = _mp_context.Process(
         target=_solver_subprocess_worker,
         args=(
@@ -473,6 +569,8 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
             payload.model_dump(),
             progress_queue,
             cancel_event,
+            heartbeat_value,
+            request_start_time,
         ),
     )
     _solver_process.start()
@@ -480,10 +578,15 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
     result = None
     error = None
     last_solution_assignments = None  # Track last known good solution
+    heartbeat_counter = 0
 
     try:
         # Monitor the subprocess and relay progress to SSE
         while True:
+            # Send heartbeat to subprocess so it knows parent is alive
+            heartbeat_counter += 1
+            heartbeat_value.value = heartbeat_counter
+
             # Check if abort was requested
             if _solver_cancel_event.is_set():
                 cancel_event.set()
@@ -534,6 +637,7 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
                 "startISO": payload.startISO,
                 "endISO": payload.endISO,
                 "assignments": last_solution_assignments,
+                "notes": ["Solver was aborted - using last available solution"],
             }
 
         if result is None:
@@ -575,16 +679,20 @@ def _solve_week_impl_subprocess(
     current_user,
     cancel_event,
     on_progress,
+    start_time: float = None,
 ) -> dict:
     """
     Subprocess-compatible implementation of solve_week.
     Returns a dict that can be serialized and sent back to main process.
+
+    start_time: The timestamp when the solve request started (for accurate timeout).
     """
     result = _solve_week_impl(
         payload,
         current_user,
         cancel_event=cancel_event,
         on_progress=on_progress,
+        start_time=start_time,
     )
     # Convert to dict for serialization
     return result.model_dump()
@@ -595,6 +703,7 @@ def _solve_week_impl(
     current_user,
     cancel_event=None,
     on_progress=None,
+    start_time: float = None,
 ):
     """Internal implementation of solve_week.
 
@@ -603,6 +712,8 @@ def _solve_week_impl(
         current_user: User object (must have .username attribute)
         cancel_event: Optional event to check for cancellation (defaults to global)
         on_progress: Optional callback(event_type, data) for progress updates (defaults to SSE broadcast)
+        start_time: The timestamp when the solve request started (for accurate timeout).
+                   If None, uses current time (less accurate for subprocess calls).
     """
     # Use defaults if not provided
     if cancel_event is None:
@@ -610,6 +721,8 @@ def _solve_week_impl(
     if on_progress is None:
         on_progress = _broadcast_solver_progress
 
+    # Use provided start_time for accurate timeout calculation, or current time as fallback
+    actual_start_time = start_time if start_time is not None else time.time()
     timer = SolverTimer()
 
     # Broadcast phase progress for UI feedback
@@ -1226,26 +1339,36 @@ def _solve_week_impl(
     # Total assignments - used to maximize distribution when not only_fill_required
     total_assignments = sum(var for var in var_map.values())
 
+    # Get configurable weights from solver_settings (with defaults)
+    w_coverage = getattr(solver_settings, 'weightCoverage', None) or DEFAULT_WEIGHT_COVERAGE
+    w_slack = getattr(solver_settings, 'weightSlack', None) or DEFAULT_WEIGHT_SLACK
+    w_total_assignments = getattr(solver_settings, 'weightTotalAssignments', None) or DEFAULT_WEIGHT_TOTAL_ASSIGNMENTS
+    w_slot_priority = getattr(solver_settings, 'weightSlotPriority', None) or DEFAULT_WEIGHT_SLOT_PRIORITY
+    w_time_window = getattr(solver_settings, 'weightTimeWindow', None) or DEFAULT_WEIGHT_TIME_WINDOW
+    w_continuous = getattr(solver_settings, 'weightContinuousShifts', None) or DEFAULT_WEIGHT_CONTINUOUS_SHIFTS
+    w_section_pref = getattr(solver_settings, 'weightSectionPreference', None) or DEFAULT_WEIGHT_SECTION_PREFERENCE
+    w_working_hours = getattr(solver_settings, 'weightWorkingHours', None) or DEFAULT_WEIGHT_WORKING_HOURS
+
     if payload.only_fill_required:
         model.Minimize(
-            -total_coverage * 1000
-            + total_slack * 1000
-            - total_preference
-            - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
-            - total_continuous * CONTINUOUS_SHIFT_WEIGHT
-            + total_hours_penalty * WORKING_HOURS_PENALTY_WEIGHT
+            -total_coverage * w_coverage
+            + total_slack * w_slack
+            - total_preference * w_section_pref
+            - total_time_window_preference * w_time_window
+            - total_continuous * w_continuous
+            + total_hours_penalty * w_working_hours
         )
     else:
         # When distributing all people, maximize total assignments
         model.Minimize(
-            -total_coverage * 1000
-            + total_slack * 1000
-            - total_assignments * 100  # Strong incentive to assign everyone
-            - total_priority * 10
-            - total_preference
-            - total_time_window_preference * PREFERRED_WINDOW_WEIGHT
-            - total_continuous * CONTINUOUS_SHIFT_WEIGHT
-            + total_hours_penalty * WORKING_HOURS_PENALTY_WEIGHT
+            -total_coverage * w_coverage
+            + total_slack * w_slack
+            - total_assignments * w_total_assignments
+            - total_priority * w_slot_priority
+            - total_preference * w_section_pref
+            - total_time_window_preference * w_time_window
+            - total_continuous * w_continuous
+            + total_hours_penalty * w_working_hours
         )
     timer.checkpoint("objective_setup")
 
@@ -1278,6 +1401,7 @@ def _solve_week_impl(
                         "rowId": row_id,
                         "dateISO": date_iso,
                         "clinicianId": clinician_id,
+                        "source": "solver",
                     })
             self.last_assignments = current_assignments
 
@@ -1298,9 +1422,10 @@ def _solve_week_impl(
 
     solver = cp_model.CpSolver()
     total_timeout_seconds = payload.timeout_seconds if payload.timeout_seconds is not None else 60.0
-    # Subtract preparation time from total budget to get remaining time for actual solving
-    prep_time_seconds = timer.total_ms() / 1000.0
-    remaining_timeout = max(1.0, total_timeout_seconds - prep_time_seconds)  # At least 1 second
+    # Calculate elapsed time since the request started (includes subprocess spawn + all preparation)
+    elapsed_since_start = time.time() - actual_start_time
+    # Subtract elapsed time from total budget to get remaining time for actual solving
+    remaining_timeout = max(1.0, total_timeout_seconds - elapsed_since_start)  # At least 1 second
     solver.parameters.max_time_in_seconds = remaining_timeout
     solver.parameters.num_search_workers = SOLVER_NUM_WORKERS
     result = solver.SolveWithSolutionCallback(model, solution_callback)
@@ -1346,7 +1471,8 @@ def _solve_week_impl(
 
         # Try to provide more specific infeasibility info
         diagnostics.append(f"Solver status: {solver.StatusName(result)}")
-        diagnostics.append(f"Total time: {timer.total_ms():.0f}ms (budget: {total_timeout_seconds}s, solver limit: {remaining_timeout:.1f}s)")
+        total_elapsed = time.time() - actual_start_time
+        diagnostics.append(f"Total time: {total_elapsed:.1f}s (budget: {total_timeout_seconds}s, prep: {elapsed_since_start:.1f}s, solver limit: {remaining_timeout:.1f}s)")
         if result == cp_model.UNKNOWN:
             diagnostics.append("Solver timed out. Problem may be too large or have complex constraints.")
 
@@ -1424,6 +1550,7 @@ def _solve_week_impl(
                     rowId=row_id,
                     dateISO=date_iso,
                     clinicianId=clinician_id,
+                    source="solver",
                 )
             )
 

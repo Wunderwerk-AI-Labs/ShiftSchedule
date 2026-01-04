@@ -66,20 +66,44 @@ function getSlotDurationMinutes(row: ScheduleRow): number {
 /**
  * Calculate live solver statistics from the current solution.
  *
- * @param assignments - Current solution's assignments
+ * @param solverAssignments - Current solution's assignments from the solver
  * @param scheduleRows - Schedule row definitions (with requiredSlots, startTime, endTime, dayType)
  * @param clinicians - Clinician data (for working hours calculation)
  * @param solveRange - The date range being solved
  * @param holidays - Set of holiday date ISOs
+ * @param existingAssignments - Existing (manual) assignments in the solve range (optional)
  * @returns Statistics about the current solution
  */
 export function calculateSolverLiveStats(
-  assignments: Assignment[],
+  solverAssignments: Assignment[],
   scheduleRows: ScheduleRow[],
   clinicians: Clinician[],
   solveRange: { startISO: string; endISO: string },
   holidays: Set<string>,
+  existingAssignments: Assignment[] = [],
 ): SolverLiveStats {
+  // Merge existing assignments with solver assignments
+  // Use a Set to deduplicate by unique key (rowId|dateISO|clinicianId)
+  const seenKeys = new Set<string>();
+  const assignments: Assignment[] = [];
+
+  // Add solver assignments first (they take precedence)
+  for (const a of solverAssignments) {
+    const key = `${a.rowId}|${a.dateISO}|${a.clinicianId}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      assignments.push(a);
+    }
+  }
+
+  // Add existing assignments that don't conflict with solver assignments
+  for (const a of existingAssignments) {
+    const key = `${a.rowId}|${a.dateISO}|${a.clinicianId}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      assignments.push(a);
+    }
+  }
   // Get all dates in the solve range
   const dates = getDatesInRange(solveRange.startISO, solveRange.endISO);
 

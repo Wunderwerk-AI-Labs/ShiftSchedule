@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getPillToggleClasses } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import type { IcalPublishStatus } from "../../api/client";
+import { useConfirm } from "../ui/ConfirmDialog";
 import CustomNumberInput from "./CustomNumberInput";
 import CustomDatePicker from "./CustomDatePicker";
 
@@ -66,6 +67,7 @@ export default function IcalExportModal({
   onWebRotate,
   onWebUnpublish,
 }: IcalExportModalProps) {
+  const confirm = useConfirm();
   const [startText, setStartText] = useState<string>("");
   const [endText, setEndText] = useState<string>("");
   const [tab, setTab] = useState<"pdf" | "ical" | "web">("pdf");
@@ -487,12 +489,15 @@ export default function IcalExportModal({
                     type="button"
                     role="switch"
                     aria-checked={isWebPublished}
-                    onClick={() => {
+                    onClick={async () => {
                       if (webLoading) return;
                       if (isWebPublished) {
-                        const ok = window.confirm(
-                          "Disable this link? The public page will stop working.",
-                        );
+                        const ok = await confirm({
+                          title: "Disable Link",
+                          message: "Disable this link? The public page will stop working.",
+                          confirmLabel: "Disable",
+                          variant: "warning",
+                        });
                         if (!ok) return;
                         onWebUnpublish();
                         return;
@@ -524,11 +529,14 @@ export default function IcalExportModal({
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       if (!isWebPublished) return;
-                      const ok = window.confirm(
-                        "Refresh the link? The old link will stop working.",
-                      );
+                      const ok = await confirm({
+                        title: "Refresh Link",
+                        message: "Refresh the link? The old link will stop working.",
+                        confirmLabel: "Refresh",
+                        variant: "warning",
+                      });
                       if (!ok) return;
                       onWebRotate();
                     }}
@@ -647,12 +655,15 @@ export default function IcalExportModal({
                       type="button"
                       role="switch"
                       aria-checked={isPublished}
-                      onClick={() => {
+                      onClick={async () => {
                         if (publishLoading) return;
                         if (isPublished) {
-                          const ok = window.confirm(
-                            "Disable these links? Existing subscription links will stop working.",
-                          );
+                          const ok = await confirm({
+                            title: "Disable Links",
+                            message: "Disable these links? Existing subscription links will stop working.",
+                            confirmLabel: "Disable",
+                            variant: "warning",
+                          });
                           if (!ok) return;
                           onUnpublish();
                           return;
@@ -684,11 +695,14 @@ export default function IcalExportModal({
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (!isPublished) return;
-                        const ok = window.confirm(
-                          "Refresh the links? Old links will stop working.",
-                        );
+                        const ok = await confirm({
+                          title: "Refresh Links",
+                          message: "Refresh the links? Old links will stop working.",
+                          confirmLabel: "Refresh",
+                          variant: "warning",
+                        });
                         if (!ok) return;
                         onRotate();
                       }}

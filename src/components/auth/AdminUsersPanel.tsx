@@ -10,6 +10,7 @@ import {
   type UserStateExport,
 } from "../../api/client";
 import { cx } from "../../lib/classNames";
+import { useConfirm } from "../ui/ConfirmDialog";
 
 type AdminUsersPanelProps = {
   isAdmin: boolean;
@@ -18,6 +19,7 @@ type AdminUsersPanelProps = {
 export default function AdminUsersPanel({
   isAdmin,
 }: AdminUsersPanelProps) {
+  const confirm = useConfirm();
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,9 +114,12 @@ export default function AdminUsersPanel({
   };
 
   const handleDelete = async (user: AuthUser) => {
-    const confirmDelete = window.confirm(
-      `Delete user "${user.username}"? This also removes their saved schedule.`,
-    );
+    const confirmDelete = await confirm({
+      title: "Delete User",
+      message: `Delete user "${user.username}"? This also removes their saved schedule.`,
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
     if (!confirmDelete) return;
     setError(null);
     setDeletingUser(user.username);

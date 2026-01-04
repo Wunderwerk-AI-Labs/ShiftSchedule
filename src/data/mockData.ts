@@ -26,11 +26,14 @@ export type SubShift = {
   hours?: number;
 };
 
+export type AssignmentSource = "manual" | "solver";
+
 export type Assignment = {
   id: string;
   rowId: string;
   dateISO: string; // YYYY-MM-DD
   clinicianId: string;
+  source?: AssignmentSource; // "manual" (default) or "solver" - tracks how assignment was created
 };
 
 export type VacationPeriod = {
@@ -106,6 +109,15 @@ export const defaultSolverSettings = {
   onCallRestDaysBefore: 1,
   onCallRestDaysAfter: 1,
   preferContinuousShifts: true,
+  // Optimization weights
+  weightCoverage: 1000,
+  weightSlack: 1000,
+  weightTotalAssignments: 100,
+  weightSlotPriority: 10,
+  weightTimeWindow: 5,
+  weightContinuousShifts: 3,
+  weightSectionPreference: 1,
+  weightWorkingHours: 1,
 };
 
 export const defaultSolverRules: Array<{

@@ -60,11 +60,14 @@ export type Clinician = {
   workingHoursToleranceHours?: number;
 };
 
+export type AssignmentSource = "manual" | "solver";
+
 export type Assignment = {
   id: string;
   rowId: string;
   dateISO: string;
   clinicianId: string;
+  source?: AssignmentSource; // "manual" (default) or "solver" - tracks how assignment was created
 };
 
 export type MinSlots = { weekday: number; weekend: number };
@@ -132,6 +135,15 @@ export type SolverSettings = {
   onCallRestDaysBefore: number;
   onCallRestDaysAfter: number;
   preferContinuousShifts: boolean;
+  // Optimization weights (soft constraints)
+  weightCoverage?: number; // Fill required slots (default: 1000)
+  weightSlack?: number; // Minimize unfilled required slots (default: 1000)
+  weightTotalAssignments?: number; // Maximize total assignments (default: 100)
+  weightSlotPriority?: number; // Prefer slots in template order (default: 10)
+  weightTimeWindow?: number; // Respect preferred working time windows (default: 5)
+  weightContinuousShifts?: number; // Group consecutive shifts (default: 3)
+  weightSectionPreference?: number; // Assign to preferred sections (default: 1)
+  weightWorkingHours?: number; // Stay within target working hours (default: 1)
 };
 
 export type SolverRule = {

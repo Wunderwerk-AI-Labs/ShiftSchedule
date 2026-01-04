@@ -1,8 +1,68 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import type { SolverDebugInfo } from "../../api/client";
+import type { SolverDebugInfo, SolverDebugSolutionTime, SolverSettings } from "../../api/client";
 import { cx } from "../../lib/classNames";
 import SolverDebugPanel from "./SolverDebugPanel";
+import type { StatsHistoryEntry } from "./SolverOverlay";
+
+// Default weights for the solver optimization
+const DEFAULT_WEIGHTS = {
+  weightCoverage: 1000,
+  weightSlack: 1000,
+  weightTotalAssignments: 100,
+  weightSlotPriority: 10,
+  weightTimeWindow: 5,
+  weightContinuousShifts: 3,
+  weightSectionPreference: 1,
+  weightWorkingHours: 1,
+};
+
+type WeightKey = keyof typeof DEFAULT_WEIGHTS;
+
+const WEIGHT_LABELS: Record<WeightKey, { label: string; description: string; tooltip: string; distributeOnly?: boolean }> = {
+  weightCoverage: {
+    label: "Coverage",
+    description: "Fill required slots",
+    tooltip: "Ensures every shift that needs someone gets at least one person assigned. Higher values make filling empty shifts the top priority.",
+  },
+  weightSlack: {
+    label: "Slack",
+    description: "Minimize unfilled slots",
+    tooltip: "When a shift needs multiple people (e.g., 3 required), this pushes to fill all positions, not just the first one.",
+  },
+  weightTotalAssignments: {
+    label: "Total Assignments",
+    description: "Distribute All only",
+    tooltip: "Tries to give everyone work. Only active when using 'Distribute All' mode - ignored when filling required slots only.",
+    distributeOnly: true,
+  },
+  weightSlotPriority: {
+    label: "Slot Priority",
+    description: "Distribute All only",
+    tooltip: "Fills shifts in the order they appear in your template. Only active when using 'Distribute All' mode.",
+    distributeOnly: true,
+  },
+  weightTimeWindow: {
+    label: "Time Window",
+    description: "Respect preferred times",
+    tooltip: "Considers each person's preferred working hours. Higher values mean the planner tries harder to match people with their preferred time slots.",
+  },
+  weightContinuousShifts: {
+    label: "Continuous Shifts",
+    description: "Group consecutive shifts",
+    tooltip: "Avoids gaps in someone's day. If a person works morning and afternoon, this prefers they work continuously rather than having a break in between.",
+  },
+  weightSectionPreference: {
+    label: "Section Preference",
+    description: "Prefer assigned sections",
+    tooltip: "Assigns people to sections they've marked as preferred. Higher values mean preferences are respected more strongly.",
+  },
+  weightWorkingHours: {
+    label: "Working Hours",
+    description: "Balance weekly hours",
+    tooltip: "Tries to match each person's target weekly hours. Prevents overworking or underworking relative to their contract.",
+  },
+};
 
 export type SolverHistoryEntry = {
   id: string;
@@ -13,6 +73,7 @@ export type SolverHistoryEntry = {
   status: "success" | "aborted" | "error";
   notes: string[];
   debugInfo?: SolverDebugInfo;
+  statsHistory?: StatsHistoryEntry[]; // Stats for each solution found
 };
 
 type SolverInfoModalProps = {
@@ -21,6 +82,8 @@ type SolverInfoModalProps = {
   history: SolverHistoryEntry[];
   timeoutSeconds: number;
   onTimeoutChange: (seconds: number) => void;
+  solverSettings?: SolverSettings;
+  onSolverSettingsChange?: (settings: Partial<SolverSettings>) => void;
 };
 
 
@@ -109,6 +172,275 @@ function BackIcon({ className }: { className?: string }) {
   );
 }
 
+// Card wrapper for dashboard panels
+function DashboardCard({
+  title,
+  children,
+  className = "",
+  accentColor,
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+  accentColor?: string;
+}) {
+  return (
+    <div
+      className={`flex flex-col rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800 ${className}`}
+    >
+      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-700">
+        {accentColor && (
+          <div
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: accentColor }}
+          />
+        )}
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+          {title}
+        </h3>
+      </div>
+      <div className="flex flex-1 items-center justify-center p-4">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Historical solution chart - similar to LiveSolutionChart but for completed runs
+function HistoricalSolutionChart({
+  solutionTimes,
+  totalDurationMs,
+}: {
+  solutionTimes: SolverDebugSolutionTime[];
+  totalDurationMs: number;
+}) {
+  if (solutionTimes.length === 0) return null;
+
+  const chartWidth = 500;
+  const chartHeight = 140;
+  const padding = { top: 15, right: 15, bottom: 25, left: 55 };
+  const innerWidth = chartWidth - padding.left - padding.right;
+  const innerHeight = chartHeight - padding.top - padding.bottom;
+
+  // Time range: 0 to total duration
+  const maxTimeMs = totalDurationMs * 1.1;
+  const maxTimeSec = maxTimeMs / 1000;
+
+  // Get min/max objectives (min is best)
+  const minObjective = Math.min(...solutionTimes.map((s) => s.objective));
+  const maxObjective = Math.max(...solutionTimes.map((s) => s.objective));
+
+  // Calculate distances from minimum (for log scale)
+  const maxDistance = maxObjective - minObjective;
+  const logMaxDistance = maxDistance > 0 ? Math.log10(maxDistance + 1) : 1;
+
+  // Build path points with step function
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i < solutionTimes.length; i++) {
+    const s = solutionTimes[i];
+    const distance = s.objective - minObjective;
+    const logDistance = distance > 0 ? Math.log10(distance + 1) : 0;
+    const normalized = 1 - logDistance / logMaxDistance;
+
+    const x = padding.left + (s.time_ms / 1000 / maxTimeSec) * innerWidth;
+    const y = padding.top + (1 - normalized) * innerHeight;
+
+    points.push({ x, y });
+
+    // Extend horizontally to next solution or to total duration
+    const nextTime = i < solutionTimes.length - 1 ? solutionTimes[i + 1].time_ms : totalDurationMs;
+    const nextX = padding.left + (nextTime / 1000 / maxTimeSec) * innerWidth;
+    points.push({ x: nextX, y });
+  }
+
+  const linePath =
+    points.length > 0
+      ? `M ${points.map((p) => `${p.x},${p.y}`).join(" L ")}`
+      : "";
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <svg width={chartWidth} height={chartHeight} className="overflow-visible">
+        {/* Grid lines */}
+        <line
+          x1={padding.left}
+          y1={chartHeight - padding.bottom}
+          x2={chartWidth - padding.right}
+          y2={chartHeight - padding.bottom}
+          stroke="currentColor"
+          strokeOpacity={0.2}
+        />
+        <line
+          x1={padding.left}
+          y1={padding.top}
+          x2={padding.left}
+          y2={chartHeight - padding.bottom}
+          stroke="currentColor"
+          strokeOpacity={0.2}
+        />
+
+        {/* Solution line */}
+        {linePath && (
+          <path d={linePath} fill="none" stroke="#6366f1" strokeWidth={2} />
+        )}
+
+        {/* Solution dots */}
+        {points
+          .filter((_, i) => i % 2 === 0)
+          .map((p, i) => (
+            <circle key={i} cx={p.x} cy={p.y} r={3} fill="#6366f1" />
+          ))}
+
+        {/* Y-axis label */}
+        <text
+          x={padding.left - 8}
+          y={chartHeight / 2}
+          textAnchor="middle"
+          transform={`rotate(-90, ${padding.left - 8}, ${chartHeight / 2})`}
+          className="fill-current text-[9px] opacity-50"
+        >
+          Score
+        </text>
+
+        {/* Y-axis values */}
+        <text
+          x={padding.left - 4}
+          y={padding.top + 3}
+          textAnchor="end"
+          className="fill-current text-[9px] opacity-60"
+        >
+          {minObjective}
+        </text>
+        <text
+          x={padding.left - 4}
+          y={chartHeight - padding.bottom}
+          textAnchor="end"
+          className="fill-current text-[9px] opacity-60"
+        >
+          {maxObjective}
+        </text>
+
+        {/* X-axis label */}
+        <text
+          x={chartWidth / 2}
+          y={chartHeight - 2}
+          textAnchor="middle"
+          className="fill-current text-[9px] opacity-50"
+        >
+          Time (s)
+        </text>
+
+        {/* Time markers */}
+        <text
+          x={padding.left}
+          y={chartHeight - 8}
+          textAnchor="start"
+          className="fill-current text-[9px] opacity-40"
+        >
+          0
+        </text>
+        <text
+          x={chartWidth - padding.right}
+          y={chartHeight - 8}
+          textAnchor="end"
+          className="fill-current text-[9px] opacity-40"
+        >
+          {maxTimeSec.toFixed(1)}
+        </text>
+      </svg>
+      <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+        <span>Solutions: {solutionTimes.length}</span>
+        <span>Best: {minObjective}</span>
+      </div>
+    </div>
+  );
+}
+
+// Compact stats chart - for displaying completed run stats in a smaller form
+function CompactStatsChart({
+  data,
+  dataKey,
+  totalDurationMs,
+  color,
+  labelSuffix,
+}: {
+  data: StatsHistoryEntry[];
+  dataKey: keyof StatsHistoryEntry;
+  totalDurationMs: number;
+  color: string;
+  labelSuffix?: string;
+}) {
+  if (data.length === 0) return null;
+
+  const width = 200;
+  const height = 60;
+  const padding = { top: 8, right: 8, bottom: 8, left: 8 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+
+  const values = data.map((d) => d[dataKey] as number);
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+
+  let minVal = dataMin;
+  let maxVal = dataMax;
+
+  if (minVal === maxVal) {
+    const padding_amount = Math.max(1, Math.abs(minVal * 0.1));
+    minVal = minVal - padding_amount;
+    maxVal = maxVal + padding_amount;
+  }
+
+  const range = maxVal - minVal;
+  const maxTimeMs = totalDurationMs * 1.1;
+
+  // Build step path
+  const points: { x: number; y: number; value: number }[] = [];
+  for (let i = 0; i < data.length; i++) {
+    const d = data[i];
+    const val = d[dataKey] as number;
+    const normalized = (val - minVal) / range;
+    const y = padding.top + (1 - normalized) * innerHeight;
+    const x = padding.left + (d.time_ms / maxTimeMs) * innerWidth;
+    points.push({ x, y, value: val });
+
+    // Extend to next point or total duration
+    const nextTime = i < data.length - 1 ? data[i + 1].time_ms : totalDurationMs;
+    const nextX = padding.left + (nextTime / maxTimeMs) * innerWidth;
+    points.push({ x: nextX, y, value: val });
+  }
+
+  const linePath = points.length > 0
+    ? `M ${points.map((p) => `${p.x},${p.y}`).join(" L ")}`
+    : "";
+
+  const currentValue = points.length > 0 ? points[points.length - 1].value : 0;
+  const labelText = labelSuffix ? `${currentValue}${labelSuffix}` : `${currentValue}`;
+
+  return (
+    <div className="flex items-center gap-3">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-12 w-full max-w-[120px] overflow-visible">
+        {/* Line path */}
+        {linePath && (
+          <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} />
+        )}
+        {/* Axis line */}
+        <line
+          x1={padding.left}
+          y1={height - padding.bottom}
+          x2={width - padding.right}
+          y2={height - padding.bottom}
+          stroke="currentColor"
+          strokeOpacity={0.1}
+        />
+      </svg>
+      <div className="text-lg font-semibold" style={{ color }}>
+        {labelText}
+      </div>
+    </div>
+  );
+}
+
 type View = "info" | "detail";
 
 export default function SolverInfoModal({
@@ -117,11 +449,35 @@ export default function SolverInfoModal({
   history,
   timeoutSeconds,
   onTimeoutChange,
+  solverSettings,
+  onSolverSettingsChange,
 }: SolverInfoModalProps) {
   const [view, setView] = useState<View>("info");
   const [selectedEntry, setSelectedEntry] = useState<SolverHistoryEntry | null>(null);
+  const [weightsExpanded, setWeightsExpanded] = useState(false);
+
+  // Reset view to info when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setView("info");
+      setSelectedEntry(null);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
+
+  // Get current weight value with fallback to default
+  const getWeight = (key: WeightKey): number => {
+    const value = solverSettings?.[key];
+    return typeof value === "number" ? value : DEFAULT_WEIGHTS[key];
+  };
+
+  // Handle weight change
+  const handleWeightChange = (key: WeightKey, value: number) => {
+    if (onSolverSettingsChange) {
+      onSolverSettingsChange({ [key]: value });
+    }
+  };
 
   const handleClose = () => {
     setView("info");
@@ -217,20 +573,132 @@ export default function SolverInfoModal({
                   </div>
                   <div className="flex items-center gap-2">
                     <input
-                      type="number"
-                      min="1"
-                      max="3600"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       value={timeoutSeconds}
                       onChange={(e) => {
+                        // Allow any numeric input while typing
+                        const raw = e.target.value.replace(/[^0-9]/g, "");
+                        if (raw === "") return;
+                        const val = parseInt(raw, 10);
+                        if (!isNaN(val)) {
+                          // Clamp to valid range
+                          onTimeoutChange(Math.max(1, Math.min(3600, val)));
+                        }
+                      }}
+                      onBlur={(e) => {
+                        // Ensure valid value on blur
                         const val = parseInt(e.target.value, 10);
-                        if (!isNaN(val) && val >= 1 && val <= 3600) {
-                          onTimeoutChange(val);
+                        if (isNaN(val) || val < 1) {
+                          onTimeoutChange(1);
+                        } else if (val > 3600) {
+                          onTimeoutChange(3600);
                         }
                       }}
                       className="w-20 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-400"
                     />
                     <span className="text-sm text-slate-500 dark:text-slate-400">seconds</span>
                   </div>
+                </div>
+
+                {/* Optimization Weights */}
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWeightsExpanded(!weightsExpanded)}
+                    className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                  >
+                    <svg
+                      className={cx(
+                        "h-3 w-3 transition-transform",
+                        weightsExpanded && "rotate-90"
+                      )}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                    Optimization Weights
+                  </button>
+                  {weightsExpanded && (
+                    <div className="mt-1 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+                        Higher weights give more priority to that objective. Default values work well for most cases.
+                      </p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                        {(Object.keys(WEIGHT_LABELS) as WeightKey[]).map((key) => {
+                          const isDistributeOnly = WEIGHT_LABELS[key].distributeOnly;
+                          return (
+                            <div
+                              key={key}
+                              className={cx(
+                                "flex items-center justify-between gap-2",
+                                isDistributeOnly && "opacity-60"
+                              )}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1">
+                                  <span className="truncate text-xs font-medium text-slate-700 dark:text-slate-200">
+                                    {WEIGHT_LABELS[key].label}
+                                  </span>
+                                  <div className="group relative">
+                                    <button
+                                      type="button"
+                                      className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[9px] font-bold text-slate-500 hover:bg-slate-300 dark:bg-slate-600 dark:text-slate-400 dark:hover:bg-slate-500"
+                                      tabIndex={-1}
+                                    >
+                                      ?
+                                    </button>
+                                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 w-48 -translate-x-1/2 rounded-lg bg-slate-800 px-2.5 py-2 text-[11px] leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 dark:bg-slate-700">
+                                      {WEIGHT_LABELS[key].tooltip}
+                                      <div className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-800 dark:border-t-slate-700" />
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className={cx(
+                                  "truncate text-[10px]",
+                                  isDistributeOnly
+                                    ? "italic text-amber-500 dark:text-amber-400"
+                                    : "text-slate-400 dark:text-slate-500"
+                                )}>
+                                  {WEIGHT_LABELS[key].description}
+                                </div>
+                              </div>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={getWeight(key)}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(/[^0-9]/g, "");
+                                  if (raw === "") return;
+                                  const val = parseInt(raw, 10);
+                                  if (!isNaN(val) && val >= 0) {
+                                    handleWeightChange(key, Math.min(9999, val));
+                                  }
+                                }}
+                                className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-right text-xs tabular-nums text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onSolverSettingsChange) {
+                            onSolverSettingsChange(DEFAULT_WEIGHTS);
+                          }
+                        }}
+                        className="mt-3 text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                      >
+                        Reset to defaults
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Recent runs list */}
@@ -283,36 +751,110 @@ export default function SolverInfoModal({
 
             {view === "detail" && selectedEntry && (
               <div className="flex flex-col gap-4">
-                {/* Summary */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                    <div className="text-slate-500 dark:text-slate-400">Date Range</div>
-                    <div className="font-medium text-slate-700 dark:text-slate-200">
+                {/* Dashboard header with summary info */}
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                  <div className="flex flex-col gap-1">
+                    <div className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
                       {formatEuropeanDate(selectedEntry.startISO)} – {formatEuropeanDate(selectedEntry.endISO)}
                     </div>
-                    <div className="text-slate-500 dark:text-slate-400">Started</div>
-                    <div className="font-medium text-slate-700 dark:text-slate-200">
-                      {formatDateTime(selectedEntry.startedAt)}
-                    </div>
-                    <div className="text-slate-500 dark:text-slate-400">Duration</div>
-                    <div className="font-medium text-slate-700 dark:text-slate-200">
-                      {formatDuration(selectedEntry.endedAt - selectedEntry.startedAt)}
-                    </div>
-                    <div className="text-slate-500 dark:text-slate-400">Status</div>
-                    <div
-                      className={cx(
-                        "font-medium",
-                        selectedEntry.status === "success" && "text-emerald-600 dark:text-emerald-400",
-                        selectedEntry.status === "aborted" && "text-amber-600 dark:text-amber-400",
-                        selectedEntry.status === "error" && "text-rose-600 dark:text-rose-400"
-                      )}
-                    >
-                      {selectedEntry.status === "success" && "Completed"}
-                      {selectedEntry.status === "aborted" && "Aborted"}
-                      {selectedEntry.status === "error" && "Error"}
+                    <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                      <span>{formatDateTime(selectedEntry.startedAt)}</span>
+                      <span>•</span>
+                      <span>{formatDuration(selectedEntry.endedAt - selectedEntry.startedAt)}</span>
                     </div>
                   </div>
+                  <span
+                    className={cx(
+                      "rounded-full px-3 py-1 text-xs font-medium",
+                      selectedEntry.status === "success" &&
+                        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+                      selectedEntry.status === "aborted" &&
+                        "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+                      selectedEntry.status === "error" &&
+                        "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
+                    )}
+                  >
+                    {selectedEntry.status === "success" && "Completed"}
+                    {selectedEntry.status === "aborted" && "Aborted"}
+                    {selectedEntry.status === "error" && "Error"}
+                  </span>
                 </div>
+
+                {/* Optimization Score Chart - dashboard style */}
+                {selectedEntry.debugInfo && selectedEntry.debugInfo.solution_times.length > 0 && (
+                  <DashboardCard title="Optimization Score" accentColor="#6366f1">
+                    <HistoricalSolutionChart
+                      solutionTimes={selectedEntry.debugInfo.solution_times}
+                      totalDurationMs={selectedEntry.debugInfo.timing.total_ms}
+                    />
+                  </DashboardCard>
+                )}
+
+                {/* Stats Summary - shown if statsHistory is available */}
+                {selectedEntry.statsHistory && selectedEntry.statsHistory.length > 0 && (() => {
+                  const statsHistory = selectedEntry.statsHistory;
+                  const totalDurationMs = selectedEntry.debugInfo?.timing.total_ms ?? (selectedEntry.endedAt - selectedEntry.startedAt);
+                  const lastStats = statsHistory[statsHistory.length - 1];
+                  const hasWorkingHoursTarget = lastStats.totalPeopleWeeksWithTarget > 0;
+
+                  return (
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Row 1: Working Hours Compliance & Non-consecutive shifts */}
+                      {hasWorkingHoursTarget && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                          <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                            Hours Compliance
+                          </div>
+                          <CompactStatsChart
+                            data={statsHistory}
+                            dataKey="peopleWeeksWithinHours"
+                            totalDurationMs={totalDurationMs}
+                            color="#10b981"
+                            labelSuffix={`/${lastStats.totalPeopleWeeksWithTarget}`}
+                          />
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                        <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Non-consecutive
+                        </div>
+                        <CompactStatsChart
+                          data={statsHistory}
+                          dataKey="nonConsecutiveShifts"
+                          totalDurationMs={totalDurationMs}
+                          color="#ef4444"
+                        />
+                      </div>
+
+                      {/* Row 2: Filled Slots & Location Changes */}
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                        <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Filled Slots
+                        </div>
+                        <CompactStatsChart
+                          data={statsHistory}
+                          dataKey="filledSlots"
+                          totalDurationMs={totalDurationMs}
+                          color="#6366f1"
+                          labelSuffix={`/${lastStats.totalRequiredSlots}`}
+                        />
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                        <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+                          Location Changes
+                        </div>
+                        <CompactStatsChart
+                          data={statsHistory}
+                          dataKey="locationChanges"
+                          totalDurationMs={totalDurationMs}
+                          color="#f59e0b"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Notes */}
                 {selectedEntry.notes.length > 0 && (

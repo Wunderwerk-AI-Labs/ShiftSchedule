@@ -101,6 +101,7 @@ class Assignment(BaseModel):
     rowId: str
     dateISO: str
     clinicianId: str
+    source: Optional[Literal["manual", "solver"]] = None  # tracks how assignment was created
 
 
 class MinSlots(BaseModel):
@@ -185,6 +186,15 @@ class SolverSettings(BaseModel):
     onCallRestDaysBefore: int = 1
     onCallRestDaysAfter: int = 1
     preferContinuousShifts: bool = True
+    # Optimization weights (soft constraints)
+    weightCoverage: int = 1000  # Fill required slots (highest priority)
+    weightSlack: int = 1000  # Minimize unfilled required slots
+    weightTotalAssignments: int = 100  # Maximize total assignments
+    weightSlotPriority: int = 10  # Prefer slots in template order
+    weightTimeWindow: int = 5  # Respect preferred working time windows
+    weightContinuousShifts: int = 3  # Group consecutive shifts
+    weightSectionPreference: int = 1  # Assign to preferred sections
+    weightWorkingHours: int = 1  # Stay within target working hours
 
 
 class SolverRule(BaseModel):

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
 import AutomatedPlanningPanel from "../components/schedule/AutomatedPlanningPanel";
-import SolverOverlay, { type LiveSolution } from "../components/schedule/SolverOverlay";
+import SolverOverlay, { type LiveSolution, type StatsHistoryEntry } from "../components/schedule/SolverOverlay";
 import HelpView from "../components/schedule/HelpView";
 import IcalExportModal from "../components/schedule/IcalExportModal";
 import ScheduleGrid from "../components/schedule/ScheduleGrid";
@@ -55,6 +55,7 @@ import {
   workplaceRows,
 } from "../data/mockData";
 import { cx } from "../lib/classNames";
+import { calculateSolverLiveStats } from "../lib/solverStats";
 import { normalizePreferredWorkingTimes } from "../lib/clinicianPreferences";
 import { addDays, addWeeks, startOfWeek, toISODate } from "../lib/date";
 import { getDayType } from "../lib/dayTypes";
@@ -62,8 +63,29 @@ import {
   buildCalendarRows,
   buildColumnTimeMetaByKey,
   buildDayColumns,
+  buildLocationColumnTimeMetaByKey,
   buildLocationSeparatorRowIds,
 } from "../lib/calendarView";
+
+/**
+ * Scroll to the first assignment element matching any of the given keys.
+ * Uses the data-assignment-key attribute on AssignmentPill components.
+ * Uses requestAnimationFrame to ensure DOM is ready after state update.
+ */
+function scrollToAssignmentKeys(keys: string[]): void {
+  // Use requestAnimationFrame to ensure the DOM has updated
+  requestAnimationFrame(() => {
+    for (const key of keys) {
+      const element = document.querySelector(
+        `[data-assignment-key="${key}"]`,
+      ) as HTMLElement | null;
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        return;
+      }
+    }
+  });
+}
 import { buildICalendar, type ICalEvent } from "../lib/ical";
 import {
   buildRenderedAssignmentMap,
@@ -282,6 +304,7 @@ export default function WeeklySchedulePage({
     endISO: string;
   } | null>(null);
   const autoPlanAbortRef = useRef<AbortController | null>(null);
+  const skipApplyOnAbortRef = useRef(false); // When true, abort handler should NOT apply solution
   const [liveSolutions, setLiveSolutions] = useState<LiveSolution[]>([]);
   const liveSolutionsRef = useRef<LiveSolution[]>([]);
   const [solverPhase, setSolverPhase] = useState<string | null>(null);
@@ -530,6 +553,10 @@ export default function WeeklySchedulePage({
     () => buildColumnTimeMetaByKey(scheduleRows),
     [scheduleRows],
   );
+  const locationColumnTimeMetaByKey = useMemo(
+    () => buildLocationColumnTimeMetaByKey(scheduleRows),
+    [scheduleRows],
+  );
   const dayColumns = useMemo(
     () => buildDayColumns(displayDays, weeklyTemplate, holidayDates, columnTimeMetaByKey),
     [displayDays, weeklyTemplate, holidayDates, columnTimeMetaByKey],
@@ -578,6 +605,22 @@ export default function WeeklySchedulePage({
     }
     return out;
   };
+
+  // Get existing manual assignments within the solve range for accurate stats display
+  const existingAssignmentsForSolver = useMemo(() => {
+    if (!autoPlanDateRange) return [];
+    const { startISO, endISO } = autoPlanDateRange;
+    const out: Assignment[] = [];
+    for (const list of assignmentMap.values()) {
+      for (const a of list) {
+        // Only include manual assignments (source !== "solver") within the solve range
+        if (a.source !== "solver" && a.dateISO >= startISO && a.dateISO <= endISO) {
+          out.push(a);
+        }
+      }
+    }
+    return out;
+  }, [assignmentMap, autoPlanDateRange]);
 
   const collectClassAssignments = () => {
     const items: Assignment[] = [];
@@ -932,6 +975,16 @@ export default function WeeklySchedulePage({
     let historyNotes: string[] = [];
     let historyDebugInfo: SolverDebugInfo | undefined;
 
+    // Capture existing manual assignments at the start for stats computation later
+    const capturedExistingAssignments: Assignment[] = [];
+    for (const list of assignmentMap.values()) {
+      for (const a of list) {
+        if (a.source !== "solver" && a.dateISO >= args.startISO && a.dateISO <= args.endISO) {
+          capturedExistingAssignments.push(a);
+        }
+      }
+    }
+
     try {
       if (hasLoaded && loadedUserId === currentUser.username) {
         const { state: normalized } = normalizeAppState({
@@ -976,6 +1029,26 @@ export default function WeeklySchedulePage({
       const filtered = result.assignments.filter(
         (a) => a.dateISO >= args.startISO && a.dateISO <= args.endISO,
       );
+      // Clear only solver-generated assignments before applying new solution, preserve manual ones
+      setAssignmentMap((prev) => {
+        const next = new Map(prev);
+        for (const [key, list] of next.entries()) {
+          const { rowId, dateISO: keyDate } = splitAssignmentKey(key);
+          if (!rowId || !keyDate) continue;
+          if (rowId.startsWith("pool-")) continue;
+          if (keyDate < args.startISO || keyDate > args.endISO) continue;
+          // Keep manual assignments (source !== "solver") and vacation assignments
+          const filteredList = list.filter(
+            (item) => item.source !== "solver" || isOnVacation(item.clinicianId, keyDate)
+          );
+          if (filteredList.length === 0) {
+            next.delete(key);
+          } else {
+            next.set(key, filteredList);
+          }
+        }
+        return next;
+      });
       applySolverAssignments(filtered);
       setAutoPlanProgress({ current: dateRange.length, total: dateRange.length });
       setAutoPlanLastRunStats({
@@ -986,50 +1059,62 @@ export default function WeeklySchedulePage({
       if (err instanceof Error && err.name === "AbortError") {
         // User aborted - construct partial debug info from live solutions
         historyStatus = "aborted";
-        historyNotes = ["Solver was aborted by user request."];
-        // Build partial debug info from SSE live solutions
-        const capturedSolutions = liveSolutionsRef.current;
-        if (capturedSolutions.length > 0) {
-          const elapsedMs = Date.now() - startedAt;
-          historyDebugInfo = {
-            timing: {
-              total_ms: elapsedMs,
-              checkpoints: [],
-            },
-            solution_times: capturedSolutions.map((s) => ({
-              solution: s.solution_num,
-              time_ms: s.time_ms,
-              objective: s.objective,
-            })),
-            num_variables: 0,
-            num_days: dateRange.length,
-            num_slots: 0,
-            solver_status: "ABORTED",
-            cpu_workers_used: 0,
-            cpu_cores_available: 0,
-          };
+        const shouldSkipApply = skipApplyOnAbortRef.current;
+        skipApplyOnAbortRef.current = false; // Reset for next run
 
-          // Apply the last solution's assignments if available (from SSE stream)
+        historyNotes = shouldSkipApply
+          ? ["Solver was aborted by user request."]
+          : ["Solver was aborted - applied last available solution."];
+
+        // Build partial debug info from SSE live solutions (always capture for history)
+        const capturedSolutions = liveSolutionsRef.current;
+        const elapsedMs = Date.now() - startedAt;
+        // Get estimated CPU info (browser can't access actual CPU count, so use reasonable defaults)
+        const estimatedCpuCores = navigator.hardwareConcurrency ?? 4;
+        const estimatedCpuWorkers = Math.max(1, estimatedCpuCores - 2);
+        historyDebugInfo = {
+          timing: {
+            total_ms: elapsedMs,
+            checkpoints: [],
+          },
+          solution_times: capturedSolutions.map((s) => ({
+            solution: s.solution_num,
+            time_ms: s.time_ms,
+            objective: s.objective,
+          })),
+          num_variables: 0,
+          num_days: dateRange.length,
+          num_slots: 0,
+          solver_status: "ABORTED",
+          cpu_workers_used: estimatedCpuWorkers,
+          cpu_cores_available: estimatedCpuCores,
+        };
+
+        // Apply the last solution's assignments ONLY if not skipping (i.e., user clicked "Apply")
+        if (!shouldSkipApply && capturedSolutions.length > 0) {
           const lastSolution = capturedSolutions[capturedSolutions.length - 1];
           if (lastSolution?.assignments && lastSolution.assignments.length > 0) {
-            // Clear existing assignments for the solve range, then apply new ones
+            // Clear only solver-generated assignments for the solve range, preserve manual ones
             setAssignmentMap((prev) => {
               const next = new Map(prev);
               for (const [key, list] of next.entries()) {
                 const { rowId, dateISO: keyDate } = splitAssignmentKey(key);
-                if (keyDate >= args.startISO && keyDate <= args.endISO) {
-                  const filtered = list.filter((a) => a.rowId !== rowId || a.dateISO !== keyDate);
-                  if (filtered.length === 0) {
-                    next.delete(key);
-                  } else {
-                    next.set(key, filtered);
-                  }
+                if (!rowId || !keyDate) continue;
+                if (rowId.startsWith("pool-")) continue;
+                if (keyDate < args.startISO || keyDate > args.endISO) continue;
+                // Keep manual assignments (source !== "solver") and vacation assignments
+                const filtered = list.filter(
+                  (item) => item.source !== "solver" || isOnVacation(item.clinicianId, keyDate)
+                );
+                if (filtered.length === 0) {
+                  next.delete(key);
+                } else {
+                  next.set(key, filtered);
                 }
               }
               return next;
             });
             applySolverAssignments(lastSolution.assignments);
-            historyNotes = ["Solver was aborted - applied last available solution."];
           }
         }
       } else {
@@ -1044,6 +1129,25 @@ export default function WeeklySchedulePage({
         window.setTimeout(() => setSolverNotice(null), 4000);
       }
     } finally {
+      // Compute statsHistory from live solutions before clearing state
+      const historyStatsHistory: StatsHistoryEntry[] = [];
+      const solveRange = { startISO: args.startISO, endISO: args.endISO };
+      for (const solution of liveSolutionsRef.current) {
+        const solverAssignments = solution.assignments ?? [];
+        const stats = calculateSolverLiveStats(
+          solverAssignments,
+          scheduleRows,
+          clinicians,
+          solveRange,
+          holidayDates,
+          capturedExistingAssignments,
+        );
+        historyStatsHistory.push({
+          time_ms: solution.time_ms,
+          ...stats,
+        });
+      }
+
       // Add to history
       addSolverHistoryEntry({
         id: `solver-${startedAt}`,
@@ -1054,6 +1158,7 @@ export default function WeeklySchedulePage({
         status: historyStatus,
         notes: historyNotes,
         debugInfo: historyDebugInfo,
+        statsHistory: historyStatsHistory,
       });
 
       autoPlanAbortRef.current = null;
@@ -1066,22 +1171,23 @@ export default function WeeklySchedulePage({
   };
 
   // Abort without applying - discards any solutions found
-  const handleAbortWithoutApplying = async () => {
-    // Clear live solutions first so the response handler doesn't apply them
-    liveSolutionsRef.current = [];
-    setLiveSolutions([]);
+  const handleAbortWithoutApplying = () => {
+    // Set flag so AbortError handler knows NOT to apply the solution
+    // but it can still capture debug info for history
+    skipApplyOnAbortRef.current = true;
 
-    // Signal the backend to stop the solver (force abort)
-    try {
-      await abortSolver(true);
-    } catch {
-      // Ignore errors - the abort request is best-effort
-    }
-
-    // Abort the fetch immediately
+    // Abort the fetch FIRST to prevent the response from being processed
+    // This must happen before calling abortSolver, otherwise the backend might
+    // return the last solution before we abort the fetch
     if (autoPlanAbortRef.current) {
       autoPlanAbortRef.current.abort();
     }
+
+    // Then signal the backend to stop the solver (fire and forget)
+    // Use force=true to trigger immediate subprocess kill
+    abortSolver(true).catch(() => {
+      // Ignore errors - the abort request is best-effort
+    });
 
     // Reset state immediately since we're discarding
     autoPlanAbortRef.current = null;
@@ -1090,28 +1196,51 @@ export default function WeeklySchedulePage({
     setAutoPlanStartedAt(null);
     setAutoPlanElapsedMs(0);
     setAutoPlanDateRange(null);
+    // Clear live solutions display (but ref is read by AbortError handler first)
+    setLiveSolutions([]);
   };
 
   // Apply solution - stops solver and applies the current best solution
-  const handleApplySolution = async () => {
-    // Check if we have any solutions via SSE
-    const hasSolutions = liveSolutionsRef.current.length > 0;
-
-    // Signal the backend to stop the solver
-    // Use force=true when we have solutions to trigger immediate stop
-    try {
-      await abortSolver(hasSolutions);
-    } catch {
-      // Ignore errors - the abort request is best-effort
-    }
-
-    // Abort the fetch - the response handler will apply the SSE solution
+  const handleApplySolution = () => {
+    // CRITICAL: Abort the fetch FIRST to trigger the AbortError handler
+    // which applies the last SSE solution. If we call abortSolver first,
+    // the backend might return before we abort, and we'd miss the catch block.
     if (autoPlanAbortRef.current) {
       autoPlanAbortRef.current.abort();
     }
+
+    // Then signal the backend to stop (fire and forget)
+    // Use force=true when we have solutions to trigger immediate subprocess kill
+    const hasSolutions = liveSolutionsRef.current.length > 0;
+    abortSolver(hasSolutions).catch(() => {
+      // Ignore errors - the abort request is best-effort
+    });
   };
 
-  const handleResetAutomatedRange = (args: { startISO: string; endISO: string }) => {
+  // Reset only solver-generated assignments (keep manual ones)
+  const handleResetSolver = (args: { startISO: string; endISO: string }) => {
+    setAutoPlanError(null);
+    setAssignmentMap((prev) => {
+      const next = new Map(prev);
+      for (const [key, list] of next.entries()) {
+        const { rowId, dateISO: keyDate } = splitAssignmentKey(key);
+        if (!rowId || !keyDate) continue;
+        if (rowId.startsWith("pool-")) continue;
+        if (keyDate < args.startISO || keyDate > args.endISO) continue;
+        // Keep manual assignments (source === "manual" or undefined/missing) and vacation assignments
+        // Assignments without a source field are treated as manual (legacy data)
+        const filtered = list.filter(
+          (item) => item.source !== "solver" || isOnVacation(item.clinicianId, keyDate)
+        );
+        if (filtered.length === 0) next.delete(key);
+        else next.set(key, filtered);
+      }
+      return next;
+    });
+  };
+
+  // Reset all assignments (both manual and solver-generated)
+  const handleResetAll = (args: { startISO: string; endISO: string }) => {
     setAutoPlanError(null);
     setAssignmentMap((prev) => {
       const next = new Map(prev);
@@ -1267,6 +1396,7 @@ export default function WeeklySchedulePage({
         rowId,
         dateISO,
         clinicianId,
+        source: "manual",
       };
       next.set(key, [...existing, newAssignment]);
       // Remove clinician from Rest Day pool if they're being assigned
@@ -2338,11 +2468,13 @@ export default function WeeklySchedulePage({
                     <button
                       key={violation.id}
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
                         setActiveRuleViolationId((current) =>
                           current === violation.id ? null : violation.id,
-                        )
-                      }
+                        );
+                        // Scroll to the first matching assignment pill
+                        scrollToAssignmentKeys(violation.assignmentKeys);
+                      }}
                       onMouseEnter={() => setHoveredRuleViolationId(violation.id)}
                       onMouseLeave={() => setHoveredRuleViolationId(null)}
                       className={cx(
@@ -2459,6 +2591,7 @@ export default function WeeklySchedulePage({
             }
             separatorBeforeRowIds={poolsSeparatorId ? [poolsSeparatorId] : []}
             locationSeparatorRowIds={locationSeparatorRowIds}
+            locationColumnTimeMetaByKey={locationColumnTimeMetaByKey}
             minSlotsByRowId={minSlotsByRowId}
             getClinicianName={(id) => clinicianNameById.get(id) ?? "Unknown"}
             getHasEligibleClasses={(id) => {
@@ -2553,6 +2686,7 @@ export default function WeeklySchedulePage({
                       rowId: toRowId,
                       dateISO,
                       clinicianId,
+                      source: "manual",
                     };
                     next.set(toKey, [...toList, newItem]);
                   }
@@ -2581,6 +2715,7 @@ export default function WeeklySchedulePage({
                     rowId: toRowId,
                     dateISO,
                     clinicianId,
+                    source: "manual",
                   };
                   next.set(toKey, [...toList, newItem]);
                   return next;
@@ -2618,7 +2753,8 @@ export default function WeeklySchedulePage({
                   error={autoPlanError}
                   timeoutSeconds={solverTimeoutSeconds}
                   onRun={handleRunAutomatedPlanning}
-                  onReset={handleResetAutomatedRange}
+                  onResetSolver={handleResetSolver}
+                  onResetAll={handleResetAll}
                   onOpenInfo={() => setSolverInfoOpen(true)}
                 />
                 <div className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-950 sm:max-w-xs sm:px-4">
@@ -3023,6 +3159,7 @@ export default function WeeklySchedulePage({
         clinicians={clinicians}
         holidays={holidayDates}
         currentPhase={solverPhase}
+        existingAssignments={existingAssignmentsForSolver}
       />
 
       <SolverInfoModal
@@ -3031,6 +3168,10 @@ export default function WeeklySchedulePage({
         history={solverHistory}
         timeoutSeconds={solverTimeoutSeconds}
         onTimeoutChange={setSolverTimeoutSeconds}
+        solverSettings={solverSettings}
+        onSolverSettingsChange={(partial) =>
+          setSolverSettings((prev) => ({ ...prev, ...partial }))
+        }
       />
     </div>
   );

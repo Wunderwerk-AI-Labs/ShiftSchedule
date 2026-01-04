@@ -189,7 +189,13 @@ Solver Settings
 - Working hours tolerance is now per-clinician (see Clinician Editor); removed from global solver settings.
 - Rule violations are evaluated for the current week and surfaced in the header badge; affected pills are shown in red.
 - Violations include: rest-day conflicts, same-day location mismatches (when enforced), and overlapping shift times.
+- **Click-to-scroll for violations**: Clicking a rule violation in the popover scrolls the schedule grid to show the responsible assignment pill (smooth scroll to center).
 - Automated planning runs the week solver over the selected date range in one call and shows an ETA based on the last run's per-day duration.
+- **Optimization weights**: Collapsible section in the Solver Info modal (gear icon) allows configuring objective weights:
+  - Coverage (1000), Slack (1000), Total Assignments (100), Slot Priority (10), Time Window (5), Continuous Shifts (3), Section Preference (1), Working Hours (1).
+  - "Total Assignments" and "Slot Priority" are only active in "Distribute All" mode (visually dimmed with amber description).
+  - Each weight has an info tooltip explaining its effect in layman's terms.
+  - "Reset to defaults" button restores all weights to their default values.
 
 Testing
 - Frontend unit/component tests: Vitest + Testing Library (`npm run test` runs `src/**/*.test.{ts,tsx}` only).
@@ -426,6 +432,7 @@ type Assignment = {
   rowId: string;
   dateISO: string;
   clinicianId: string;
+  source?: "manual" | "solver"; // Tracks assignment origin; undefined/missing treated as manual
 };
 
 type MinSlotsByRowId = Record<string, { weekday: number; weekend: number }>;
@@ -481,6 +488,15 @@ type SolverSettings = {
   onCallRestDaysBefore: number;
   onCallRestDaysAfter: number;
   preferContinuousShifts: boolean; // default true
+  // Configurable optimization weights (optional, defaults in solver)
+  weightCoverage?: number;           // default 1000
+  weightSlack?: number;              // default 1000
+  weightTotalAssignments?: number;   // default 100 (Distribute All only)
+  weightSlotPriority?: number;       // default 10 (Distribute All only)
+  weightTimeWindow?: number;         // default 5
+  weightContinuousShifts?: number;   // default 3
+  weightSectionPreference?: number;  // default 1
+  weightWorkingHours?: number;       // default 1
 };
 ```
 
@@ -621,12 +637,17 @@ Solver overlay (SolverOverlay.tsx):
   - Live updates continue while dashboard is open.
   - "← Back" button to close and return to compact overlay.
 - Solver stats calculation: modular function in `src/lib/solverStats.ts` (`calculateSolverLiveStats`).
+- Stats include both solver-generated and existing manual assignments in the solve range for accurate filled slots display.
 - Stats tracked: filledSlots, totalRequiredSlots, openSlots, nonConsecutiveShifts, peopleWeeksWithinHours, totalPeopleWeeksWithTarget, locationChanges.
 
 Automated Shift Planning panel (frontend):
 - Timeframe: "Current week" and "Today" quick buttons; custom date pickers (DD.MM.YYYY) for start/end displayed inline with dash separator.
 - Strategy: "Fill open slots" (only fills required slots) or "Distribute all" (assigns all available clinicians).
-- Run button triggers solver; Reset button clears assignments in the selected range (with confirmation).
+- Run button triggers solver.
+- Reset button opens a dropdown panel with two options:
+  - "Reset Solver Only": Removes only assignments created by the automated planner (source === "solver"); keeps manual assignments.
+  - "Reset All": Removes all assignments in the selected timeframe, including both manual and solver-generated ones.
+- Reset panel auto-positions: opens above the button when there's insufficient space below (viewport-aware).
 
 Custom date picker component (`CustomDatePicker.tsx`):
 - European format (DD.MM.YYYY) with calendar dropdown.
@@ -852,7 +873,7 @@ Frontend
 - `src/components/schedule/WorkingHoursOverviewModal.tsx` (yearly working hours overview for all clinicians)
 - `src/components/schedule/SolverOverlay.tsx` (live solver progress overlay with chart and abort/apply)
 - `src/components/schedule/SolverDebugPanel.tsx` (debug info visualization after solve completes)
-- `src/components/schedule/SolverInfoModal.tsx` (solver info modal with history and settings)
+- `src/components/schedule/SolverInfoModal.tsx` (solver info modal with history, settings, and configurable weights; auto-resets to info view when opened)
 - `src/components/schedule/AutomatedPlanningPanel.tsx` (solver control panel with date range and strategy)
 - `src/api/client.ts`
 - `src/lib/shiftRows.ts` (weeklyTemplate normalization, colBand safeguards, legacy shiftRowId helpers)

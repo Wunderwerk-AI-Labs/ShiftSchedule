@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { Assignment, Clinician } from "../../api/client";
 import type { ScheduleRow } from "../../lib/shiftRows";
@@ -25,6 +25,7 @@ type SolverOverlayProps = {
   clinicians?: Clinician[];
   holidays?: Set<string>;
   currentPhase?: string | null;
+  existingAssignments?: Assignment[]; // Existing (manual) assignments in the solve range
 };
 
 const formatDuration = (valueMs: number) => {
@@ -198,8 +199,8 @@ function LiveSolutionChart({ solutions, elapsedMs }: { solutions: LiveSolution[]
 }
 
 
-// Type for stats history entry
-type StatsHistoryEntry = {
+// Type for stats history entry - exported for use in history
+export type StatsHistoryEntry = {
   time_ms: number;
   filledSlots: number;
   openSlots: number;
@@ -216,14 +217,12 @@ function MiniStatsChart({
   dataKey,
   elapsedMs,
   color,
-  maxValue,
   labelSuffix,
 }: {
   data: StatsHistoryEntry[];
   dataKey: keyof StatsHistoryEntry;
   elapsedMs: number;
   color: string;
-  maxValue?: number;
   labelSuffix?: string; // e.g., "/42" for "x/y" format
 }) {
   if (data.length === 0) return null;
@@ -235,9 +234,22 @@ function MiniStatsChart({
   const innerHeight = height - padding.top - padding.bottom;
 
   const values = data.map((d) => d[dataKey] as number);
-  const minVal = Math.min(...values);
-  const maxVal = maxValue ?? Math.max(...values);
-  const range = maxVal - minVal || 1;
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+
+  // Always scale Y-axis to actual data min/max (not the maxValue prop)
+  // maxValue is only used for the label suffix (e.g., "80/920")
+  let minVal = dataMin;
+  let maxVal = dataMax;
+
+  // When min equals max, add padding so the line appears in the middle
+  if (minVal === maxVal) {
+    const padding_amount = Math.max(1, Math.abs(minVal * 0.1)); // 10% or at least 1
+    minVal = minVal - padding_amount;
+    maxVal = maxVal + padding_amount;
+  }
+
+  const range = maxVal - minVal;
 
   const maxTimeMs = Math.max(elapsedMs, ...data.map((d) => d.time_ms)) * 1.05;
 
@@ -354,6 +366,40 @@ function MiniStatsChart({
   );
 }
 
+// Card wrapper for dashboard panels
+function DashboardCard({
+  title,
+  children,
+  className = "",
+  accentColor,
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+  accentColor?: string;
+}) {
+  return (
+    <div
+      className={`flex flex-col rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800 ${className}`}
+    >
+      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-700">
+        {accentColor && (
+          <div
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: accentColor }}
+          />
+        )}
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+          {title}
+        </h3>
+      </div>
+      <div className="flex flex-1 items-center justify-center p-4">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Full-screen dashboard with all graphs
 function SolverDashboard({
   liveSolutions,
@@ -378,99 +424,87 @@ function SolverDashboard({
   totalAllowedMs: number;
   onClose: () => void;
 }) {
+  const hasStats = liveStats && statsHistory.length > 1;
+  const hasWorkingHoursTarget = liveStats && liveStats.totalPeopleWeeksWithTarget > 0;
+
   return createPortal(
-    <div className="fixed inset-0 z-[1100] flex flex-col bg-white dark:bg-slate-900">
+    <div className="fixed inset-0 z-[1100] flex flex-col bg-slate-50 dark:bg-slate-900">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
-        <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
-          Solver Details
-        </h2>
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-medium tabular-nums text-slate-600 dark:text-slate-300">
-            {formatDuration(elapsedMs)} / {formatDuration(totalAllowedMs)}
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-700"
-          >
-            ← Back
-          </button>
+      <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-700 dark:bg-slate-800">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">
+            Solver Details
+          </h2>
+          <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 dark:bg-slate-700">
+            <div className="h-2 w-2 animate-pulse rounded-full bg-indigo-500" />
+            <span className="text-xs font-medium tabular-nums text-slate-600 dark:text-slate-300">
+              {formatDuration(elapsedMs)} / {formatDuration(totalAllowedMs)}
+            </span>
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-700"
+        >
+          ← Back
+        </button>
       </div>
 
       {/* Dashboard content */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto flex max-w-3xl flex-col gap-8">
-          {/* Score graph */}
-          <div className="flex flex-col items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-              Score
-            </h3>
+        <div className="mx-auto max-w-6xl">
+          {/* Top row: Score (full width) */}
+          <DashboardCard title="Optimization Score" accentColor="#6366f1" className="mb-6">
             <LiveSolutionChart solutions={liveSolutions} elapsedMs={elapsedMs} />
-          </div>
+          </DashboardCard>
 
-          {/* Filled Slots graph */}
-          {liveStats && statsHistory.length > 1 && (
-            <div className="flex flex-col items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                Filled Slots
-              </h3>
-              <MiniStatsChart
-                data={statsHistory}
-                dataKey="filledSlots"
-                elapsedMs={elapsedMs}
-                color="#6366f1"
-                maxValue={liveStats.totalRequiredSlots}
-                labelSuffix={`/${liveStats.totalRequiredSlots}`}
-              />
-            </div>
-          )}
+          {/* Stats grid: 2 columns on larger screens */}
+          {hasStats && (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              {/* Filled Slots */}
+              <DashboardCard title="Filled Slots" accentColor="#6366f1">
+                <MiniStatsChart
+                  data={statsHistory}
+                  dataKey="filledSlots"
+                  elapsedMs={elapsedMs}
+                  color="#6366f1"
+                  labelSuffix={`/${liveStats.totalRequiredSlots}`}
+                />
+              </DashboardCard>
 
-          {/* Non-consecutive shifts graph */}
-          {liveStats && statsHistory.length > 1 && (
-            <div className="flex flex-col items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                Non-consecutive Shifts
-              </h3>
-              <MiniStatsChart
-                data={statsHistory}
-                dataKey="nonConsecutiveShifts"
-                elapsedMs={elapsedMs}
-                color="#ef4444"
-              />
-            </div>
-          )}
+              {/* Non-consecutive shifts */}
+              <DashboardCard title="Non-consecutive Shifts" accentColor="#ef4444">
+                <MiniStatsChart
+                  data={statsHistory}
+                  dataKey="nonConsecutiveShifts"
+                  elapsedMs={elapsedMs}
+                  color="#ef4444"
+                />
+              </DashboardCard>
 
-          {/* People-Weeks within working hours graph */}
-          {liveStats && liveStats.totalPeopleWeeksWithTarget > 0 && statsHistory.length > 1 && (
-            <div className="flex flex-col items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                People-Weeks within Working Hours
-              </h3>
-              <MiniStatsChart
-                data={statsHistory}
-                dataKey="peopleWeeksWithinHours"
-                elapsedMs={elapsedMs}
-                color="#10b981"
-                maxValue={liveStats.totalPeopleWeeksWithTarget}
-                labelSuffix={`/${liveStats.totalPeopleWeeksWithTarget}`}
-              />
-            </div>
-          )}
+              {/* People-Weeks within working hours */}
+              {hasWorkingHoursTarget && (
+                <DashboardCard title="Working Hours Compliance" accentColor="#10b981">
+                  <MiniStatsChart
+                    data={statsHistory}
+                    dataKey="peopleWeeksWithinHours"
+                    elapsedMs={elapsedMs}
+                    color="#10b981"
+                    labelSuffix={`/${liveStats.totalPeopleWeeksWithTarget}`}
+                  />
+                </DashboardCard>
+              )}
 
-          {/* Location changes graph */}
-          {liveStats && statsHistory.length > 1 && (
-            <div className="flex flex-col items-center gap-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                Location Changes
-              </h3>
-              <MiniStatsChart
-                data={statsHistory}
-                dataKey="locationChanges"
-                elapsedMs={elapsedMs}
-                color="#f59e0b"
-              />
+              {/* Location changes */}
+              <DashboardCard title="Location Changes" accentColor="#f59e0b">
+                <MiniStatsChart
+                  data={statsHistory}
+                  dataKey="locationChanges"
+                  elapsedMs={elapsedMs}
+                  color="#f59e0b"
+                />
+              </DashboardCard>
             </div>
           )}
         </div>
@@ -494,6 +528,7 @@ export default function SolverOverlay({
   clinicians = [],
   holidays = new Set(),
   currentPhase = null,
+  existingAssignments = [],
 }: SolverOverlayProps) {
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [calendarContainer, setCalendarContainer] = useState<HTMLElement | null>(null);
@@ -508,27 +543,50 @@ export default function SolverOverlay({
     }
   }, []);
 
-  // Build stats history from all solutions
+  // Cache for incremental stats computation
+  // Key: solution_num, Value: computed stats entry
+  const statsCache = useRef<Map<number, StatsHistoryEntry>>(new Map());
+  const lastSolveRangeKey = useRef<string | null>(null);
+
+  // Build stats history incrementally - only compute stats for new solutions
   const statsHistory = useMemo(() => {
     if (!solveRange) return [];
 
+    // If solve range changed, clear cache
+    const solveRangeKey = `${solveRange.startISO}-${solveRange.endISO}`;
+    if (lastSolveRangeKey.current !== solveRangeKey) {
+      statsCache.current.clear();
+      lastSolveRangeKey.current = solveRangeKey;
+    }
+
     const history: StatsHistoryEntry[] = [];
     for (const solution of liveSolutions) {
-      const assignments = solution.assignments ?? [];
-      const stats = calculateSolverLiveStats(
-        assignments,
-        scheduleRows,
-        clinicians,
-        solveRange,
-        holidays,
-      );
-      history.push({
-        time_ms: solution.time_ms,
-        ...stats,
-      });
+      // Check if we already computed stats for this solution
+      const cached = statsCache.current.get(solution.solution_num);
+      if (cached) {
+        history.push(cached);
+      } else {
+        // Compute stats only for new solutions
+        const solverAssignments = solution.assignments ?? [];
+        const stats = calculateSolverLiveStats(
+          solverAssignments,
+          scheduleRows,
+          clinicians,
+          solveRange,
+          holidays,
+          existingAssignments,
+        );
+        const entry: StatsHistoryEntry = {
+          time_ms: solution.time_ms,
+          ...stats,
+        };
+        // Cache it for future renders
+        statsCache.current.set(solution.solution_num, entry);
+        history.push(entry);
+      }
     }
     return history;
-  }, [solveRange, liveSolutions, scheduleRows, clinicians, holidays]);
+  }, [solveRange, liveSolutions, scheduleRows, clinicians, holidays, existingAssignments]);
 
   // Calculate live stats for the current best solution (last entry in history)
   const liveStats = useMemo(() => {
@@ -563,30 +621,51 @@ export default function SolverOverlay({
 
       {/* Content panel - compact width that fits content */}
       <div className="relative z-10 flex max-h-[90%] w-auto max-w-lg flex-col items-center gap-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-        {/* Animated spinner */}
-        <div className="relative h-14 w-14">
-          <svg
-            className="h-14 w-14 animate-spin"
-            viewBox="0 0 64 64"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <circle
-              cx="32"
-              cy="32"
-              r="28"
-              stroke="currentColor"
-              strokeWidth="4"
-              className="text-slate-200 dark:text-slate-700"
-            />
-            <path
-              d="M32 4a28 28 0 0 1 28 28"
-              stroke="currentColor"
-              strokeWidth="4"
-              strokeLinecap="round"
-              className="text-indigo-500"
-            />
-          </svg>
+        {/* Circular progress indicator */}
+        {(() => {
+          const progress = Math.min(1, elapsedMs / totalAllowedMs);
+          const radius = 28;
+          const circumference = 2 * Math.PI * radius;
+          const strokeDashoffset = circumference * (1 - progress);
+          return (
+            <div className="relative h-16 w-16">
+              <svg
+                className="-rotate-90"
+                viewBox="0 0 64 64"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                {/* Background circle */}
+                <circle
+                  cx="32"
+                  cy="32"
+                  r={radius}
+                  stroke="currentColor"
+                  strokeWidth="4"
+                  className="text-slate-200 dark:text-slate-700"
+                />
+                {/* Progress arc */}
+                <circle
+                  cx="32"
+                  cy="32"
+                  r={radius}
+                  stroke="currentColor"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                  className="text-indigo-500 transition-all duration-300"
+                  style={{
+                    strokeDasharray: circumference,
+                    strokeDashoffset: strokeDashoffset,
+                  }}
+                />
+              </svg>
+            </div>
+          );
+        })()}
+
+        {/* Elapsed / Total time - directly under the progress ring */}
+        <div className="-mt-2 text-sm font-medium tabular-nums text-slate-600 dark:text-slate-300">
+          {formatDuration(elapsedMs)} / {formatDuration(totalAllowedMs)}
         </div>
 
         {/* Title and date range */}
@@ -618,11 +697,6 @@ export default function SolverOverlay({
         {liveSolutions.length > 0 && (
           <LiveSolutionChart solutions={liveSolutions} elapsedMs={elapsedMs} />
         )}
-
-        {/* Elapsed / Total time */}
-        <div className="text-sm font-medium tabular-nums text-slate-600 dark:text-slate-300">
-          {formatDuration(elapsedMs)} / {formatDuration(totalAllowedMs)}
-        </div>
 
         {/* Action buttons */}
         <div className="flex items-center gap-3">
