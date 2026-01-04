@@ -450,6 +450,7 @@ export async function abortSolver(force = false): Promise<{ status: string; mess
 export type SolverProgressEvent =
   | { event: "connected"; data: Record<string, never> }
   | { event: "start"; data: { startISO: string; endISO: string | null; timeout_seconds: number | null } }
+  | { event: "phase"; data: { phase: string; label: string } }
   | { event: "solution"; data: { solution_num: number; time_ms: number; objective: number; assignments?: Assignment[] } }
   | { event: "complete"; data: { startISO: string; endISO: string; status: "success" | "error"; error?: string } };
 

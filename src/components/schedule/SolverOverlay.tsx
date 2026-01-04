@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
-import type { Assignment } from "../../api/client";
+import type { Assignment, Clinician } from "../../api/client";
+import type { ScheduleRow } from "../../lib/shiftRows";
+import { calculateSolverLiveStats } from "../../lib/solverStats";
 
 export type LiveSolution = {
   solution_num: number;
@@ -17,6 +19,10 @@ type SolverOverlayProps = {
   displayedRange: { startISO: string; endISO: string };
   onAbort: () => void;
   liveSolutions?: LiveSolution[];
+  scheduleRows?: ScheduleRow[];
+  clinicians?: Clinician[];
+  holidays?: Set<string>;
+  currentPhase?: string | null;
 };
 
 const formatDuration = (valueMs: number) => {
@@ -211,6 +217,114 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// Type for stats history entry
+type StatsHistoryEntry = {
+  time_ms: number;
+  filledSlots: number;
+  openSlots: number;
+  nonConsecutiveShifts: number;
+  cliniciansWithinHours: number;
+  totalCliniciansWithTarget: number;
+  totalRequiredSlots: number;
+};
+
+// Mini sparkline chart for a single metric
+function MiniStatsChart({
+  data,
+  dataKey,
+  elapsedMs,
+  color,
+  invertBetter = false,
+  maxValue,
+}: {
+  data: StatsHistoryEntry[];
+  dataKey: keyof StatsHistoryEntry;
+  elapsedMs: number;
+  color: string;
+  invertBetter?: boolean; // true = higher is better, false = lower is better
+  maxValue?: number;
+}) {
+  if (data.length === 0) return null;
+
+  const width = 200;
+  const height = 50;
+  const padding = { top: 5, right: 5, bottom: 15, left: 5 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+
+  const values = data.map((d) => d[dataKey] as number);
+  const minVal = Math.min(...values);
+  const maxVal = maxValue ?? Math.max(...values);
+  const range = maxVal - minVal || 1;
+
+  const maxTimeMs = Math.max(elapsedMs, ...data.map((d) => d.time_ms)) * 1.05;
+
+  // Build step path
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i < data.length; i++) {
+    const d = data[i];
+    const val = d[dataKey] as number;
+    const normalized = (val - minVal) / range;
+    // If invertBetter, higher values at top; otherwise lower values at top
+    const y = invertBetter
+      ? padding.top + (1 - normalized) * innerHeight
+      : padding.top + normalized * innerHeight;
+    const x = padding.left + (d.time_ms / maxTimeMs) * innerWidth;
+    points.push({ x, y });
+
+    // Extend to next point or current time
+    const nextTime = i < data.length - 1 ? data[i + 1].time_ms : elapsedMs;
+    const nextX = padding.left + (nextTime / maxTimeMs) * innerWidth;
+    points.push({ x: nextX, y });
+  }
+
+  const linePath = points.length > 0
+    ? `M ${points.map((p) => `${p.x},${p.y}`).join(" L ")}`
+    : "";
+
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      {/* Background grid line */}
+      <line
+        x1={padding.left}
+        y1={height - padding.bottom}
+        x2={width - padding.right}
+        y2={height - padding.bottom}
+        stroke="currentColor"
+        strokeOpacity={0.1}
+      />
+      {/* Line path */}
+      {linePath && (
+        <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} />
+      )}
+      {/* Current value dot */}
+      {points.length >= 2 && (
+        <circle
+          cx={points[points.length - 1].x}
+          cy={points[points.length - 1].y}
+          r={3}
+          fill={color}
+        />
+      )}
+      {/* Min/max labels */}
+      <text
+        x={padding.left}
+        y={padding.top + 2}
+        className="fill-current text-[8px] opacity-40"
+      >
+        {invertBetter ? maxVal : minVal}
+      </text>
+      <text
+        x={padding.left}
+        y={height - padding.bottom - 2}
+        className="fill-current text-[8px] opacity-40"
+      >
+        {invertBetter ? minVal : maxVal}
+      </text>
+    </svg>
+  );
+}
+
 function formatImprovement(current: number, previous: number): string {
   const diff = current - previous;
   const pct = (diff / Math.abs(previous)) * 100;
@@ -225,27 +339,86 @@ export default function SolverOverlay({
   displayedRange,
   onAbort,
   liveSolutions = [],
+  scheduleRows = [],
+  clinicians = [],
+  holidays = new Set(),
+  currentPhase = null,
 }: SolverOverlayProps) {
-  const [gridElement, setGridElement] = useState<HTMLElement | null>(null);
+  const [containerRect, setContainerRect] = useState<DOMRect | null>(null);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [statsGraphsExpanded, setStatsGraphsExpanded] = useState(false);
+
+  // Build stats history from all solutions
+  const statsHistory = useMemo(() => {
+    if (!solveRange) return [];
+
+    const history: StatsHistoryEntry[] = [];
+    for (const solution of liveSolutions) {
+      const assignments = solution.assignments ?? [];
+      const stats = calculateSolverLiveStats(
+        assignments,
+        scheduleRows,
+        clinicians,
+        solveRange,
+        holidays,
+      );
+      history.push({
+        time_ms: solution.time_ms,
+        ...stats,
+      });
+    }
+    return history;
+  }, [solveRange, liveSolutions, scheduleRows, clinicians, holidays]);
+
+  // Calculate live stats for the current best solution (last entry in history)
+  const liveStats = useMemo(() => {
+    if (statsHistory.length === 0) return null;
+    const last = statsHistory[statsHistory.length - 1];
+    return {
+      filledSlots: last.filledSlots,
+      totalRequiredSlots: last.totalRequiredSlots,
+      openSlots: last.openSlots,
+      nonConsecutiveShifts: last.nonConsecutiveShifts,
+      cliniciansWithinHours: last.cliniciansWithinHours,
+      totalCliniciansWithTarget: last.totalCliniciansWithTarget,
+    };
+  }, [statsHistory]);
 
   // Check if the displayed week overlaps with the solve range
   const hasOverlap =
     isVisible && solveRange && rangesOverlap(solveRange, displayedRange);
 
-  // Find the schedule grid element once when overlay becomes visible
+  // Find and track the scrollable container's visible area
   useEffect(() => {
     if (!hasOverlap) {
-      setGridElement(null);
+      setContainerRect(null);
       return;
     }
 
-    const grid = document.querySelector('[data-schedule-grid="true"]') as HTMLElement | null;
-    setGridElement(grid);
+    const updateRect = () => {
+      // Find the scrollable container (parent of the grid with overflow-x-auto)
+      const scrollContainer = document.querySelector('.calendar-scroll') as HTMLElement | null;
+      if (scrollContainer) {
+        setContainerRect(scrollContainer.getBoundingClientRect());
+      }
+    };
+
+    updateRect();
+
+    // Update on resize only (not scroll - we want fixed position)
+    window.addEventListener("resize", updateRect);
+
+    // Also update periodically in case of layout shifts
+    const interval = setInterval(updateRect, 500);
+
+    return () => {
+      window.removeEventListener("resize", updateRect);
+      clearInterval(interval);
+    };
   }, [hasOverlap]);
 
-  // Don't render if no overlap or no grid element
-  if (!hasOverlap || !gridElement) return null;
+  // Don't render if no overlap or no container rect
+  if (!hasOverlap || !containerRect) return null;
 
   const dateRangeLabel = solveRange
     ? `${formatEuropeanDate(solveRange.startISO)} – ${formatEuropeanDate(solveRange.endISO)}`
@@ -253,17 +426,21 @@ export default function SolverOverlay({
 
   return createPortal(
     <div
-      className="absolute inset-0 z-[100] flex items-center justify-center overflow-hidden"
+      className="fixed z-[1000] flex items-center justify-center overflow-hidden"
       style={{
+        top: containerRect.top,
+        left: containerRect.left,
+        width: containerRect.width,
+        height: containerRect.height,
         pointerEvents: "auto",
       }}
     >
       {/* Semi-transparent overlay without backdrop-blur to avoid bleeding */}
       <div className="absolute inset-0 bg-white/70 dark:bg-slate-900/70" />
 
-      {/* Content panel - 90% width of calendar */}
+      {/* Content panel - centered with 90% of calendar width */}
       <div
-        className="relative z-10 mx-4 flex max-w-[90%] flex-col items-center gap-5 rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        className="relative z-10 mx-4 flex w-[90%] flex-col items-center gap-5 rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
       >
         {/* Animated spinner */}
         <div className="relative h-14 w-14">
@@ -306,9 +483,132 @@ export default function SolverOverlay({
           </p>
         </div>
 
+        {/* Preparation phase indicator - shown before solutions arrive */}
+        {currentPhase && liveSolutions.length === 0 && (
+          <div className="flex items-center gap-3 rounded-lg bg-slate-50 px-4 py-3 dark:bg-slate-800">
+            <div className="h-2 w-2 animate-pulse rounded-full bg-indigo-500" />
+            <span className="text-sm text-slate-600 dark:text-slate-300">
+              {currentPhase}
+            </span>
+          </div>
+        )}
+
         {/* Live solutions chart */}
         {liveSolutions.length > 0 && (
           <LiveSolutionChart solutions={liveSolutions} elapsedMs={elapsedMs} />
+        )}
+
+        {/* Live stats - clickable to expand graphs */}
+        {liveStats && (
+          <div className="w-full">
+            <button
+              type="button"
+              onClick={() => setStatsGraphsExpanded(!statsGraphsExpanded)}
+              className="flex w-full flex-col gap-1.5 rounded-lg border border-transparent px-3 py-2 text-sm transition-colors hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-800/50"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-slate-500 dark:text-slate-400">Filled Open Slots:</span>
+                <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                  {liveStats.filledSlots}/{liveStats.totalRequiredSlots}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-slate-500 dark:text-slate-400">Shifts that are non-consecutive:</span>
+                <span
+                  className={`font-semibold tabular-nums ${
+                    liveStats.nonConsecutiveShifts === 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  {liveStats.nonConsecutiveShifts}
+                </span>
+              </div>
+              {liveStats.totalCliniciansWithTarget > 0 && (
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-slate-500 dark:text-slate-400">People within working hour range:</span>
+                  <span
+                    className={`font-semibold tabular-nums ${
+                      liveStats.cliniciansWithinHours === liveStats.totalCliniciansWithTarget
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-amber-600 dark:text-amber-400"
+                    }`}
+                  >
+                    {liveStats.cliniciansWithinHours}/{liveStats.totalCliniciansWithTarget}
+                  </span>
+                </div>
+              )}
+              <div className="mt-1 flex items-center justify-center gap-1 text-xs text-slate-400 dark:text-slate-500">
+                <span>{statsGraphsExpanded ? "Hide" : "Show"} graphs</span>
+                <ChevronIcon className="h-3 w-3" expanded={statsGraphsExpanded} />
+              </div>
+            </button>
+
+            {/* Expanded graphs panel */}
+            {statsGraphsExpanded && statsHistory.length > 1 && (
+              <div className="mt-3 grid grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                {/* Filled Slots graph */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Filled Slots
+                  </span>
+                  <MiniStatsChart
+                    data={statsHistory}
+                    dataKey="filledSlots"
+                    elapsedMs={elapsedMs}
+                    color="#6366f1"
+                    invertBetter={true}
+                    maxValue={liveStats.totalRequiredSlots}
+                  />
+                </div>
+
+                {/* Open Slots graph */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Open Slots
+                  </span>
+                  <MiniStatsChart
+                    data={statsHistory}
+                    dataKey="openSlots"
+                    elapsedMs={elapsedMs}
+                    color="#f59e0b"
+                    invertBetter={false}
+                  />
+                </div>
+
+                {/* Non-consecutive shifts graph */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Non-consecutive Shifts
+                  </span>
+                  <MiniStatsChart
+                    data={statsHistory}
+                    dataKey="nonConsecutiveShifts"
+                    elapsedMs={elapsedMs}
+                    color="#ef4444"
+                    invertBetter={false}
+                  />
+                </div>
+
+                {/* Working hours graph */}
+                {liveStats.totalCliniciansWithTarget > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Within Working Hours
+                    </span>
+                    <MiniStatsChart
+                      data={statsHistory}
+                      dataKey="cliniciansWithinHours"
+                      elapsedMs={elapsedMs}
+                      color="#10b981"
+                      invertBetter={true}
+                      maxValue={liveStats.totalCliniciansWithTarget}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {/* Collapsible Details section */}
@@ -386,6 +686,6 @@ export default function SolverOverlay({
         )}
       </div>
     </div>,
-    gridElement,
+    document.body,
   );
 }

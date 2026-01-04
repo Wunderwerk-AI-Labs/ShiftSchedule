@@ -1,8 +1,10 @@
 import asyncio
+import atexit
 from datetime import datetime, timedelta
 import json
 import multiprocessing
 import os
+import signal
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -31,6 +33,30 @@ DEBUG_SOLVER = os.getenv("DEBUG_SOLVER", "").lower() == "true"
 
 # Number of CPU cores to use for solver (leave 2 free for system responsiveness)
 SOLVER_NUM_WORKERS = max(1, multiprocessing.cpu_count() - 2)
+
+
+def _cleanup_solver_process():
+    """Aggressively cleanup any running solver subprocess."""
+    global _solver_process, _solver_is_running
+    if _solver_process is not None:
+        try:
+            if _solver_process.is_alive():
+                # First try graceful terminate
+                _solver_process.terminate()
+                _solver_process.join(timeout=2.0)
+                # If still alive, force kill
+                if _solver_process.is_alive():
+                    _solver_process.kill()
+                    _solver_process.join(timeout=1.0)
+        except Exception:
+            pass
+        finally:
+            _solver_process = None
+            _solver_is_running = False
+
+
+# Register cleanup on process exit
+atexit.register(_cleanup_solver_process)
 
 
 class SolverTimer:
@@ -519,10 +545,8 @@ def solve_week(payload: SolveWeekRequest, current_user: UserPublic = Depends(_ge
         })
         raise
     finally:
-        # Cleanup subprocess if still running
-        if _solver_process is not None and _solver_process.is_alive():
-            _solver_process.terminate()
-            _solver_process.join(timeout=1.0)
+        # Cleanup subprocess if still running (use aggressive cleanup)
+        _cleanup_solver_process()
 
         # Always clear the running flag when done
         with _solver_running_lock:
@@ -572,6 +596,9 @@ def _solve_week_impl(
         on_progress = _broadcast_solver_progress
 
     timer = SolverTimer()
+
+    # Broadcast phase progress for UI feedback
+    on_progress("phase", {"phase": "load_state", "label": "Loading schedule data..."})
     state = _load_state(current_user.username)
     timer.checkpoint("load_state")
     diagnostics: List[str] = []  # Track potential issues for debugging
@@ -605,6 +632,7 @@ def _solve_week_impl(
     day_index_by_iso = {date_iso: idx for idx, date_iso in enumerate(day_isos)}
     timer.checkpoint("date_setup")
 
+    on_progress("phase", {"phase": "slot_contexts", "label": "Analyzing shift patterns..."})
     slot_contexts = _collect_slot_contexts(state)
     slot_ids = {ctx["slot_id"] for ctx in slot_contexts}
     section_by_slot_id = {ctx["slot_id"]: ctx["section_id"] for ctx in slot_contexts}
@@ -615,6 +643,7 @@ def _solve_week_impl(
         )
     timer.checkpoint("slot_contexts")
 
+    on_progress("phase", {"phase": "create_variables", "label": "Setting up assignment options..."})
     holidays = state.holidays or []
     day_type_by_iso = {iso: _get_day_type(iso, holidays) for iso in day_isos}
     weekday_by_iso = {iso: _get_weekday_key(iso) for iso in day_isos}
@@ -707,6 +736,7 @@ def _solve_week_impl(
                     time_window_terms.append(var)
     timer.checkpoint("create_variables")
 
+    on_progress("phase", {"phase": "overlap_constraints", "label": "Adding schedule conflict rules..."})
     # Diagnostic: check if we have any variables at all
     if not var_map:
         # Figure out why no variables were created
@@ -840,6 +870,7 @@ def _solve_week_impl(
                         model.Add(var_c <= 0)
     timer.checkpoint("overlap_constraints")
 
+    on_progress("phase", {"phase": "coverage_constraints", "label": "Applying staffing requirements..."})
     # Coverage + rules
     coverage_terms = []
     slack_terms = []
@@ -939,6 +970,7 @@ def _solve_week_impl(
         slack_terms.append(slack * order_weight)
     timer.checkpoint("coverage_constraints")
 
+    on_progress("phase", {"phase": "on_call_rest_days", "label": "Setting up on-call rest rules..."})
     # On-call rest days
     rest_class_id = solver_settings.onCallRestClassId
     rest_before = max(0, solver_settings.onCallRestDaysBefore or 0)
@@ -1046,6 +1078,7 @@ def _solve_week_impl(
         notes.append(f"WARNING: {len(rest_day_conflicts)} manual assignment(s) violate on-call rest day rules.")
     timer.checkpoint("on_call_rest_days")
 
+    on_progress("phase", {"phase": "working_hours_constraints", "label": "Balancing working hours..."})
     hours_penalty_terms: List[cp_model.IntVar] = []
     total_days = len(target_day_isos)
     scale = total_days / 7.0 if total_days else 0
@@ -1111,6 +1144,7 @@ def _solve_week_impl(
         hours_penalty_terms.append(under_blocks + over_blocks)
     timer.checkpoint("working_hours_constraints")
 
+    on_progress("phase", {"phase": "continuous_shift_constraints", "label": "Grouping consecutive shifts..."})
     # Continuous shift preference: reward assigning adjacent slots to same clinician
     # We use AddMultiplicationEquality to create: both = var_a * var_b
     # This is 1 only when both adjacent slots are assigned to the same clinician
@@ -1154,6 +1188,7 @@ def _solve_week_impl(
                                 continuous_terms.append(both)
     timer.checkpoint("continuous_shift_constraints")
 
+    on_progress("phase", {"phase": "objective_setup", "label": "Finalizing optimization goals..."})
     total_slack = sum(slack_terms) if slack_terms else 0
     total_coverage = sum(coverage_terms) if coverage_terms else 0
 
@@ -1199,6 +1234,7 @@ def _solve_week_impl(
         )
     timer.checkpoint("objective_setup")
 
+    on_progress("phase", {"phase": "solve", "label": "Solving constraints..."})
     # Solution callback to track when solutions are found and check for cancellation
     class SolutionCallback(cp_model.CpSolverSolutionCallback):
         def __init__(self, timer: SolverTimer, cancel_event_ref, var_map: Dict, progress_callback):

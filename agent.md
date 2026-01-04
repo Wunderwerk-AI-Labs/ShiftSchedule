@@ -587,6 +587,7 @@ Subprocess architecture (force abort):
   - `force=true`: Immediately terminates the subprocess via `Process.terminate()` then `Process.kill()` if needed.
 - This enables instant abort even when the solver is stuck without finding new solutions.
 - Global tracking: `_solver_process` holds the subprocess reference, `_solver_cancel_event` for graceful abort.
+- Subprocess cleanup: `atexit` handler and aggressive cleanup function (`_cleanup_solver_process`) ensure subprocesses are killed on backend restart/crash. Uses `terminate()` first, then `kill()` after 2s timeout.
 
 SSE live updates (real-time progress):
 - Endpoint: `GET /v1/solve/progress?token=<jwt>` (Server-Sent Events stream).
@@ -603,14 +604,23 @@ Solver overlay (SolverOverlay.tsx):
 - Renders inside the schedule grid element via `createPortal(content, gridElement)`.
 - Uses absolute positioning (`absolute inset-0`) so it scrolls with the grid content.
 - Only shows when the displayed week overlaps with the solve range.
+- Panel width: 90% of calendar width (no max-width cap).
 - Components:
   - Animated spinner with indigo accent.
   - Date range label (DD.MM.YYYY format).
+  - Preparation phase indicator: shows current solver phase before first solution (e.g., "Loading schedule data...", "Solving constraints...").
   - Live solution chart: SVG line chart showing objective value over time (log scale, inverted so better scores appear higher).
+  - Live stats display (clickable to expand graphs):
+    - Filled Open Slots: X/Y
+    - Shifts that are non-consecutive: N (amber if > 0)
+    - People within working hour range: X/Y (only shown if clinicians have targets; amber if not all OK)
+  - Stats graphs panel (expandable): mini sparkline charts for each metric showing evolution over time.
   - Collapsible details table: solution number, time, score, and delta percentage.
   - Elapsed time counter (MM:SS format).
   - Action button: "Abort" (rose/red) when no solutions yet, "Apply Solution" (indigo/blue) once a solution is found.
+- Working hours scaling: uses working days (Mon-Fri) minus holidays, not total days. E.g., 4 working days = 4/5 of weekly target.
 - Grid element requires `position: relative` for absolute positioning to work (added to ScheduleGrid.tsx).
+- Solver stats calculation: modular function in `src/lib/solverStats.ts` (`calculateSolverLiveStats`).
 
 Automated Shift Planning panel (frontend):
 - Timeframe: "Current week" and "Today" quick buttons; custom date pickers (DD.MM.YYYY) for start/end displayed inline with dash separator.
@@ -846,6 +856,7 @@ Frontend
 - `src/api/client.ts`
 - `src/lib/shiftRows.ts` (weeklyTemplate normalization, colBand safeguards, legacy shiftRowId helpers)
 - `src/lib/schedule.ts` (rendered assignment map, time intervals, Rest Day pool logic)
+- `src/lib/solverStats.ts` (live solver stats calculation: filled slots, non-consecutive shifts, working hours)
 
 Backend
 - `backend/main.py` (app setup + router wiring)

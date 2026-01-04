@@ -284,6 +284,7 @@ export default function WeeklySchedulePage({
   const autoPlanAbortRef = useRef<AbortController | null>(null);
   const [liveSolutions, setLiveSolutions] = useState<LiveSolution[]>([]);
   const liveSolutionsRef = useRef<LiveSolution[]>([]);
+  const [solverPhase, setSolverPhase] = useState<string | null>(null);
   const [solverHistory, setSolverHistory] = useState<SolverHistoryEntry[]>([]);
   const [solverInfoOpen, setSolverInfoOpen] = useState(false);
   const [solverTimeoutSeconds, setSolverTimeoutSeconds] = useState(60);
@@ -344,10 +345,16 @@ export default function WeeklySchedulePage({
     // Clear previous solutions when starting a new solve
     setLiveSolutions([]);
     liveSolutionsRef.current = [];
+    setSolverPhase(null);
 
     const unsubscribe = subscribeSolverProgress(
       (event) => {
-        if (event.event === "solution") {
+        if (event.event === "phase") {
+          // Store the human-readable label from the backend
+          setSolverPhase(event.data.label);
+        } else if (event.event === "solution") {
+          // Once we get solutions, clear the phase (we're in solve mode)
+          setSolverPhase(null);
           const newSolution = {
             solution_num: event.data.solution_num,
             time_ms: event.data.time_ms,
@@ -2983,6 +2990,10 @@ export default function WeeklySchedulePage({
         }}
         onAbort={handleAbortAutomatedPlanning}
         liveSolutions={liveSolutions}
+        scheduleRows={scheduleRows}
+        clinicians={clinicians}
+        holidays={holidayDates}
+        currentPhase={solverPhase}
       />
 
       <SolverInfoModal
