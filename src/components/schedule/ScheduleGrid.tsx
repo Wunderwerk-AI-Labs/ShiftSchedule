@@ -14,7 +14,7 @@ import EmptySlotPill from "./EmptySlotPill";
 import RowLabel from "./RowLabel";
 import ClinicianPickerPopover from "./ClinicianPickerPopover";
 import type { ClinicianOption } from "./ClinicianPickerPopover";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import type { ScheduleRow } from "../../lib/shiftRows";
 import { getContrastTextColor } from "../../lib/shiftRows";
@@ -193,8 +193,6 @@ export default function ScheduleGrid({
     } | null;
     dragOverKey: string | null;
   }>({ dragging: null, dragOverKey: null });
-  const dayHeaderRef = useRef<HTMLDivElement | null>(null);
-  const [dayHeaderHeight, setDayHeaderHeight] = useState(0);
   const [hoveredClassCell, setHoveredClassCell] = useState<{
     rowId: string;
     dateISO: string;
@@ -432,20 +430,6 @@ export default function ScheduleGrid({
     };
   }, [dragState.dragging, onRemoveAssignment]);
 
-  useLayoutEffect(() => {
-    const node = dayHeaderRef.current;
-    if (!node) return;
-    const update = () => {
-      const nextHeight = node.getBoundingClientRect().height;
-      setDayHeaderHeight(nextHeight);
-    };
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [dayGroups.length]);
-
   const pickerClinicians = pickerState.open
     ? getClinicianOptionsForSlot(pickerState.rowId, pickerState.dateISO)
     : [];
@@ -536,7 +520,7 @@ export default function ScheduleGrid({
                     )}, minmax(${dayColumnMin}px, 1fr))`,
                   }}
                 >
-                  <div className="sticky top-0 z-30 flex items-center border-r-2 border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900 sm:px-4">
+                  <div className="sticky top-0 z-30 flex items-center border-b border-r-2 border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900 sm:px-4">
                     <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
                       {leftHeaderTitle}
                     </div>
@@ -559,9 +543,8 @@ export default function ScheduleGrid({
                   return (
                     <div
                       key={`day-${dateISO}`}
-                      ref={groupIndex === 0 ? dayHeaderRef : undefined}
                       className={cx(
-                        "sticky top-0 z-30 relative border-r-2 border-slate-300 px-3 py-2 text-center overflow-visible dark:border-slate-700 sm:px-4",
+                        "sticky top-0 z-30 relative border-b border-r-2 border-slate-300 px-2 py-1 text-center overflow-visible dark:border-slate-700 sm:px-3",
                         isHoliday
                           ? "bg-[#F3E8FF] dark:bg-slate-800"
                           : isWeekend
@@ -575,14 +558,14 @@ export default function ScheduleGrid({
                       )}
                       style={{ gridColumn: `span ${group.columns.length}` }}
                     >
-                      <div className="flex flex-col items-center justify-center gap-1">
-                        <div className="flex items-center justify-center gap-2">
-                          <div className="text-[12px] font-semibold tracking-wide text-slate-500 dark:text-slate-300">
+                      <div className="flex flex-col items-center justify-center gap-0.5">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <div className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-slate-300">
                             {weekday}
                           </div>
-                          <div className="text-[12px] font-normal tracking-wide text-slate-900 dark:text-slate-100">
+                          <div className="text-[11px] font-normal tracking-wide text-slate-900 dark:text-slate-100">
                             {isToday ? (
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100">
+                              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100">
                                 {dayOfMonth}
                               </span>
                             ) : (
@@ -591,55 +574,12 @@ export default function ScheduleGrid({
                           </div>
                         </div>
                         {holidayName ? (
-                          <div className="max-w-[12ch] truncate text-[9px] font-normal text-purple-700 dark:text-purple-200">
+                          <div className="max-w-[12ch] truncate text-[8px] font-normal leading-tight text-purple-700 dark:text-purple-200">
                             {holidayName}
                           </div>
                         ) : null}
                       </div>
                     </div>
-                  );
-                })}
-
-                <div
-                  className="sticky z-20 border-b border-r-2 border-slate-300 bg-white px-3 py-1 dark:border-slate-700 dark:bg-slate-900 sm:px-4"
-                  style={{ top: dayHeaderHeight }}
-                />
-                {columns.map((column, index) => {
-                  const { dateISO } = column;
-                  const isLastCol = index === columns.length - 1;
-                  const nextColumn = columns[index + 1];
-                  const isDayDivider =
-                    !isLastCol && nextColumn?.dateISO !== column.dateISO;
-                  const holidayName = holidayNameByDate?.[dateISO];
-                  const isHoliday =
-                    Boolean(holidayName) || (holidayDates?.has(dateISO) ?? false);
-                  const isWeekend =
-                    column.date.getDay() === 0 || column.date.getDay() === 6;
-                  const isOtherDay =
-                    !!dragState.dragging && dragState.dragging.dateISO !== dateISO;
-                  const isActiveDay =
-                    !!dragState.dragging && dragState.dragging.dateISO === dateISO;
-                  return (
-                    <div
-                      key={`time-${dateISO}-${column.colOrder}-${index}`}
-                      className={cx(
-                        "sticky z-20 border-b border-r-2 border-slate-300 px-3 py-1 text-center text-[9px] font-semibold text-slate-400 dark:border-slate-700 sm:px-4",
-                        isHoliday
-                          ? "bg-[#F3E8FF] dark:bg-slate-800"
-                          : isWeekend
-                            ? "bg-[#F3F4F6] dark:bg-slate-800"
-                            : "bg-slate-50 dark:bg-slate-900",
-                        isActiveDay && "bg-sky-50",
-                        isOtherDay && "bg-slate-200/70 text-slate-400 opacity-60",
-                        isDayDivider &&
-                          "border-solid border-r-2 border-slate-300 dark:border-slate-700",
-                        { "border-r-0": isLastCol },
-                      )}
-                      style={{
-                        top: dayHeaderHeight,
-                        borderRightStyle: isDayDivider ? "solid" : "dashed",
-                      }}
-                    />
                   );
                 })}
 
@@ -1479,7 +1419,7 @@ function RowSection({
               subShiftSeparatorClass,
               cellBgClass,
               isDayDivider &&
-                "border-solid border-r-2 border-slate-300 dark:border-slate-700",
+                "border-solid border-r-2 border-r-slate-300 dark:border-r-slate-700",
               { "border-r-0": isLastCol },
             )}
             style={{
@@ -1712,7 +1652,7 @@ function LocationSeparatorRow({
   return (
     <>
       {/* Left header cell - empty */}
-      <div className="row border-t-2 border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900" />
+      <div className="row border-t-2 border-r-2 border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900" />
       {/* Time label cells for each column */}
       {columns.map((column, index) => {
         const key = locationId
@@ -1732,7 +1672,7 @@ function LocationSeparatorRow({
           <div
             key={`loc-time-${column.dateISO}-${column.colOrder}-${index}`}
             className={cx(
-              "row border-t-2 border-r-2 border-slate-300 px-1 py-0.5 text-center text-[8px] font-medium text-slate-400 dark:border-slate-700",
+              "row border-t-2 border-r-2 border-slate-300 px-1 py-0.5 text-center text-[8px] font-medium text-slate-700 dark:text-slate-200 dark:border-slate-700",
               isHoliday
                 ? "bg-[#F3E8FF] dark:bg-slate-800"
                 : isWeekend
