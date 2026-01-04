@@ -63,6 +63,7 @@ Schedule card
   - Only necessary, Distribute all, Reset to free (week and per day), with tooltips.
 - Week publication uses a **Publish** toggle pill in the header, placed to the right of the Open Slots badge.
 - Rule violations badge sits next to Open Slots only when violations exist; click to see details and highlight the related pills (red).
+- Split shifts badge: shows count of non-consecutive shifts (gaps between assignments for the same clinician on the same day). Hover badge to highlight all split shift pills; hover/click individual items in the popover to highlight specific pills with connection lines (same red styling as rule violations).
 
 Rows
 - Sections are stored as class rows (MRI, CT, Sonography, On Call, etc.) and are selected inside template blocks (no separate section/shift panel).
@@ -199,6 +200,7 @@ Solver Settings
 - Rule violations are evaluated for the current week and surfaced in the header badge; affected pills are shown in red.
 - Violations include: rest-day conflicts, same-day location mismatches (when enforced), and overlapping shift times.
 - **Click-to-scroll for violations**: Clicking a rule violation in the popover scrolls the schedule grid to show the responsible assignment pill (smooth scroll to center).
+- **Click-to-scroll for split shifts**: Clicking a split shift item in the popover scrolls to and highlights the relevant pills with connection lines.
 - Automated planning runs the week solver over the selected date range in one call and shows an ETA based on the last run's per-day duration.
 - **Optimization weights**: Collapsible section in the Solver Info modal (gear icon) allows configuring objective weights:
   - Coverage (1000), Slack (1000), Total Assignments (100), Slot Priority (10), Time Window (5), Gap Penalty (50), Section Preference (1), Working Hours (1).

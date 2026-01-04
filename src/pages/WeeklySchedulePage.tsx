@@ -362,6 +362,7 @@ export default function WeeklySchedulePage({
   const [nonConsecutiveShiftsOpen, setNonConsecutiveShiftsOpen] = useState(false);
   const [isSplitShiftsHovered, setIsSplitShiftsHovered] = useState(false);
   const [activeSplitShiftId, setActiveSplitShiftId] = useState<string | null>(null);
+  const [hoveredSplitShiftId, setHoveredSplitShiftId] = useState<string | null>(null);
   const ruleViolationsRef = useRef<HTMLDivElement | null>(null);
   const nonConsecutiveShiftsRef = useRef<HTMLDivElement | null>(null);
 
@@ -394,6 +395,7 @@ export default function WeeklySchedulePage({
   useEffect(() => {
     if (!nonConsecutiveShiftsOpen) {
       setActiveSplitShiftId(null);
+      setHoveredSplitShiftId(null);
     }
   }, [nonConsecutiveShiftsOpen]);
 
@@ -1938,27 +1940,37 @@ export default function WeeklySchedulePage({
   }, [nonConsecutiveShifts]);
 
   const highlightedSplitShiftKeys = useMemo(() => {
+    // Priority: active (clicked) > hovered item > hovered badge
     if (activeSplitShiftId) {
       const match = nonConsecutiveShifts.find((shift) => shift.id === activeSplitShiftId);
+      return match ? new Set(match.assignmentKeys) : undefined;
+    }
+    if (hoveredSplitShiftId) {
+      const match = nonConsecutiveShifts.find((shift) => shift.id === hoveredSplitShiftId);
       return match ? new Set(match.assignmentKeys) : undefined;
     }
     if (isSplitShiftsHovered) {
       return splitShiftAssignmentKeys.size ? new Set(splitShiftAssignmentKeys) : undefined;
     }
     return undefined;
-  }, [activeSplitShiftId, isSplitShiftsHovered, nonConsecutiveShifts, splitShiftAssignmentKeys]);
+  }, [activeSplitShiftId, hoveredSplitShiftId, isSplitShiftsHovered, nonConsecutiveShifts, splitShiftAssignmentKeys]);
 
   // Split shifts to show connection lines for
   const visibleSplitShiftsForLines = useMemo(() => {
+    // Priority: active (clicked) > hovered item > hovered badge
     if (activeSplitShiftId) {
       const match = nonConsecutiveShifts.find((shift) => shift.id === activeSplitShiftId);
+      return match ? [match] : [];
+    }
+    if (hoveredSplitShiftId) {
+      const match = nonConsecutiveShifts.find((shift) => shift.id === hoveredSplitShiftId);
       return match ? [match] : [];
     }
     if (isSplitShiftsHovered) {
       return nonConsecutiveShifts;
     }
     return [];
-  }, [activeSplitShiftId, isSplitShiftsHovered, nonConsecutiveShifts]);
+  }, [activeSplitShiftId, hoveredSplitShiftId, isSplitShiftsHovered, nonConsecutiveShifts]);
 
   const showSplitShiftLines = visibleSplitShiftsForLines.length > 0;
 
@@ -2801,10 +2813,12 @@ export default function WeeklySchedulePage({
                         setActiveSplitShiftId((prev) => (prev === shift.id ? null : shift.id));
                         scrollToAssignmentKeys(shift.assignmentKeys);
                       }}
+                      onMouseEnter={() => setHoveredSplitShiftId(shift.id)}
+                      onMouseLeave={() => setHoveredSplitShiftId(null)}
                       className={cx(
                         "w-full rounded-lg border px-2 py-1 text-left transition-colors",
                         activeSplitShiftId === shift.id
-                          ? "border-orange-300 bg-orange-50 dark:border-orange-500/50 dark:bg-orange-900/30"
+                          ? "border-rose-300 bg-rose-50 dark:border-rose-500/50 dark:bg-rose-900/30"
                           : "border-slate-100 bg-white hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900/70",
                       )}
                     >
@@ -2932,6 +2946,7 @@ export default function WeeklySchedulePage({
             assignmentMap={renderAssignmentMap}
             violatingAssignmentKeys={violatingAssignmentKeys}
             highlightedAssignmentKeys={highlightedViolationKeys}
+            highlightedSplitShiftKeys={highlightedSplitShiftKeys}
             highlightOpenSlots={isOpenSlotsHovered}
             holidayDates={holidayDates}
             holidayNameByDate={holidayNameByDate}
@@ -3516,6 +3531,11 @@ export default function WeeklySchedulePage({
       <ViolationLinesOverlay
         violations={visibleViolationsForLines}
         visible={showViolationLines}
+      />
+
+      <ViolationLinesOverlay
+        violations={visibleSplitShiftsForLines}
+        visible={showSplitShiftLines}
       />
 
       <SolverOverlay

@@ -196,28 +196,22 @@ export default function AssignmentPill({
   const showDragFocus = isDragFocus;
   const hasWarning = showNoEligibilityWarning || showIneligibleWarning;
   const hasSegments = Boolean(timeSegments?.length);
-  const segmentFreeClass = showViolation
+  const segmentFreeClass = showViolation || showHighlight
     ? "bg-rose-100/80 dark:bg-rose-900/40"
     : showDragFocus
       ? "bg-sky-200 dark:bg-sky-700/60"
-      : showHighlight
-        ? "bg-emerald-100/80 dark:bg-emerald-900/40"
-        : "bg-sky-50 dark:bg-sky-900/40";
+      : "bg-sky-50 dark:bg-sky-900/40";
   const segmentTakenClass = "bg-white dark:bg-slate-900";
-  const toneClass = showViolation
+  const toneClass = showViolation || showHighlight
     ? "border-2 border-rose-500 text-rose-900 dark:border-rose-400 dark:text-rose-100"
     : showDragFocus
       ? "border-2 border-slate-900 text-slate-900 dark:border-slate-100 dark:text-sky-50"
-      : showHighlight
-        ? "border-2 border-emerald-300 text-emerald-900 dark:border-emerald-500/60 dark:text-emerald-100"
-        : "border-sky-200 text-sky-800 dark:border-sky-500/40 dark:text-sky-100";
-  const toneBgClass = showViolation
+      : "border-sky-200 text-sky-800 dark:border-sky-500/40 dark:text-sky-100";
+  const toneBgClass = showViolation || showHighlight
     ? "bg-rose-100/80 dark:bg-rose-900/40"
     : showDragFocus
       ? "bg-sky-200 dark:bg-sky-700/60"
-      : showHighlight
-        ? "bg-emerald-100/80 dark:bg-emerald-900/40"
-        : "bg-sky-50 dark:bg-sky-900/40";
+      : "bg-sky-50 dark:bg-sky-900/40";
   return (
     <div
       data-assignment-pill="true"
@@ -230,18 +224,16 @@ export default function AssignmentPill({
         "group/pill relative w-full select-none overflow-visible rounded-xl border px-1.5 py-0.5 text-[11px] font-normal leading-4 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.7)]",
         "transition-colors hover:z-[500]",
         hasWarning ? "z-[500]" : "z-[1]",
-        showViolation &&
+        (showViolation || showHighlight) &&
           "ring-2 ring-rose-200/80 dark:ring-rose-500/40",
         toneClass,
         hasSegments ? "bg-transparent" : toneBgClass,
         !hasSegments &&
-          (showViolation
+          (showViolation || showHighlight
             ? "hover:border-rose-300 hover:bg-rose-100/80 dark:hover:border-rose-500/60 dark:hover:bg-rose-900/40"
             : showDragFocus
               ? "hover:border-slate-900 hover:bg-sky-200"
-              : showHighlight
-                ? "hover:border-emerald-300 hover:bg-emerald-100/80 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-900/40"
-                : "hover:border-sky-300 hover:bg-sky-100 dark:hover:border-sky-400/60 dark:hover:bg-sky-900/60"),
+              : "hover:border-sky-300 hover:bg-sky-100 dark:hover:border-sky-400/60 dark:hover:bg-sky-900/60"),
         className,
       )}
     >

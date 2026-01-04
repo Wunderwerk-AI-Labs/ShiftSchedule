@@ -13,6 +13,8 @@ type ViolationLinesOverlayProps = {
   visible: boolean;
   /** Container element to scope pill lookups (optional, defaults to document) */
   containerRef?: React.RefObject<HTMLElement>;
+  /** Line stroke color (default: "#ef4444" - red) */
+  strokeColor?: string;
 };
 
 type PillPosition = {
@@ -152,6 +154,7 @@ export default function ViolationLinesOverlay({
   violations,
   visible,
   containerRef,
+  strokeColor = "#ef4444",
 }: ViolationLinesOverlayProps) {
   const [lines, setLines] = useState<Line[]>([]);
 
@@ -234,7 +237,7 @@ export default function ViolationLinesOverlay({
           y1={line.y1}
           x2={line.x2}
           y2={line.y2}
-          stroke="#ef4444"
+          stroke={strokeColor}
           strokeWidth="2"
           strokeDasharray="6 4"
           strokeLinecap="round"

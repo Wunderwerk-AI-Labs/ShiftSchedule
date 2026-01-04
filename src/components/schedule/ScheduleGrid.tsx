@@ -59,6 +59,7 @@ type ScheduleGridProps = {
   onRemoveEmptySlot?: (args: { rowId: string; dateISO: string }) => void;
   violatingAssignmentKeys?: Set<string>;
   highlightedAssignmentKeys?: Set<string>;
+  highlightedSplitShiftKeys?: Set<string>;
   highlightOpenSlots?: boolean;
   clinicians?: Array<{
     id: string;
@@ -98,6 +99,7 @@ export default function ScheduleGrid({
   onRemoveEmptySlot,
   violatingAssignmentKeys,
   highlightedAssignmentKeys,
+  highlightedSplitShiftKeys,
   highlightOpenSlots = false,
   clinicians = [],
   getIsOnRestDay,
@@ -691,6 +693,7 @@ export default function ScheduleGrid({
                         unknownIntervalsByDate={unknownIntervalsByDate}
                         violatingAssignmentKeys={violatingAssignmentKeys}
                         highlightedAssignmentKeys={highlightedAssignmentKeys}
+                        highlightedSplitShiftKeys={highlightedSplitShiftKeys}
                         highlightOpenSlots={highlightOpenSlots}
                         rowKindById={rowKindById}
                         onEmptySlotClick={onAddAssignment ? handleEmptySlotClick : undefined}
@@ -756,6 +759,7 @@ function RowSection({
   unknownIntervalsByDate,
   violatingAssignmentKeys,
   highlightedAssignmentKeys,
+  highlightedSplitShiftKeys,
   highlightOpenSlots,
   rowKindById,
   onEmptySlotClick,
@@ -827,6 +831,7 @@ function RowSection({
   unknownIntervalsByDate: Map<string, Set<string>>;
   violatingAssignmentKeys?: Set<string>;
   highlightedAssignmentKeys?: Set<string>;
+  highlightedSplitShiftKeys?: Set<string>;
   highlightOpenSlots?: boolean;
   rowKindById: Map<string, "class" | "pool">;
   onEmptySlotClick?: (
@@ -1515,7 +1520,7 @@ function RowSection({
                               row.kind === "class" &&
                               !getIsQualified(assignment.clinicianId, activeRow.id)
                             }
-                            isHighlighted={false}
+                            isHighlighted={highlightedSplitShiftKeys?.has(violationKey)}
                             isViolation={highlightedAssignmentKeys?.has(violationKey)}
                             isDragging={isDraggingAssignment}
                             isDragFocus={isDragFocus || isDraggingAssignment}
