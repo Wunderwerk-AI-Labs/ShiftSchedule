@@ -2130,6 +2130,43 @@ export default function WeeklySchedulePage({
     );
   }, [templateSectionIds]);
 
+  // Clean up orphaned assignments when template slots are deleted
+  useEffect(() => {
+    if (!weeklyTemplate?.locations) return;
+    const validSlotIds = new Set<string>();
+    for (const loc of weeklyTemplate.locations) {
+      for (const slot of loc.slots) {
+        validSlotIds.add(slot.id);
+      }
+    }
+    // Pool rows are always valid assignment targets
+    const poolRowIds = new Set(poolRows.map((r) => r.id));
+
+    setAssignmentMap((prev) => {
+      let hasOrphans = false;
+      for (const [key] of prev) {
+        const { rowId } = splitAssignmentKey(key);
+        if (!poolRowIds.has(rowId) && !validSlotIds.has(rowId)) {
+          hasOrphans = true;
+          break;
+        }
+      }
+      if (!hasOrphans) return prev;
+
+      const next = new Map<string, Assignment[]>();
+      for (const [key, list] of prev) {
+        const { rowId } = splitAssignmentKey(key);
+        if (poolRowIds.has(rowId) || validSlotIds.has(rowId)) {
+          next.set(key, list);
+        }
+      }
+      console.log(
+        `[WeeklySchedulePage] Cleaned up ${prev.size - next.size} orphaned assignment(s)`,
+      );
+      return next;
+    });
+  }, [weeklyTemplate, poolRows]);
+
   const handleLogout = () => {
     if (hasLoaded && loadedUserId === currentUser.username) {
       const { state: normalized } = normalizeAppState({
