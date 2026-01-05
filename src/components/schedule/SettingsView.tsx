@@ -13,6 +13,7 @@ import WeeklyTemplateBuilder from "./WeeklyTemplateBuilder";
 import CustomSelect from "./CustomSelect";
 import CustomNumberInput from "./CustomNumberInput";
 import CustomDatePicker from "./CustomDatePicker";
+import DatabaseHealthCheck from "./DatabaseHealthCheck";
 
 type SettingsViewProps = {
   classRows: WorkplaceRow[];
@@ -922,6 +923,11 @@ export default function SettingsView({
           </div>
         </div>
       ) : null}
+
+      {/* Database Health Check - at the very bottom */}
+      <div className="mt-6">
+        <DatabaseHealthCheck />
+      </div>
     </div>
   );
 }

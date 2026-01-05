@@ -882,6 +882,9 @@ def _solve_range_impl(
             continue
         if is_on_vac(assignment.clinicianId, assignment.dateISO):
             continue
+        # Skip pool assignments - they are not slot assignments (rest day, vacation, etc.)
+        if assignment.rowId.startswith("pool-"):
+            continue
         # Track ALL manual assignments for gap penalty calculations
         if assignment.rowId in all_slot_intervals:
             all_manual_assignments.setdefault((assignment.clinicianId, assignment.dateISO), []).append(

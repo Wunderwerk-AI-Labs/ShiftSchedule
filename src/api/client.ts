@@ -376,6 +376,36 @@ export async function saveState(state: AppState): Promise<AppState> {
   return res.json();
 }
 
+export type DatabaseHealthIssue = {
+  type: "orphaned_assignment" | "slot_collision" | "duplicate_assignment" | "colband_explosion";
+  severity: "error" | "warning";
+  message: string;
+  details: Record<string, unknown>;
+};
+
+export type DatabaseHealthCheckResult = {
+  healthy: boolean;
+  issues: DatabaseHealthIssue[];
+  stats: {
+    totalAssignments: number;
+    totalSlots: number;
+    totalClinicians: number;
+    totalLocations: number;
+    totalBlocks: number;
+  };
+};
+
+export async function checkDatabaseHealth(): Promise<DatabaseHealthCheckResult> {
+  const res = await fetch(`${API_BASE}/v1/state/health`, {
+    headers: buildHeaders(),
+  });
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    throw new Error(`Failed to check database health: ${res.status}`);
+  }
+  return res.json();
+}
+
 export type SolverDebugSolutionTime = {
   solution: number;
   time_ms: number;
