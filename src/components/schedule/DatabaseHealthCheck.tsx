@@ -94,8 +94,8 @@ const STAT_EXPLANATIONS: Record<StatKey, { title: string; description: string }>
     description: "The number of section blocks defined in your template (e.g., MRI, CT, Sonography). Section blocks define what types of shifts exist and can be placed into the template grid.",
   },
   poolAssignments: {
-    title: "Pool Assignments",
-    description: "Assignments to special pools like Rest Day and Vacation. These are separate from regular slot assignments and are used to track when clinicians are not available for regular shifts.",
+    title: "Pool Assignments (Persisted)",
+    description: "Manual assignments to Rest Day or Vacation pools that are saved in the database. Note: The calendar may show additional pool entries that are dynamically generated (e.g., automatic rest days before/after on-call shifts, or vacation entries from clinician vacation ranges). Those generated entries are not counted here as they are not persisted.",
   },
 };
 
@@ -129,10 +129,13 @@ function StatCard({
 function StatExplanationPanel({
   statKey,
   onClose,
+  poolDetails,
 }: {
   statKey: StatKey;
   onClose: () => void;
+  poolDetails?: DatabaseHealthIssue | null;
 }) {
+  const [showDetails, setShowDetails] = useState(false);
   const explanation = STAT_EXPLANATIONS[statKey];
 
   return (
@@ -140,13 +143,29 @@ function StatExplanationPanel({
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-start gap-2">
           <InfoIcon className="mt-0.5 h-4 w-4 flex-shrink-0 text-indigo-500" />
-          <div>
+          <div className="flex-1">
             <div className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
               {explanation.title}
             </div>
             <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
               {explanation.description}
             </p>
+            {statKey === "poolAssignments" && poolDetails && Object.keys(poolDetails.details).length > 0 && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDetails(!showDetails)}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200"
+                >
+                  {showDetails ? "Hide Details" : "Show Persisted Assignments"}
+                </button>
+                {showDetails && (
+                  <pre className="mt-2 max-h-32 overflow-auto rounded bg-white/50 p-2 text-xs text-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
+                    {JSON.stringify(poolDetails.details, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <button
@@ -395,15 +414,20 @@ export default function DatabaseHealthCheck() {
             <StatExplanationPanel
               statKey={selectedStat}
               onClose={() => setSelectedStat(null)}
+              poolDetails={selectedStat === "poolAssignments"
+                ? result.issues.find(i => i.type === "pool_assignment_info")
+                : null}
             />
           )}
 
-          {/* Issues */}
-          {result.issues.length > 0 && (
+          {/* Issues - filter out pool_assignment_info as it's shown via stat click */}
+          {result.issues.filter(i => i.type !== "pool_assignment_info").length > 0 && (
             <div className="space-y-2">
-              {result.issues.map((issue, index) => (
-                <IssueCard key={index} issue={issue} />
-              ))}
+              {result.issues
+                .filter(i => i.type !== "pool_assignment_info")
+                .map((issue, index) => (
+                  <IssueCard key={index} issue={issue} />
+                ))}
             </div>
           )}
         </div>
