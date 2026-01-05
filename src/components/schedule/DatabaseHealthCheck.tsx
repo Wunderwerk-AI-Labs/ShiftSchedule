@@ -53,6 +53,116 @@ function ErrorIcon({ className }: { className?: string }) {
   );
 }
 
+function InfoIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      className={className}
+    >
+      <path
+        fillRule="evenodd"
+        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+type StatKey = "assignments" | "slots" | "clinicians" | "locations" | "blocks" | "poolAssignments";
+
+const STAT_EXPLANATIONS: Record<StatKey, { title: string; description: string }> = {
+  assignments: {
+    title: "Total Assignments",
+    description: "The total number of clinician assignments in your schedule. Each time a clinician is assigned to a slot on a specific date counts as one assignment. This includes both manual assignments and those created by the solver.",
+  },
+  slots: {
+    title: "Template Slots",
+    description: "The number of unique slot positions defined in your Weekly Calendar Template. Each slot represents a specific section at a specific time on a specific day type (e.g., 'MRI 08:00-12:00 on Monday'). Slots are reused across all weeks.",
+  },
+  clinicians: {
+    title: "Clinicians",
+    description: "The total number of clinicians/staff members in your system. These are the people who can be assigned to shifts.",
+  },
+  locations: {
+    title: "Locations",
+    description: "The number of locations (e.g., hospitals, clinics, departments) configured in your template. Each location can have its own set of rows and slots.",
+  },
+  blocks: {
+    title: "Section Blocks",
+    description: "The number of section blocks defined in your template (e.g., MRI, CT, Sonography). Section blocks define what types of shifts exist and can be placed into the template grid.",
+  },
+  poolAssignments: {
+    title: "Pool Assignments",
+    description: "Assignments to special pools like Rest Day and Vacation. These are separate from regular slot assignments and are used to track when clinicians are not available for regular shifts.",
+  },
+};
+
+function StatCard({
+  value,
+  label,
+  statKey,
+  onClick,
+}: {
+  value: number;
+  label: string;
+  statKey: StatKey;
+  onClick: (key: StatKey) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(statKey)}
+      className="rounded-lg p-2 text-center transition-colors hover:bg-slate-100 dark:hover:bg-slate-700"
+    >
+      <div className="text-lg font-semibold text-slate-700 dark:text-slate-200">
+        {value}
+      </div>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {label}
+      </div>
+    </button>
+  );
+}
+
+function StatExplanationPanel({
+  statKey,
+  onClose,
+}: {
+  statKey: StatKey;
+  onClose: () => void;
+}) {
+  const explanation = STAT_EXPLANATIONS[statKey];
+
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-800 dark:bg-indigo-900/20">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
+          <InfoIcon className="mt-0.5 h-4 w-4 flex-shrink-0 text-indigo-500" />
+          <div>
+            <div className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+              {explanation.title}
+            </div>
+            <p className="mt-1 text-xs text-indigo-600 dark:text-indigo-400">
+              {explanation.description}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded p-0.5 text-indigo-400 hover:bg-indigo-100 hover:text-indigo-600 dark:hover:bg-indigo-800 dark:hover:text-indigo-300"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-4 w-4">
+            <path d="M5.28 4.22a.75.75 0 00-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 101.06 1.06L8 9.06l2.72 2.72a.75.75 0 101.06-1.06L9.06 8l2.72-2.72a.75.75 0 00-1.06-1.06L8 6.94 5.28 4.22z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function IssueCard({ issue }: { issue: DatabaseHealthIssue }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -61,9 +171,11 @@ function IssueCard({ issue }: { issue: DatabaseHealthIssue }) {
     slot_collision: "Slot Collisions",
     duplicate_assignment: "Duplicate Assignments",
     colband_explosion: "ColBand Overflow",
+    pool_assignment_info: "Pool Assignments",
   };
 
   const isError = issue.severity === "error";
+  const isInfo = issue.severity === "info";
 
   return (
     <div
@@ -71,12 +183,16 @@ function IssueCard({ issue }: { issue: DatabaseHealthIssue }) {
         "rounded-lg border p-3",
         isError
           ? "border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-900/20"
+          : isInfo
+          ? "border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-900/20"
           : "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20"
       )}
     >
       <div className="flex items-start gap-2">
         {isError ? (
           <ErrorIcon className="mt-0.5 h-4 w-4 flex-shrink-0 text-rose-500" />
+        ) : isInfo ? (
+          <InfoIcon className="mt-0.5 h-4 w-4 flex-shrink-0 text-sky-500" />
         ) : (
           <WarningIcon className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
         )}
@@ -85,7 +201,11 @@ function IssueCard({ issue }: { issue: DatabaseHealthIssue }) {
             <span
               className={cx(
                 "text-xs font-medium uppercase tracking-wide",
-                isError ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"
+                isError
+                  ? "text-rose-600 dark:text-rose-400"
+                  : isInfo
+                  ? "text-sky-600 dark:text-sky-400"
+                  : "text-amber-600 dark:text-amber-400"
               )}
             >
               {typeLabels[issue.type] || issue.type}
@@ -95,16 +215,22 @@ function IssueCard({ issue }: { issue: DatabaseHealthIssue }) {
                 "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
                 isError
                   ? "bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-300"
+                  : isInfo
+                  ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300"
                   : "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300"
               )}
             >
-              {isError ? "Error" : "Warning"}
+              {isError ? "Error" : isInfo ? "Info" : "Warning"}
             </span>
           </div>
           <p
             className={cx(
               "mt-1 text-sm",
-              isError ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300"
+              isError
+                ? "text-rose-700 dark:text-rose-300"
+                : isInfo
+                ? "text-sky-700 dark:text-sky-300"
+                : "text-amber-700 dark:text-amber-300"
             )}
           >
             {issue.message}
@@ -117,6 +243,8 @@ function IssueCard({ issue }: { issue: DatabaseHealthIssue }) {
                 "mt-2 text-xs font-medium",
                 isError
                   ? "text-rose-600 hover:text-rose-800 dark:text-rose-400 dark:hover:text-rose-200"
+                  : isInfo
+                  ? "text-sky-600 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-200"
                   : "text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200"
               )}
             >
@@ -138,10 +266,12 @@ export default function DatabaseHealthCheck() {
   const [result, setResult] = useState<DatabaseHealthCheckResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedStat, setSelectedStat] = useState<StatKey | null>(null);
 
   const runHealthCheck = async () => {
     setLoading(true);
     setError(null);
+    setSelectedStat(null);
     try {
       const res = await checkDatabaseHealth();
       setResult(res);
@@ -150,6 +280,10 @@ export default function DatabaseHealthCheck() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleStatClick = (key: StatKey) => {
+    setSelectedStat(selectedStat === key ? null : key);
   };
 
   return (
@@ -175,6 +309,7 @@ export default function DatabaseHealthCheck() {
 
       <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
         Check for data integrity issues like orphaned assignments, slot collisions, and database inconsistencies.
+        Click on any stat for an explanation.
       </p>
 
       {error && (
@@ -205,39 +340,63 @@ export default function DatabaseHealthCheck() {
               <>
                 <WarningIcon className="h-5 w-5 text-amber-500" />
                 <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                  {result.issues.length} issue{result.issues.length !== 1 ? "s" : ""} found
+                  {result.issues.filter(i => i.severity !== "info").length} issue{result.issues.filter(i => i.severity !== "info").length !== 1 ? "s" : ""} found
                 </span>
               </>
             )}
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-center dark:bg-slate-800">
-            <div>
-              <div className="text-lg font-semibold text-slate-700 dark:text-slate-200">
-                {result.stats.totalAssignments}
-              </div>
-              <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Assignments
-              </div>
+          {/* Stats - clickable */}
+          <div className="rounded-lg bg-slate-50 p-2 dark:bg-slate-800">
+            <div className="grid grid-cols-3 gap-1">
+              <StatCard
+                value={result.stats.totalAssignments}
+                label="Assignments"
+                statKey="assignments"
+                onClick={handleStatClick}
+              />
+              <StatCard
+                value={result.stats.totalSlots}
+                label="Slots"
+                statKey="slots"
+                onClick={handleStatClick}
+              />
+              <StatCard
+                value={result.stats.totalClinicians}
+                label="Clinicians"
+                statKey="clinicians"
+                onClick={handleStatClick}
+              />
             </div>
-            <div>
-              <div className="text-lg font-semibold text-slate-700 dark:text-slate-200">
-                {result.stats.totalSlots}
-              </div>
-              <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Slots
-              </div>
-            </div>
-            <div>
-              <div className="text-lg font-semibold text-slate-700 dark:text-slate-200">
-                {result.stats.totalClinicians}
-              </div>
-              <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Clinicians
-              </div>
+            <div className="mt-1 grid grid-cols-3 gap-1">
+              <StatCard
+                value={result.stats.totalLocations}
+                label="Locations"
+                statKey="locations"
+                onClick={handleStatClick}
+              />
+              <StatCard
+                value={result.stats.totalBlocks}
+                label="Sections"
+                statKey="blocks"
+                onClick={handleStatClick}
+              />
+              <StatCard
+                value={result.stats.poolAssignments ?? 0}
+                label="Pool Assigns"
+                statKey="poolAssignments"
+                onClick={handleStatClick}
+              />
             </div>
           </div>
+
+          {/* Stat explanation panel */}
+          {selectedStat && (
+            <StatExplanationPanel
+              statKey={selectedStat}
+              onClose={() => setSelectedStat(null)}
+            />
+          )}
 
           {/* Issues */}
           {result.issues.length > 0 && (

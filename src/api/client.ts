@@ -377,8 +377,8 @@ export async function saveState(state: AppState): Promise<AppState> {
 }
 
 export type DatabaseHealthIssue = {
-  type: "orphaned_assignment" | "slot_collision" | "duplicate_assignment" | "colband_explosion";
-  severity: "error" | "warning";
+  type: "orphaned_assignment" | "slot_collision" | "duplicate_assignment" | "colband_explosion" | "pool_assignment_info";
+  severity: "error" | "warning" | "info";
   message: string;
   details: Record<string, unknown>;
 };
@@ -392,6 +392,7 @@ export type DatabaseHealthCheckResult = {
     totalClinicians: number;
     totalLocations: number;
     totalBlocks: number;
+    poolAssignments: number;
   };
 };
 

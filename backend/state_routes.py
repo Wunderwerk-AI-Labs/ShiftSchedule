@@ -183,17 +183,41 @@ def check_database_health(current_user: UserPublic = Depends(_get_current_user))
             details={"locations": colband_issues},
         ))
 
+    # 5. Count pool assignments and show as info
+    pool_assignments = []
+    for assignment in state.assignments or []:
+        if assignment.rowId in pool_ids:
+            pool_assignments.append({
+                "assignmentId": assignment.id,
+                "rowId": assignment.rowId,
+                "dateISO": assignment.dateISO,
+                "clinicianId": assignment.clinicianId,
+            })
+
+    if pool_assignments:
+        issues.append(HealthCheckIssue(
+            type="pool_assignment_info",
+            severity="info",
+            message=f"{len(pool_assignments)} pool assignment(s) (Rest Day, Vacation, etc.)",
+            details={"assignments": pool_assignments[:10]},  # Limit to first 10
+        ))
+
     # Build stats
+    slot_assignments = [a for a in (state.assignments or []) if a.rowId not in pool_ids]
     stats = {
-        "totalAssignments": len(state.assignments or []),
+        "totalAssignments": len(slot_assignments),
         "totalSlots": len(valid_slot_ids),
         "totalClinicians": len(state.clinicians or []),
         "totalLocations": len(template.locations) if template else 0,
         "totalBlocks": len(template.blocks) if template else 0,
+        "poolAssignments": len(pool_assignments),
     }
 
+    # Only count errors and warnings as unhealthy (not info)
+    error_warning_issues = [i for i in issues if i.severity in ("error", "warning")]
+
     return DatabaseHealthCheckResult(
-        healthy=len(issues) == 0,
+        healthy=len(error_warning_issues) == 0,
         issues=issues,
         stats=stats,
     )
