@@ -84,25 +84,75 @@ export default function ColorPickerPopover({
   }, [isOpen, value]);
 
   useLayoutEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setPosition(null);
+      return;
+    }
     const button = buttonRef.current;
     const panel = popoverRef.current;
     if (!button || !panel) return;
-    const rect = button.getBoundingClientRect();
-    const padding = 8;
-    const width = panel.offsetWidth || 180;
-    const height = panel.offsetHeight || 140;
-    let nextLeft = rect.left;
-    let nextTop = rect.bottom + padding;
-    if (nextLeft + width + padding > window.innerWidth) {
-      nextLeft = window.innerWidth - width - padding;
-    }
-    if (nextTop + height + padding > window.innerHeight) {
-      nextTop = rect.top - height - padding;
-    }
-    nextLeft = Math.max(padding, nextLeft);
-    nextTop = Math.max(padding, nextTop);
-    setPosition({ top: nextTop, left: nextLeft });
+
+    const calculatePosition = () => {
+      const rect = button.getBoundingClientRect();
+      const padding = 8;
+
+      const panelRect = panel.getBoundingClientRect();
+      const width = Math.max(panelRect.width, panel.offsetWidth, 120);
+      const height = Math.max(panelRect.height, panel.offsetHeight, 100);
+
+      // Calculate available space above and below the button
+      const spaceBelow = window.innerHeight - rect.bottom - padding;
+      const spaceAbove = rect.top - padding;
+
+      const canFitBelow = spaceBelow >= height;
+      const canFitAbove = spaceAbove >= height;
+      const openAbove = canFitAbove && !canFitBelow
+        ? true
+        : !canFitAbove && canFitBelow
+          ? false
+          : spaceAbove > spaceBelow;
+      let nextTop = openAbove
+        ? rect.top - height - padding
+        : rect.bottom + padding;
+
+      // Horizontal positioning - prefer left-aligned with button
+      let nextLeft = rect.left;
+      if (nextLeft + width + padding > window.innerWidth) {
+        nextLeft = window.innerWidth - width - padding;
+      }
+
+      // Ensure popover stays within viewport bounds
+      nextLeft = Math.max(padding, Math.min(nextLeft, window.innerWidth - width - padding));
+      nextTop = Math.max(padding, Math.min(nextTop, window.innerHeight - height - padding));
+
+      setPosition({ top: nextTop, left: nextLeft });
+    };
+
+    // Calculate immediately, then again after a frame to get accurate dimensions
+    calculatePosition();
+    let rafId2: number | null = null;
+    const rafId = requestAnimationFrame(() => {
+      calculatePosition();
+      rafId2 = requestAnimationFrame(calculatePosition);
+    });
+
+    // Reposition on scroll or resize
+    const handleRepositionOrClose = () => {
+      // Close on scroll to avoid stale positioning in scrollable containers
+      setIsOpen(false);
+    };
+
+    window.addEventListener("scroll", handleRepositionOrClose, true);
+    window.addEventListener("resize", calculatePosition);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (rafId2 !== null) {
+        cancelAnimationFrame(rafId2);
+      }
+      window.removeEventListener("scroll", handleRepositionOrClose, true);
+      window.removeEventListener("resize", calculatePosition);
+    };
   }, [isOpen, options.length]);
 
   const hasValue = Boolean(value);
@@ -176,7 +226,11 @@ export default function ColorPickerPopover({
             "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
             popoverClassName,
           )}
-          style={position ?? undefined}
+          style={{
+            ...position,
+            // Hide until position is calculated to prevent flash
+            visibility: position ? "visible" : "hidden",
+          }}
         >
           <div className="grid grid-cols-4 gap-1">
             {palette.map((option) => (
