@@ -23,8 +23,10 @@ import type {
   WorkplaceRow,
 } from "../../api/client";
 import CustomTimePicker from "./CustomTimePicker";
+import ColorPickerPopover from "./ColorPickerPopover";
 import CustomSelect from "./CustomSelect";
 import { getContrastTextColor } from "../../lib/shiftRows";
+import { BLOCK_COLOR_OPTIONS } from "../../lib/colorPalette";
 
 type WeeklyTemplateBuilderProps = {
   template: WeeklyCalendarTemplate;
@@ -155,21 +157,6 @@ const emptyTemplateLocation = (locationId: string): WeeklyTemplateLocation => ({
 const sortByOrder = <T extends { order: number }>(items: T[]) =>
   [...items].sort((a, b) => a.order - b.order);
 
-const BLOCK_COLOR_OPTIONS: Array<{ id: string; color: string | null }> = [
-  { id: "none", color: null },
-  { id: "rose", color: "#FDE2E4" },
-  { id: "coral", color: "#FFD9C9" },
-  { id: "peach", color: "#FFE8D6" },
-  { id: "apricot", color: "#FFEFD1" },
-  { id: "butter", color: "#FFF4C1" },
-  { id: "lime", color: "#EEF6C8" },
-  { id: "mint", color: "#E6F7D9" },
-  { id: "seafoam", color: "#DDF6EE" },
-  { id: "sky", color: "#D9F0FF" },
-  { id: "periwinkle", color: "#DEE8FF" },
-  { id: "lavender", color: "#E8E1F5" },
-];
-
 export default function WeeklyTemplateBuilder({
   template,
   locations,
@@ -272,11 +259,6 @@ export default function WeeklyTemplateBuilder({
     left: number;
   } | null>(null);
   const addCellRef = useRef<HTMLDivElement | null>(null);
-  const [activeBlockColorId, setActiveBlockColorId] = useState<string | null>(null);
-  const [blockColorPopoverPosition, setBlockColorPopoverPosition] = useState({
-    top: 0,
-    left: 0,
-  });
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const [dragOverBlockId, setDragOverBlockId] = useState<string | null>(null);
   const [activeDayType, setActiveDayType] = useState<DayType>("mon");
@@ -359,31 +341,6 @@ export default function WeeklyTemplateBuilder({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [activeAddCell]);
-
-  useEffect(() => {
-    if (!activeBlockColorId) return;
-    const handler = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      if (
-        target.closest(
-          `[data-block-color-picker="${activeBlockColorId}"]`,
-        )
-      ) {
-        return;
-      }
-      if (
-        target.closest(
-          `[data-block-color-trigger="${activeBlockColorId}"]`,
-        )
-      ) {
-        return;
-      }
-      setActiveBlockColorId(null);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [activeBlockColorId]);
 
   useEffect(() => {
     setActiveAddCell(null);
@@ -1991,7 +1948,6 @@ export default function WeeklyTemplateBuilder({
           {blocks.map((block) => {
             const sectionName = sectionNameById.get(block.sectionId) ?? "Section";
             const blockColor = sectionColorById.get(block.sectionId) ?? block.color;
-            const customColorValue = blockColor ?? "#ffffff";
             return (
               <div
                 key={block.id}
@@ -2037,95 +1993,16 @@ export default function WeeklyTemplateBuilder({
                     setDragOverBlockId(null);
                   }}
                 >
-                  <button
-                    type="button"
-                    data-block-color-trigger={block.id}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      const padding = 8;
-                      const panelWidth = 180;
-                      const panelHeight = 120;
-                      let nextLeft = rect.left;
-                      let nextTop = rect.bottom + 8;
-                      if (nextLeft + panelWidth + padding > window.innerWidth) {
-                        nextLeft = window.innerWidth - panelWidth - padding;
-                      }
-                      if (nextTop + panelHeight + padding > window.innerHeight) {
-                        nextTop = rect.top - panelHeight - 8;
-                      }
-                      nextLeft = Math.max(padding, nextLeft);
-                      nextTop = Math.max(padding, nextTop);
-                      setBlockColorPopoverPosition({ top: nextTop, left: nextLeft });
-                      setActiveBlockColorId((prev) =>
-                        prev === block.id ? null : block.id,
-                      );
-                    }}
-                    className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
-                    aria-label="Select block color"
-                  >
-                    <span
-                      className={cx(
-                        "h-3 w-3 rounded-full",
-                        !blockColor && "border border-slate-300",
-                      )}
-                      style={blockColor ? { backgroundColor: blockColor } : undefined}
-                    />
-                  </button>
+                  <ColorPickerPopover
+                    value={blockColor ?? null}
+                    onChange={(color) => handleUpdateBlockColor(block.id, color)}
+                    options={BLOCK_COLOR_OPTIONS}
+                    label="Select block color"
+                    buttonClassName="h-5 w-5"
+                    swatchClassName="h-3 w-3"
+                  />
                   <span className="whitespace-nowrap">{sectionName}</span>
                 </div>
-                {activeBlockColorId === block.id ? (
-                  <div
-                    data-block-color-picker={block.id}
-                    className="fixed z-50 rounded-lg border border-slate-200 bg-white p-2 text-[10px] shadow-lg dark:border-slate-700 dark:bg-slate-900"
-                    style={{
-                      top: blockColorPopoverPosition.top,
-                      left: blockColorPopoverPosition.left,
-                    }}
-                  >
-                    <div className="grid grid-cols-4 gap-1">
-                      {BLOCK_COLOR_OPTIONS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"
-                          onClick={() => {
-                            handleUpdateBlockColor(block.id, option.color);
-                            setActiveBlockColorId(null);
-                          }}
-                          aria-label="Set block color"
-                        >
-                          <span
-                            className={cx(
-                              "h-3 w-3 rounded-full",
-                              option.color === null && "border border-slate-300",
-                            )}
-                            style={
-                              option.color ? { backgroundColor: option.color } : undefined
-                            }
-                          />
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-300">
-                        Custom
-                      </span>
-                      <label className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-                        <input
-                          type="color"
-                          value={customColorValue}
-                          onChange={(event) => {
-                            handleUpdateBlockColor(block.id, event.target.value);
-                            setActiveBlockColorId(null);
-                          }}
-                          className="h-5 w-5 cursor-pointer appearance-none rounded-full bg-transparent p-0"
-                          aria-label="Custom block color"
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : null}
                 <button
                   type="button"
                   onClick={() => handleDeleteBlock(block.id)}

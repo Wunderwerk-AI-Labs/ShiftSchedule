@@ -2,8 +2,10 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buttonPrimary, buttonSecondary, getPillToggleClasses } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
+import { BLOCK_COLOR_SWATCH_OPTIONS } from "../../lib/colorPalette";
 import { toISODate } from "../../lib/date";
 import type { Assignment, WeeklyCalendarTemplate } from "../../api/client";
+import ColorPickerPopover from "./ColorPickerPopover";
 
 type VacationRange = { id: string; startISO: string; endISO: string };
 
@@ -586,17 +588,20 @@ export default function VacationOverviewModal({
                           />
                           Vacation
                         </button>
-                        <input
-                          type="color"
+                        <ColorPickerPopover
                           value={vacationColor}
-                          onChange={(event) =>
+                          onChange={(color) =>
                             setSectionColorsById((prev) => ({
                               ...prev,
-                              [VACATION_BAND_ID]: event.target.value,
+                              [VACATION_BAND_ID]: color ?? vacationColor,
                             }))
                           }
-                          className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-transparent"
-                          aria-label="Vacation color"
+                          options={BLOCK_COLOR_SWATCH_OPTIONS}
+                          label="Vacation color"
+                          buttonClassName="h-7 w-7"
+                          swatchClassName="h-4 w-4"
+                          allowClear={false}
+                          popoverClassName="z-[70]"
                         />
                       </div>
                       {/* Rest Day band option */}
@@ -621,17 +626,20 @@ export default function VacationOverviewModal({
                           />
                           Rest Day
                         </button>
-                        <input
-                          type="color"
+                        <ColorPickerPopover
                           value={restDayColor}
-                          onChange={(event) =>
+                          onChange={(color) =>
                             setSectionColorsById((prev) => ({
                               ...prev,
-                              [REST_DAY_BAND_ID]: event.target.value,
+                              [REST_DAY_BAND_ID]: color ?? restDayColor,
                             }))
                           }
-                          className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-transparent"
-                          aria-label="Rest Day color"
+                          options={BLOCK_COLOR_SWATCH_OPTIONS}
+                          label="Rest Day color"
+                          buttonClassName="h-7 w-7"
+                          swatchClassName="h-4 w-4"
+                          allowClear={false}
+                          popoverClassName="z-[70]"
                         />
                       </div>
                       {sections.map((section) => {
@@ -663,17 +671,20 @@ export default function VacationOverviewModal({
                               />
                               {section.name}
                             </button>
-                            <input
-                              type="color"
+                            <ColorPickerPopover
                               value={swatch}
-                              onChange={(event) =>
+                              onChange={(color) =>
                                 setSectionColorsById((prev) => ({
                                   ...prev,
-                                  [section.id]: event.target.value,
+                                  [section.id]: color ?? swatch,
                                 }))
                               }
-                              className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-transparent"
-                              aria-label={`${section.name} color`}
+                              options={BLOCK_COLOR_SWATCH_OPTIONS}
+                              label={`${section.name} color`}
+                              buttonClassName="h-7 w-7"
+                              swatchClassName="h-4 w-4"
+                              allowClear={false}
+                              popoverClassName="z-[70]"
                             />
                           </div>
                         );
