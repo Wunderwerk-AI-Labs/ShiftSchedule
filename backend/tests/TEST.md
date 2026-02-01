@@ -357,30 +357,8 @@ print(response.debugInfo.solver_status)  # OPTIMAL, FEASIBLE, INFEASIBLE
 
 ---
 
-## Production Reference Data
-
-A production schedule export from Martin's radiology department is available for reference:
-
-```
-testing/schedule-export-martin-2026-02-01.json
-```
-
-This 532KB JSON file contains the complete production setup including:
-- All clinicians with qualifications and working hours
-- Full weekly template with all locations, sections, and time slots
-- Existing assignments
-- Solver settings
-
-Use this file to:
-- Debug issues reported in production
-- Validate test fixtures match real-world complexity
-- Create new test cases based on actual data patterns
-
----
-
 ## Related Files
 
 - [TEST_PLAN.md](../../TEST_PLAN.md) - Overall test strategy for the application
 - [solver.py](../solver.py) - The CP-SAT solver implementation
 - [models.py](../models.py) - Pydantic models for AppState, Clinician, etc.
-- [schedule-export-martin-2026-02-01.json](../../testing/schedule-export-martin-2026-02-01.json) - Production reference data
