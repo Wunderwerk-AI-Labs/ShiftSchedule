@@ -192,7 +192,6 @@ class SolverSettings(BaseModel):
     weightTotalAssignments: int = 100  # Maximize total assignments
     weightSlotPriority: int = 10  # Prefer slots in template order
     weightTimeWindow: int = 5  # Respect preferred working time windows
-    weightGapPenalty: int = 50  # Penalize non-adjacent shifts on same day
     weightSectionPreference: int = 1  # Assign to preferred sections
     weightWorkingHours: int = 1  # Stay within target working hours
 
@@ -233,7 +232,6 @@ class SolverSubScores(BaseModel):
     total_assignments: int = 0  # Total assignments made
     preference_score: int = 0  # Clinician section preferences satisfied
     time_window_score: int = 0  # Preferred working hours satisfied
-    gap_penalty: int = 0  # Number of non-adjacent shift gaps (lower is better)
     hours_penalty: int = 0  # Working hours violations
 
 

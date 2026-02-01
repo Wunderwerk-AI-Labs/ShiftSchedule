@@ -215,7 +215,7 @@ Database Inspector
 
 Solver Settings
 - Toggle: Enforce same location per day (default: enabled).
-- Toggle: Prefer continuous shifts (default: enabled). When enabled, the solver prefers assigning adjacent time slots (where one slot's end time equals another's start time, same location) to the same clinician, creating continuous work blocks rather than fragmented schedules.
+- Toggle: Enforce continuous shifts (default: enabled). When enabled, the solver enforces at most one continuous work block per clinician/day (or the number of manual blocks already present), using same-location time adjacency (end == start).
 - Multiple shifts per day are always allowed (removed setting); only actual time overlaps are blocked.
 - On-call rest days: toggle + section selector + days before/after. When enabled, solver enforces rest days and the UI places clinicians into the Rest Day pool.
 - On-call rest days dropdown only shows sections that exist as current template section blocks.
@@ -226,7 +226,7 @@ Solver Settings
 - **Click-to-scroll for split shifts**: Clicking a split shift item in the popover scrolls to and highlights the relevant pills with connection lines.
 - Automated planning runs the week solver over the selected date range in one call and shows an ETA based on the last run's per-day duration.
 - **Optimization weights**: Collapsible section in the Solver Info modal (gear icon) allows configuring objective weights:
-  - Coverage (1000), Slack (1000), Total Assignments (100), Slot Priority (10), Time Window (5), Gap Penalty (50), Section Preference (1), Working Hours (1).
+  - Coverage (1000), Slack (1000), Total Assignments (100), Slot Priority (10), Time Window (5), Section Preference (1), Working Hours (1).
   - "Total Assignments" and "Slot Priority" are only active in "Distribute All" mode (visually dimmed with amber description).
   - Each weight has an info tooltip explaining its effect in layman's terms.
   - "Reset to defaults" button restores all weights to their default values.
@@ -526,7 +526,6 @@ type SolverSettings = {
   weightTotalAssignments?: number;   // default 100 (Distribute All only)
   weightSlotPriority?: number;       // default 10 (Distribute All only)
   weightTimeWindow?: number;         // default 5
-  weightGapPenalty?: number;         // default 50
   weightSectionPreference?: number;  // default 1
   weightWorkingHours?: number;       // default 1
 };
@@ -574,23 +573,18 @@ Behavior
   - Vacation overrides assignment.
   - Manual assignments remain in place; solver adds additional assignments as needed.
   - Overlap checks use time intervals (start/end + endDayOffset), not shift order.
-  - Multiple shifts per day are allowed as long as they don't overlap in time.
+  - Multiple shifts per day are allowed as long as they don't overlap in time and remain continuous.
   - "Enforce same location per day" blocks mixing locations on the same day.
   - On-call rest days: if enabled, clinicians assigned to the selected on-call section must be unassigned on the configured days before/after.
+  - Enforce continuous shifts: each clinician/day has at most one continuous block (or existing manual blocks).
 - Targets template slot ids; order weights follow location order + row band order + column band order.
 - Qualification + preference checks use slot.sectionId (the parent section).
 - Objective:
   - Prioritize coverage by section order (top of section list is highest).
   - Minimize missing required slots.
-  - If `only_fill_required=false`, add extras using wave-based distribution.
+  - If `only_fill_required=false`, allow a small extra capacity per slot (default: +1) to distribute additional assignments.
   - Preferred sections (order of eligible sections) is a lower-weight tie breaker.
-  - Gap penalty (when preferContinuousShifts enabled): penalizes non-adjacent shifts on the same day; weight (`weightGapPenalty`, default 50) encourages continuous work blocks.
-- Wave-based equal distribution (when `only_fill_required=false`):
-  - First fills all slots to 1× their base required count.
-  - Then fills all slots to 2× their base required count.
-  - Then 3×, 4×, etc. until clinicians are exhausted.
-  - Wave multiplier is calculated as `total_available_clinicians // total_base_required`.
-  - Ensures proportional distribution across slots instead of piling all extras into high-priority slots.
+  - Preferred working windows and working hours are soft balancing terms.
 
 Performance optimizations:
 - Constraint building uses O(n) date-based grouping instead of O(n²) pairwise comparisons.
@@ -600,7 +594,7 @@ Performance optimizations:
 Debug mode (development only):
 - Set `DEBUG_SOLVER=true` environment variable to enable detailed timing instrumentation.
 - When enabled, each solve writes a JSON file to `backend/logs/solver_debug/` with:
-  - Checkpoint timings for each major step (load_state, date_setup, slot_contexts, create_variables, overlap_constraints, coverage_constraints, on_call_rest_days, working_hours_constraints, continuous_shift_constraints, objective_setup, solve, result_extraction).
+- Checkpoint timings for each major step (load_state, date_setup, slot_contexts, create_variables, overlap_constraints, coverage_constraints, on_call_rest_days, working_hours_constraints, continuity_constraints, objective_setup, solve, result_extraction).
   - State summary (clinician count, location count, assignments, etc.).
   - Model statistics (num_variables, solver status, objective value).
   - Result info (assignments created, slack remaining).

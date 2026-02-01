@@ -647,7 +647,11 @@ class TestSolverTimeIntervals:
             clinicians,
             slots,
             col_bands,
-            {"enforceSameLocationPerDay": False, "onCallRestEnabled": False},
+            {
+                "enforceSameLocationPerDay": False,
+                "onCallRestEnabled": False,
+                "preferContinuousShifts": False,  # Disable to test just day offset handling
+            },
         )
         monkeypatch.setattr("backend.solver._load_state", lambda _user_id: state)
 
@@ -657,6 +661,7 @@ class TestSolverTimeIntervals:
         )
 
         # Both slots should be fillable (no overlap: night 22:00-30:00, morning 08:00-12:00)
+        # Note: With preferContinuousShifts=False, gaps between shifts are allowed.
         assert len(response.assignments) == 2
 
 

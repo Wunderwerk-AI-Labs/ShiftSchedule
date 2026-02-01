@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import {
   buttonAdd,
   buttonDanger,
@@ -14,6 +14,13 @@ import CustomSelect from "./CustomSelect";
 import CustomNumberInput from "./CustomNumberInput";
 import CustomDatePicker from "./CustomDatePicker";
 import DatabaseHealthCheck from "./DatabaseHealthCheck";
+import { useConfirm } from "../ui/ConfirmDialog";
+
+type ScheduleSnapshotImportResult = {
+  imported: number;
+  droppedClinicians: number;
+  droppedSlots: number;
+};
 
 type SettingsViewProps = {
   classRows: WorkplaceRow[];
@@ -43,6 +50,8 @@ type SettingsViewProps = {
   onCreateSection: (name: string) => string;
   onUpdateSectionColor: (sectionId: string, color: string | null) => void;
   onRemoveSection?: (sectionId: string) => void;
+  onExportScheduleSnapshot: () => void;
+  onImportScheduleSnapshot: (payload: unknown) => Promise<ScheduleSnapshotImportResult>;
 };
 
 export default function SettingsView({
@@ -73,7 +82,10 @@ export default function SettingsView({
   onCreateSection,
   onUpdateSectionColor,
   onRemoveSection,
+  onExportScheduleSnapshot,
+  onImportScheduleSnapshot,
 }: SettingsViewProps) {
+  const confirm = useConfirm();
   const [newClinicianName, setNewClinicianName] = useState("");
   const [newClinicianHours, setNewClinicianHours] = useState("");
   const [showNewClinician, setShowNewClinician] = useState(false);
@@ -90,6 +102,10 @@ export default function SettingsView({
   const [isFetchingHolidays, setIsFetchingHolidays] = useState(false);
   const [holidayError, setHolidayError] = useState<string | null>(null);
   const [holidayInputError, setHolidayInputError] = useState<string | null>(null);
+  const [snapshotImportError, setSnapshotImportError] = useState<string | null>(null);
+  const [snapshotImportResult, setSnapshotImportResult] =
+    useState<ScheduleSnapshotImportResult | null>(null);
+  const [snapshotImporting, setSnapshotImporting] = useState(false);
   const countryOptions = [
     { code: "FR", label: "France 🇫🇷" },
     { code: "DE", label: "Germany 🇩🇪" },
@@ -225,6 +241,49 @@ export default function SettingsView({
     onChangeWeeklyTemplate({ ...weeklyTemplate, blocks: nextBlocks });
   };
 
+  const handleSnapshotImport = async (file: File) => {
+    setSnapshotImportError(null);
+    setSnapshotImportResult(null);
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(await file.text());
+    } catch (error) {
+      setSnapshotImportError("Snapshot file could not be parsed. Please upload valid JSON.");
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: "Import schedule snapshot?",
+      message:
+        "This replaces the current assignments with the snapshot. " +
+        "Assignments for clinicians or slots that no longer exist are skipped.",
+      confirmLabel: "Import snapshot",
+      cancelLabel: "Cancel",
+      variant: "warning",
+    });
+    if (!confirmed) return;
+
+    setSnapshotImporting(true);
+    try {
+      const result = await onImportScheduleSnapshot(payload);
+      setSnapshotImportResult(result);
+    } catch (error) {
+      setSnapshotImportError(
+        error instanceof Error ? error.message : "Snapshot import failed.",
+      );
+    } finally {
+      setSnapshotImporting(false);
+    }
+  };
+
+  const handleSnapshotFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    handleSnapshotImport(file);
+  };
+
   return (
     <div className="mx-auto max-w-7xl px-6 py-10">
       <div className="flex items-start justify-between gap-6">
@@ -346,10 +405,10 @@ export default function SettingsView({
             <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
               <div>
                 <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Prefer continuous shifts
+                  Enforce continuous shifts
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400">
-                  When possible, assign consecutive time slots to the same person.
+                  Prevents new gaps: assignments must be consecutive at the same location.
                 </div>
               </div>
               <button
@@ -923,6 +982,56 @@ export default function SettingsView({
           </div>
         </div>
       ) : null}
+
+      <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Schedule snapshot
+            </h3>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Export the current assignments to a file and restore them later. Import replaces
+              assignments and skips clinicians or slots that no longer exist.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onExportScheduleSnapshot}
+              className={buttonSecondary.base}
+            >
+              Download snapshot
+            </button>
+            <label
+              className={cx(
+                buttonPrimary.base,
+                snapshotImporting && "pointer-events-none opacity-70",
+              )}
+            >
+              {snapshotImporting ? "Importing..." : "Import snapshot"}
+              <input
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={handleSnapshotFileChange}
+                disabled={snapshotImporting}
+              />
+            </label>
+          </div>
+        </div>
+        {snapshotImportResult ? (
+          <div className="mt-3 text-xs text-emerald-600 dark:text-emerald-400">
+            Imported {snapshotImportResult.imported} assignments. Skipped{" "}
+            {snapshotImportResult.droppedClinicians} clinician(s) and{" "}
+            {snapshotImportResult.droppedSlots} slot(s).
+          </div>
+        ) : null}
+        {snapshotImportError ? (
+          <div className="mt-3 text-xs text-rose-600 dark:text-rose-400">
+            {snapshotImportError}
+          </div>
+        ) : null}
+      </div>
 
       {/* Database Health Check - at the very bottom */}
       <div className="mt-6">

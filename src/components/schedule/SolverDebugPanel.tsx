@@ -229,10 +229,6 @@ export default function SolverDebugPanel({ debugInfo }: SolverDebugPanelProps) {
             <div className="font-medium text-green-600 dark:text-green-400">
               +{sub_scores.time_window_score.toLocaleString()}
             </div>
-            <div className="text-slate-500 dark:text-slate-400">Gap penalty (non-adjacent shifts)</div>
-            <div className="font-medium text-red-600 dark:text-red-400">
-              −{sub_scores.gap_penalty.toLocaleString()}
-            </div>
             <div className="text-slate-500 dark:text-slate-400">Working hours penalty</div>
             <div className="font-medium text-red-600 dark:text-red-400">
               −{sub_scores.hours_penalty.toLocaleString()}

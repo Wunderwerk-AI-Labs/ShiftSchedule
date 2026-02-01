@@ -1044,6 +1044,7 @@ def _normalize_state(state: AppState) -> tuple[AppState, bool]:
     merged_settings.pop("showDistributionPool", None)
     merged_settings.pop("showReservePool", None)
     merged_settings.pop("allowMultipleShiftsPerDay", None)
+    merged_settings.pop("weightGapPenalty", None)
     on_call_class_id = merged_settings.get("onCallRestClassId")
     if not isinstance(on_call_class_id, str) or on_call_class_id not in class_row_ids:
         merged_settings["onCallRestClassId"] = class_rows[0].id if class_rows else None

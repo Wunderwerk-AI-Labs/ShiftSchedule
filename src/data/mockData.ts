@@ -103,7 +103,6 @@ export const defaultSolverSettings = {
   weightTotalAssignments: 100,
   weightSlotPriority: 10,
   weightTimeWindow: 5,
-  weightGapPenalty: 50,
   weightSectionPreference: 1,
   weightWorkingHours: 1,
 };

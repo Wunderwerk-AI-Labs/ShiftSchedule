@@ -1048,7 +1048,7 @@ export default function WeeklyTemplateBuilder({
               onChange={(value) => {
                 handleUpdateSlotTime(locationId, slot.id, { startTime: value });
               }}
-              step={15}
+              step={5}
               className="w-20"
             />
             <span className="pt-1 text-slate-400">-</span>
@@ -1058,7 +1058,7 @@ export default function WeeklyTemplateBuilder({
                 onChange={(value) => {
                   handleUpdateSlotTime(locationId, slot.id, { endTime: value });
                 }}
-                step={15}
+                step={5}
                 className="w-20"
               />
               <CustomSelect

@@ -19,7 +19,7 @@ SOLVER PHASES (shown in UI progress)
 5. coverage_constraints: Ensure required slots are filled
 6. on_call_rest_days: Block days before/after on-call shifts
 7. working_hours_constraints: Balance weekly hours per clinician
-8. gap_penalty_constraints: Penalize non-continuous shifts (gaps in the day)
+8. continuity_constraints: Enforce max continuous blocks per day
 9. objective_setup: Build weighted objective function
 10. solve: Run CP-SAT solver with solution callbacks
 
@@ -31,7 +31,6 @@ The solver minimizes a weighted sum of terms (some negated for maximization):
 - Total Assignments: Maximize assignments in "Distribute All" mode (weight: 100)
 - Slot Priority: Prefer earlier slots in template order (weight: 10)
 - Time Window: Respect clinician preferred working hours (weight: 5)
-- Gap Penalty: Penalize non-adjacent shifts on same day (weight: 50)
 - Section Preference: Assign clinicians to preferred sections (weight: 1)
 - Working Hours: Balance hours to target ± tolerance (weight: 1)
 
@@ -42,6 +41,7 @@ CONSTRAINTS
 - Location: Optionally enforce same location per day per clinician
 - Vacation: Clinicians on vacation cannot be assigned
 - On-call rest: Configurable rest days before/after on-call shifts
+- Continuity: If enabled, each clinician/day has at most one continuous block (or existing manual blocks)
 - Manual assignments: Existing manual assignments are preserved as constraints
 
 KEY DATA STRUCTURES
@@ -54,7 +54,7 @@ KEY DATA STRUCTURES
 
 import asyncio
 import atexit
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 import multiprocessing
 import os
@@ -447,10 +447,11 @@ DEFAULT_WEIGHT_SLACK = 1000
 DEFAULT_WEIGHT_TOTAL_ASSIGNMENTS = 100
 DEFAULT_WEIGHT_SLOT_PRIORITY = 10
 DEFAULT_WEIGHT_TIME_WINDOW = 5
-DEFAULT_WEIGHT_CONTINUOUS_SHIFTS = 3
-DEFAULT_WEIGHT_GAP_PENALTY = 50  # Penalty for non-adjacent shifts on same day
 DEFAULT_WEIGHT_SECTION_PREFERENCE = 1
 DEFAULT_WEIGHT_WORKING_HOURS = 1
+
+# Extra capacity per slot in "Distribute All" mode (beyond required)
+EXTRA_ASSIGNMENTS_PER_SLOT_DISTRIBUTE_ALL = 1
 
 
 def _get_day_type(date_iso: str, holidays: List[Holiday]) -> str:
@@ -590,6 +591,695 @@ def _collect_slot_contexts(state) -> List[Dict[str, Any]]:
         )
     )
     return contexts
+
+
+def _build_date_context(payload: SolveRangeRequest) -> Tuple[date, date, List[str], List[str], set[str], Dict[str, int]]:
+    """Parse the requested range and build day lists + index lookups."""
+    try:
+        range_start = datetime.fromisoformat(f"{payload.startISO}T00:00:00+00:00").date()
+    except ValueError:
+        raise ValueError("Invalid startISO")
+    if payload.endISO:
+        try:
+            range_end = datetime.fromisoformat(f"{payload.endISO}T00:00:00+00:00").date()
+        except ValueError:
+            raise ValueError("Invalid endISO")
+    else:
+        range_end = range_start + timedelta(days=6)
+    if range_end < range_start:
+        raise ValueError("Invalid endISO")
+
+    context_start = range_start - timedelta(days=1)
+    context_end = range_end + timedelta(days=1)
+    day_isos: List[str] = []
+    cursor = context_start
+    while cursor <= context_end:
+        day_isos.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+
+    target_day_isos: List[str] = []
+    cursor = range_start
+    while cursor <= range_end:
+        target_day_isos.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    target_date_set = set(target_day_isos)
+    day_index_by_iso = {date_iso: idx for idx, date_iso in enumerate(day_isos)}
+    return range_start, range_end, day_isos, target_day_isos, target_date_set, day_index_by_iso
+
+
+def _build_slot_contexts_and_intervals(
+    state,
+) -> Tuple[
+    List[Dict[str, Any]],
+    set[str],
+    Dict[str, str],
+    Dict[str, Tuple[int, int, str]],
+    Dict[str, Tuple[int, int, str]],
+]:
+    """Build slot contexts + interval maps (both active and full template)."""
+    slot_contexts = _collect_slot_contexts(state)
+    slot_ids = {ctx["slot_id"] for ctx in slot_contexts}
+    section_by_slot_id = {ctx["slot_id"]: ctx["section_id"] for ctx in slot_contexts}
+    slot_intervals: Dict[str, Tuple[int, int, str]] = {}
+    for ctx in slot_contexts:
+        slot_intervals[ctx["slot_id"]] = _build_slot_interval(
+            ctx["slot"], ctx["location_id"]
+        )
+
+    # Include intervals for all template slots (even outside active day types).
+    all_slot_intervals: Dict[str, Tuple[int, int, str]] = dict(slot_intervals)
+    template = state.weeklyTemplate
+    if template:
+        for template_location in template.locations:
+            location_id = (
+                template_location.locationId
+                if state.locationsEnabled
+                else DEFAULT_LOCATION_ID
+            )
+            for slot in template_location.slots:
+                if slot.id not in all_slot_intervals:
+                    all_slot_intervals[slot.id] = _build_slot_interval(slot, location_id)
+
+    return (
+        slot_contexts,
+        slot_ids,
+        section_by_slot_id,
+        slot_intervals,
+        all_slot_intervals,
+    )
+
+
+def _collect_manual_assignments(
+    state,
+    day_isos: List[str],
+    slot_ids: set[str],
+    all_slot_intervals: Dict[str, Tuple[int, int, str]],
+    is_on_vac,
+) -> Tuple[
+    Dict[Tuple[str, str], List[str]],
+    Dict[Tuple[str, str], List[str]],
+    List[str],
+]:
+    """Collect manual assignments (target slots + all slots for continuity checks)."""
+    manual_assignments: Dict[Tuple[str, str], List[str]] = {}
+    all_manual_assignments: Dict[Tuple[str, str], List[str]] = {}
+    skipped_assignments: List[str] = []
+    for assignment in state.assignments:
+        if assignment.dateISO not in day_isos:
+            continue
+        if is_on_vac(assignment.clinicianId, assignment.dateISO):
+            continue
+        # Skip pool assignments - they are not slot assignments.
+        if assignment.rowId.startswith("pool-"):
+            continue
+        # Track all manual assignments for continuity/overlap calculations.
+        if assignment.rowId in all_slot_intervals:
+            all_manual_assignments.setdefault((assignment.clinicianId, assignment.dateISO), []).append(
+                assignment.rowId
+            )
+        else:
+            skipped_assignments.append(f"{assignment.clinicianId} on {assignment.dateISO}: rowId={assignment.rowId}")
+        # Only add to solver constraints if it's in the target slot set.
+        if assignment.rowId in slot_ids:
+            manual_assignments.setdefault((assignment.clinicianId, assignment.dateISO), []).append(
+                assignment.rowId
+            )
+    return manual_assignments, all_manual_assignments, skipped_assignments
+
+
+def _build_working_window_by_clinician_date(
+    state,
+    target_day_isos: List[str],
+    weekday_by_iso: Dict[str, str],
+) -> Dict[Tuple[str, str], Tuple[str, int, int]]:
+    """Normalize preferred working windows into a lookup map."""
+    working_window_by_clinician_date: Dict[Tuple[str, str], Tuple[str, int, int]] = {}
+    for clinician in state.clinicians:
+        for date_iso in target_day_isos:
+            weekday_key = weekday_by_iso.get(date_iso)
+            if not weekday_key:
+                continue
+            requirement, start_minutes, end_minutes = _get_clinician_time_window(
+                clinician, weekday_key
+            )
+            if requirement == "none" or start_minutes is None or end_minutes is None:
+                continue
+            working_window_by_clinician_date[(clinician.id, date_iso)] = (
+                requirement,
+                start_minutes,
+                end_minutes,
+            )
+    return working_window_by_clinician_date
+
+
+def _build_active_slots_by_date(
+    slot_contexts: List[Dict[str, Any]],
+    day_type_by_iso: Dict[str, str],
+    target_day_isos: List[str],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Filter slot contexts to those active on each target date."""
+    active_slots_by_date: Dict[str, List[Dict[str, Any]]] = {}
+    for date_iso in target_day_isos:
+        day_type = day_type_by_iso.get(date_iso)
+        active_slots_by_date[date_iso] = [
+            ctx
+            for ctx in slot_contexts
+            if ctx.get("day_type") == day_type
+        ]
+    return active_slots_by_date
+
+
+def _build_assignment_vars(
+    model: cp_model.CpModel,
+    state,
+    target_day_isos: List[str],
+    active_slots_by_date: Dict[str, List[Dict[str, Any]]],
+    slot_intervals: Dict[str, Tuple[int, int, str]],
+    working_window_by_clinician_date: Dict[Tuple[str, str], Tuple[str, int, int]],
+    is_on_vac,
+) -> Tuple[Dict[Tuple[str, str, str], cp_model.IntVar], List[cp_model.IntVar]]:
+    """Create decision variables for each eligible clinician/date/slot."""
+    var_map: Dict[Tuple[str, str, str], cp_model.IntVar] = {}
+    time_window_terms: List[cp_model.IntVar] = []
+    for clinician in state.clinicians:
+        for date_iso in target_day_isos:
+            if is_on_vac(clinician.id, date_iso):
+                continue
+            window = working_window_by_clinician_date.get((clinician.id, date_iso))
+            for ctx in active_slots_by_date.get(date_iso, []):
+                if ctx["section_id"] not in clinician.qualifiedClassIds:
+                    continue
+                slot_id = ctx["slot_id"]
+                interval = slot_intervals.get(slot_id)
+                if not interval:
+                    continue
+                start, end, _loc = interval
+                fits_window = False
+                if window:
+                    requirement, window_start, window_end = window
+                    fits_window = (
+                        start >= window_start and end <= window_end
+                    )
+                    if requirement == "mandatory" and not fits_window:
+                        continue
+                var = model.NewBoolVar(f"x_{clinician.id}_{date_iso}_{slot_id}")
+                var_map[(clinician.id, date_iso, slot_id)] = var
+                if window and window[0] == "preference" and fits_window:
+                    time_window_terms.append(var)
+    return var_map, time_window_terms
+
+
+def _group_vars_by_clinician_date(
+    var_map: Dict[Tuple[str, str, str], cp_model.IntVar],
+    slot_intervals: Dict[str, Tuple[int, int, str]],
+) -> Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]]:
+    """Group variables by clinician/date with interval metadata for constraint building."""
+    vars_by_clinician_date: Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]] = {}
+    for (cid, date_iso, sid), var in var_map.items():
+        interval = slot_intervals.get(sid)
+        if not interval:
+            continue
+        start, end, loc = interval
+        vars_by_clinician_date.setdefault(cid, {}).setdefault(date_iso, []).append(
+            (sid, var, start, end, loc)
+        )
+    return vars_by_clinician_date
+
+
+def _build_manual_by_clinician_date(
+    all_manual_assignments: Dict[Tuple[str, str], List[str]],
+    all_slot_intervals: Dict[str, Tuple[int, int, str]],
+) -> Dict[str, Dict[str, List[Tuple[int, int, str]]]]:
+    """Map manual assignments into interval lists by clinician/date."""
+    manual_by_clinician_date: Dict[str, Dict[str, List[Tuple[int, int, str]]]] = {}
+    for (cid, date_iso), row_ids in all_manual_assignments.items():
+        day_map = manual_by_clinician_date.setdefault(cid, {}).setdefault(date_iso, [])
+        for row_id in row_ids:
+            interval = all_slot_intervals.get(row_id)
+            if not interval:
+                continue
+            start, end, loc = interval
+            day_map.append((start, end, loc))
+    return manual_by_clinician_date
+
+
+def _add_overlap_constraints(
+    model: cp_model.CpModel,
+    solver_settings: SolverSettings,
+    vars_by_clinician_date: Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]],
+    manual_by_clinician_date: Dict[str, Dict[str, List[Tuple[int, int, str]]]],
+    day_index_by_iso: Dict[str, int],
+) -> None:
+    """Block overlapping intervals and (optionally) multiple locations per day."""
+    for cid, clinician_vars in vars_by_clinician_date.items():
+        clinician_manual = manual_by_clinician_date.get(cid, {})
+
+        for date_iso, day_vars in clinician_vars.items():
+            # Overlap constraints within the same day
+            for i in range(len(day_vars)):
+                _sid_i, var_i, start_i, end_i, loc_i = day_vars[i]
+                for j in range(i + 1, len(day_vars)):
+                    _sid_j, var_j, start_j, end_j, loc_j = day_vars[j]
+                    overlaps = not (end_i <= start_j or end_j <= start_i)
+                    if overlaps:
+                        model.Add(var_i + var_j <= 1)
+                    if (
+                        solver_settings.enforceSameLocationPerDay
+                        and loc_i
+                        and loc_j
+                        and loc_i != loc_j
+                    ):
+                        model.Add(var_i + var_j <= 1)
+
+            # Check against manual assignments on the same day
+            day_manual = clinician_manual.get(date_iso, [])
+            for _sid_i, var_i, start_i, end_i, loc_i in day_vars:
+                for start_m, end_m, loc_m in day_manual:
+                    overlaps = not (end_i <= start_m or end_m <= start_i)
+                    if overlaps:
+                        model.Add(var_i <= 0)
+                    if (
+                        solver_settings.enforceSameLocationPerDay
+                        and loc_i
+                        and loc_m
+                        and loc_i != loc_m
+                    ):
+                        model.Add(var_i <= 0)
+
+        # Cross-day overlap check (for slots that might span midnight)
+        sorted_dates = sorted(clinician_vars.keys())
+        for idx, date_iso in enumerate(sorted_dates):
+            if idx == 0:
+                continue
+            prev_date = sorted_dates[idx - 1]
+            day_index_curr = day_index_by_iso.get(date_iso)
+            day_index_prev = day_index_by_iso.get(prev_date)
+            if day_index_curr is None or day_index_prev is None:
+                continue
+            if day_index_curr - day_index_prev != 1:
+                continue
+            curr_vars = clinician_vars[date_iso]
+            prev_vars = clinician_vars[prev_date]
+            for _sid_c, var_c, start_c, end_c, _loc_c in curr_vars:
+                abs_start_c = start_c + day_index_curr * 24 * 60
+                abs_end_c = end_c + day_index_curr * 24 * 60
+                for _sid_p, var_p, start_p, end_p, _loc_p in prev_vars:
+                    abs_start_p = start_p + day_index_prev * 24 * 60
+                    abs_end_p = end_p + day_index_prev * 24 * 60
+                    overlaps = not (abs_end_c <= abs_start_p or abs_end_p <= abs_start_c)
+                    if overlaps:
+                        model.Add(var_c + var_p <= 1)
+
+            # Also check manual from previous day
+            prev_manual = clinician_manual.get(prev_date, [])
+            for _sid_c, var_c, start_c, end_c, _loc_c in curr_vars:
+                abs_start_c = start_c + day_index_curr * 24 * 60
+                abs_end_c = end_c + day_index_curr * 24 * 60
+                for start_m, end_m, _loc_m in prev_manual:
+                    abs_start_m = start_m + day_index_prev * 24 * 60
+                    abs_end_m = end_m + day_index_prev * 24 * 60
+                    overlaps = not (abs_end_c <= abs_start_m or abs_end_m <= abs_start_c)
+                    if overlaps:
+                        model.Add(var_c <= 0)
+
+
+def _add_coverage_constraints(
+    model: cp_model.CpModel,
+    payload: SolveRangeRequest,
+    state,
+    slot_contexts: List[Dict[str, Any]],
+    target_day_isos: List[str],
+    day_type_by_iso: Dict[str, str],
+    var_map: Dict[Tuple[str, str, str], cp_model.IntVar],
+    manual_assignments: Dict[Tuple[str, str], List[str]],
+) -> Tuple[
+    List[Any],
+    List[Any],
+    int,
+    Dict[str, int],
+]:
+    """Apply required-slot coverage + per-slot capacity caps."""
+    total_slots = len(slot_contexts)
+    order_weight_by_slot_id: Dict[str, int] = {}
+    total_required = 0
+    coverage_terms: List[Any] = []
+    slack_terms: List[Any] = []
+
+    # Build lookup: (date, slot_id) -> list of vars (for coverage constraints)
+    vars_by_date_slot: Dict[Tuple[str, str], List[cp_model.IntVar]] = {}
+    for (cid, date_iso, sid), var in var_map.items():
+        key = (date_iso, sid)
+        vars_by_date_slot.setdefault(key, []).append(var)
+
+    # Build lookup: (date, slot_id) -> manual count
+    manual_count_by_date_slot: Dict[Tuple[str, str], int] = {}
+    for (cid, diso), row_ids in manual_assignments.items():
+        for rid in row_ids:
+            key = (diso, rid)
+            manual_count_by_date_slot[key] = manual_count_by_date_slot.get(key, 0) + 1
+
+    # First pass: collect slot info for coverage and capacity
+    slot_date_info: List[Dict[str, Any]] = []
+    for index, ctx in enumerate(slot_contexts):
+        slot_id = ctx["slot_id"]
+        order_weight = max(1, total_slots - index) * 10
+        order_weight_by_slot_id[slot_id] = order_weight
+        for date_iso in target_day_isos:
+            day_type = day_type_by_iso.get(date_iso)
+            if ctx.get("day_type") != day_type:
+                continue
+            raw_required = getattr(ctx["slot"], "requiredSlots", 0)
+            base_required = raw_required if isinstance(raw_required, int) else 0
+            override = state.slotOverridesByKey.get(f"{slot_id}__{date_iso}", 0)
+            target = max(0, base_required + override)
+            total_required += target
+            already = manual_count_by_date_slot.get((date_iso, slot_id), 0)
+            missing = max(0, target - already)
+            vars_here = vars_by_date_slot.get((date_iso, slot_id), [])
+            slot_date_info.append({
+                "slot_id": slot_id,
+                "date_iso": date_iso,
+                "order_weight": order_weight,
+                "target": target,
+                "already": already,
+                "missing": missing,
+                "vars_here": vars_here,
+            })
+
+    for info in slot_date_info:
+        slot_id = info["slot_id"]
+        date_iso = info["date_iso"]
+        order_weight = info["order_weight"]
+        target = info["target"]
+        already = info["already"]
+        missing = info["missing"]
+        vars_here = info["vars_here"]
+
+        if missing == 0:
+            if payload.only_fill_required:
+                if vars_here:
+                    model.Add(sum(vars_here) == 0)
+                continue
+            if vars_here:
+                extra = EXTRA_ASSIGNMENTS_PER_SLOT_DISTRIBUTE_ALL if target > 0 else 0
+                slot_capacity = max(0, target + extra - already)
+                model.Add(sum(vars_here) <= slot_capacity)
+            continue
+        if vars_here:
+            covered = model.NewBoolVar(f"covered_{slot_id}_{date_iso}")
+            model.Add(sum(vars_here) + already >= covered)
+            coverage_terms.append(covered * order_weight)
+            if payload.only_fill_required:
+                slot_capacity = missing
+            else:
+                extra = EXTRA_ASSIGNMENTS_PER_SLOT_DISTRIBUTE_ALL if target > 0 else 0
+                slot_capacity = max(0, target + extra - already)
+            model.Add(sum(vars_here) <= slot_capacity)
+        slack = model.NewIntVar(0, missing, f"slack_{slot_id}_{date_iso}")
+        if vars_here:
+            model.Add(sum(vars_here) + slack + already >= missing)
+        else:
+            model.Add(slack + already >= missing)
+        slack_terms.append(slack * order_weight)
+
+    return coverage_terms, slack_terms, total_required, order_weight_by_slot_id
+
+
+def _add_on_call_rest_constraints(
+    model: cp_model.CpModel,
+    solver_settings: SolverSettings,
+    slot_contexts: List[Dict[str, Any]],
+    manual_assignments: Dict[Tuple[str, str], List[str]],
+    vars_by_clinician_date: Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]],
+    target_date_set: set[str],
+    day_isos: List[str],
+    day_index_by_iso: Dict[str, int],
+) -> Tuple[List[str], set[str], int, int]:
+    """Enforce rest days around on-call assignments."""
+    BIG = 20
+    rest_class_id = solver_settings.onCallRestClassId
+    rest_before = max(0, solver_settings.onCallRestDaysBefore or 0)
+    rest_after = max(0, solver_settings.onCallRestDaysAfter or 0)
+    rest_shift_row_ids = {
+        ctx["slot_id"]
+        for ctx in slot_contexts
+        if ctx["section_id"] == rest_class_id
+    }
+
+    rest_day_conflicts: List[str] = []
+    if (
+        solver_settings.onCallRestEnabled
+        and rest_shift_row_ids
+        and (rest_before > 0 or rest_after > 0)
+    ):
+        on_call_dates_by_cid: Dict[str, List[Tuple[int, str]]] = {}
+        for (cid, date_iso), row_ids in manual_assignments.items():
+            if any(rid in rest_shift_row_ids for rid in row_ids):
+                idx = day_index_by_iso.get(date_iso)
+                if idx is not None:
+                    on_call_dates_by_cid.setdefault(cid, []).append((idx, date_iso))
+
+        for cid, on_call_list in on_call_dates_by_cid.items():
+            for on_call_idx, on_call_date in on_call_list:
+                for offset in range(1, rest_before + 1):
+                    check_idx = on_call_idx - offset
+                    if 0 <= check_idx < len(day_isos):
+                        check_date = day_isos[check_idx]
+                        if manual_assignments.get((cid, check_date)):
+                            rest_day_conflicts.append(
+                                f"{cid}: on-call {on_call_date} but assigned on {check_date} (rest day before)"
+                            )
+                for offset in range(1, rest_after + 1):
+                    check_idx = on_call_idx + offset
+                    if 0 <= check_idx < len(day_isos):
+                        check_date = day_isos[check_idx]
+                        if manual_assignments.get((cid, check_date)):
+                            rest_day_conflicts.append(
+                                f"{cid}: on-call {on_call_date} but assigned on {check_date} (rest day after)"
+                            )
+
+    if (
+        solver_settings.onCallRestEnabled
+        and rest_shift_row_ids
+        and (rest_before > 0 or rest_after > 0)
+    ):
+        for clinician_id, clinician_vars in vars_by_clinician_date.items():
+            for day_index, date_iso in enumerate(day_isos):
+                manual_rows = manual_assignments.get((clinician_id, date_iso), [])
+                manual_on_call = any(
+                    row_id in rest_shift_row_ids for row_id in manual_rows
+                )
+                day_vars = clinician_vars.get(date_iso, [])
+                on_call_vars = [
+                    var for (sid, var, _s, _e, _l) in day_vars
+                    if sid in rest_shift_row_ids
+                ]
+                if not manual_on_call and not on_call_vars:
+                    continue
+                on_call_var: Optional[cp_model.IntVar] = None
+                if not manual_on_call:
+                    on_call_var = model.NewBoolVar(
+                        f"on_call_{clinician_id}_{date_iso}"
+                    )
+                    model.Add(sum(on_call_vars) >= on_call_var)
+                    for var in on_call_vars:
+                        model.Add(var <= on_call_var)
+
+                def apply_rest_constraint(target_idx: int) -> None:
+                    if target_idx < 0 or target_idx >= len(day_isos):
+                        return
+                    target_date = day_isos[target_idx]
+                    if target_date not in target_date_set:
+                        return
+                    target_day_vars = clinician_vars.get(target_date, [])
+                    vars_target = [var for (_sid, var, _s, _e, _l) in target_day_vars]
+                    manual_target = len(
+                        manual_assignments.get((clinician_id, target_date), [])
+                    )
+                    if manual_on_call:
+                        if manual_target > 0:
+                            return
+                        if vars_target:
+                            model.Add(sum(vars_target) == 0)
+                        return
+                    if on_call_var is None:
+                        return
+                    if manual_target > 0:
+                        model.Add(on_call_var == 0)
+                    elif vars_target:
+                        model.Add(sum(vars_target) <= BIG * (1 - on_call_var))
+
+                for offset in range(1, rest_before + 1):
+                    apply_rest_constraint(day_index - offset)
+                for offset in range(1, rest_after + 1):
+                    apply_rest_constraint(day_index + offset)
+
+    return rest_day_conflicts, rest_shift_row_ids, rest_before, rest_after
+
+
+def _add_working_hours_constraints(
+    model: cp_model.CpModel,
+    state,
+    target_day_isos: List[str],
+    target_date_set: set[str],
+    manual_assignments: Dict[Tuple[str, str], List[str]],
+    vars_by_clinician_date: Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]],
+    slot_intervals: Dict[str, Tuple[int, int, str]],
+) -> List[cp_model.IntVar]:
+    """Add working hours deviation penalties."""
+    hours_penalty_terms: List[cp_model.IntVar] = []
+    total_days = len(target_day_isos)
+    scale = total_days / 7.0 if total_days else 0
+    slot_duration_by_id = {
+        slot_id: max(0, end - start)
+        for slot_id, (start, end, _loc) in slot_intervals.items()
+    }
+    manual_minutes_by_clinician: Dict[str, int] = {c.id: 0 for c in state.clinicians}
+    for (clinician_id, date_iso), row_ids in manual_assignments.items():
+        if date_iso not in target_date_set:
+            continue
+        total_minutes = 0
+        for row_id in row_ids:
+            duration = slot_duration_by_id.get(row_id)
+            if duration is None:
+                continue
+            total_minutes += duration
+        manual_minutes_by_clinician[clinician_id] = (
+            manual_minutes_by_clinician.get(clinician_id, 0) + total_minutes
+        )
+    for clinician in state.clinicians:
+        if not isinstance(clinician.workingHoursPerWeek, (int, float)):
+            continue
+        if clinician.workingHoursPerWeek <= 0:
+            continue
+        tolerance_hours = max(0, clinician.workingHoursToleranceHours or 5)
+        target_minutes = int(round(clinician.workingHoursPerWeek * 60 * scale))
+        tol_minutes = int(round(tolerance_hours * 60 * scale))
+        if target_minutes <= 0 and tol_minutes <= 0:
+            continue
+        clinician_date_vars = vars_by_clinician_date.get(clinician.id, {})
+        decision_terms = []
+        max_decision_minutes = 0
+        for _date_iso, day_vars in clinician_date_vars.items():
+            for (sid, var, _s, _e, _l) in day_vars:
+                duration = slot_duration_by_id.get(sid, 0)
+                decision_terms.append(var * duration)
+                max_decision_minutes += duration
+        manual_minutes = manual_minutes_by_clinician.get(clinician.id, 0)
+        max_total = manual_minutes + max_decision_minutes
+        target_minus_tol = max(0, target_minutes - tol_minutes)
+        target_plus_tol = target_minutes + tol_minutes
+        total_minutes_expr = manual_minutes + sum(decision_terms)
+        max_under = max(max_total, target_minus_tol)
+        under = model.NewIntVar(0, max_under, f"under_{clinician.id}")
+        over = model.NewIntVar(0, max_total, f"over_{clinician.id}")
+        model.Add(under >= target_minus_tol - total_minutes_expr)
+        model.Add(over >= total_minutes_expr - target_plus_tol)
+        under_blocks = model.NewIntVar(
+            0,
+            max_under // WORKING_HOURS_BLOCK_MINUTES + 1,
+            f"under_blocks_{clinician.id}",
+        )
+        over_blocks = model.NewIntVar(
+            0,
+            max_total // WORKING_HOURS_BLOCK_MINUTES + 1,
+            f"over_blocks_{clinician.id}",
+        )
+        model.AddDivisionEquality(under_blocks, under, WORKING_HOURS_BLOCK_MINUTES)
+        model.AddDivisionEquality(over_blocks, over, WORKING_HOURS_BLOCK_MINUTES)
+        hours_penalty_terms.append(under_blocks + over_blocks)
+
+    return hours_penalty_terms
+
+
+def _add_continuity_constraints(
+    model: cp_model.CpModel,
+    solver_settings: SolverSettings,
+    vars_by_clinician_date: Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]],
+    manual_by_clinician_date: Dict[str, Dict[str, List[Tuple[int, int, str]]]],
+) -> None:
+    """Enforce max 1 continuous work block per clinician/day (or manual blocks)."""
+    if not solver_settings.preferContinuousShifts:
+        return
+
+    block_counter = 0
+    for cid, clinician_dates in vars_by_clinician_date.items():
+        clinician_manual = manual_by_clinician_date.get(cid, {})
+        for date_iso, day_vars in clinician_dates.items():
+            manual_slots = clinician_manual.get(date_iso, [])
+            if not manual_slots and not day_vars:
+                continue
+
+            candidate_ends_by_key: Dict[Tuple[int, str], List[cp_model.IntVar]] = {}
+            for _sid, var, start, end, loc in day_vars:
+                if end <= start:
+                    continue
+                candidate_ends_by_key.setdefault((end, loc), []).append(var)
+
+            manual_end_keys = {(end, loc) for (_start, end, loc) in manual_slots}
+
+            manual_blocks = 0
+            if manual_slots:
+                manual_blocks = sum(
+                    1
+                    for (start, _end, loc) in manual_slots
+                    if (start, loc) not in manual_end_keys
+                )
+            max_blocks = max(1, manual_blocks)
+
+            block_terms: List[Any] = []
+            prev_indicator_by_start: Dict[Tuple[int, str], Any] = {}
+
+            def _prev_indicator(start_min: int, loc: str) -> Any:
+                nonlocal block_counter
+                key = (start_min, loc)
+                if key in prev_indicator_by_start:
+                    return prev_indicator_by_start[key]
+                if key in manual_end_keys:
+                    prev_indicator_by_start[key] = 1
+                    return 1
+                vars_ending = candidate_ends_by_key.get(key, [])
+                if not vars_ending:
+                    prev_indicator_by_start[key] = 0
+                    return 0
+                if len(vars_ending) == 1:
+                    prev_indicator_by_start[key] = vars_ending[0]
+                    return vars_ending[0]
+                block_counter += 1
+                has_prev = model.NewBoolVar(
+                    f"has_prev_{cid}_{date_iso}_{block_counter}"
+                )
+                model.Add(sum(vars_ending) >= has_prev)
+                model.Add(sum(vars_ending) <= len(vars_ending) * has_prev)
+                prev_indicator_by_start[key] = has_prev
+                return has_prev
+
+            def _add_block_start(y_expr: Any, prev_indicator: Any) -> None:
+                nonlocal block_counter
+                if isinstance(prev_indicator, int):
+                    if prev_indicator == 1:
+                        return
+                    block_terms.append(y_expr)
+                    return
+                block_counter += 1
+                start_var = model.NewBoolVar(
+                    f"block_start_{cid}_{date_iso}_{block_counter}"
+                )
+                model.Add(start_var <= y_expr)
+                model.Add(start_var <= 1 - prev_indicator)
+                model.Add(start_var >= y_expr - prev_indicator)
+                block_terms.append(start_var)
+
+            for start, _end, loc in manual_slots:
+                prev_indicator = _prev_indicator(start, loc)
+                _add_block_start(1, prev_indicator)
+
+            for _sid, var, start, _end, loc in day_vars:
+                prev_indicator = _prev_indicator(start, loc)
+                _add_block_start(var, prev_indicator)
+
+            if any(isinstance(term, cp_model.IntVar) for term in block_terms):
+                model.Add(sum(block_terms) <= max_blocks)
 
 
 @router.post("/v1/solve/range", response_model=SolveRangeResponse)
@@ -765,13 +1455,13 @@ def _solve_range_impl(
 
     This function constructs a CP-SAT model with:
     1. Decision variables: One boolean per (clinician, date, slot) tuple
-    2. Hard constraints: Overlap prevention, qualifications, vacations, location rules
-    3. Soft constraints: Coverage targets, working hours balance, gap penalties
+    2. Hard constraints: Overlap prevention, qualifications, vacations, location rules, continuity (if enabled)
+    3. Soft constraints: Coverage targets, working hours balance
     4. Objective: Weighted sum of coverage, distribution, and preference terms
 
     The solver operates in two modes based on `payload.only_fill_required`:
     - True: Only fill slots up to their required count
-    - False: "Distribute All" mode - assign as many people as possible using wave-based distribution
+    - False: "Distribute All" mode - assign as many people as possible with a simple per-slot cap
 
     Args:
         payload: The solve request containing date range, timeout, and mode settings
@@ -801,60 +1491,19 @@ def _solve_range_impl(
     state = _load_state(current_user.username)
     timer.checkpoint("load_state")
     diagnostics: List[str] = []  # Track potential issues for debugging
-    try:
-        range_start = datetime.fromisoformat(f"{payload.startISO}T00:00:00+00:00").date()
-    except ValueError:
-        raise ValueError("Invalid startISO")
-    if payload.endISO:
-        try:
-            range_end = datetime.fromisoformat(f"{payload.endISO}T00:00:00+00:00").date()
-        except ValueError:
-            raise ValueError("Invalid endISO")
-    else:
-        range_end = range_start + timedelta(days=6)
-    if range_end < range_start:
-        raise ValueError("Invalid endISO")
-
-    context_start = range_start - timedelta(days=1)
-    context_end = range_end + timedelta(days=1)
-    day_isos: List[str] = []
-    cursor = context_start
-    while cursor <= context_end:
-        day_isos.append(cursor.isoformat())
-        cursor += timedelta(days=1)
-    target_day_isos: List[str] = []
-    cursor = range_start
-    while cursor <= range_end:
-        target_day_isos.append(cursor.isoformat())
-        cursor += timedelta(days=1)
-    target_date_set = set(target_day_isos)
-    day_index_by_iso = {date_iso: idx for idx, date_iso in enumerate(day_isos)}
+    range_start, range_end, day_isos, target_day_isos, target_date_set, day_index_by_iso = (
+        _build_date_context(payload)
+    )
     timer.checkpoint("date_setup")
 
     on_progress("phase", {"phase": "slot_contexts", "label": "Preparation (2/10): Analyzing shift patterns..."})
-    slot_contexts = _collect_slot_contexts(state)
-    slot_ids = {ctx["slot_id"] for ctx in slot_contexts}
-    section_by_slot_id = {ctx["slot_id"]: ctx["section_id"] for ctx in slot_contexts}
-    slot_intervals: Dict[str, Tuple[int, int, str]] = {}
-    for ctx in slot_contexts:
-        slot_intervals[ctx["slot_id"]] = _build_slot_interval(
-            ctx["slot"], ctx["location_id"]
-        )
-
-    # Build a comprehensive interval map for ALL slots (including other locations)
-    # This is used for manual assignment gap penalty calculations
-    all_slot_intervals: Dict[str, Tuple[int, int, str]] = dict(slot_intervals)
-    template = state.weeklyTemplate
-    if template:
-        for template_location in template.locations:
-            location_id = (
-                template_location.locationId
-                if state.locationsEnabled
-                else DEFAULT_LOCATION_ID
-            )
-            for slot in template_location.slots:
-                if slot.id not in all_slot_intervals:
-                    all_slot_intervals[slot.id] = _build_slot_interval(slot, location_id)
+    (
+        slot_contexts,
+        slot_ids,
+        section_by_slot_id,
+        slot_intervals,
+        all_slot_intervals,
+    ) = _build_slot_contexts_and_intervals(state)
     timer.checkpoint("slot_contexts")
 
     on_progress("phase", {"phase": "create_variables", "label": "Preparation (3/10): Setting up assignment options..."})
@@ -872,33 +1521,15 @@ def _solve_range_impl(
                 return True
         return False
 
-    # manual_assignments: for solver constraints (only slots in the target location)
-    manual_assignments: Dict[Tuple[str, str], List[str]] = {}
-    # all_manual_assignments: for gap penalty (includes all locations)
-    all_manual_assignments: Dict[Tuple[str, str], List[str]] = {}
-    skipped_assignments = []
-    for assignment in state.assignments:
-        if assignment.dateISO not in day_isos:
-            continue
-        if is_on_vac(assignment.clinicianId, assignment.dateISO):
-            continue
-        # Skip pool assignments - they are not slot assignments (rest day, vacation, etc.)
-        if assignment.rowId.startswith("pool-"):
-            continue
-        # Track ALL manual assignments for gap penalty calculations
-        if assignment.rowId in all_slot_intervals:
-            all_manual_assignments.setdefault((assignment.clinicianId, assignment.dateISO), []).append(
-                assignment.rowId
-            )
-        else:
-            skipped_assignments.append(f"{assignment.clinicianId} on {assignment.dateISO}: rowId={assignment.rowId}")
-        # Only add to solver constraints if it's in the target slot set
-        if assignment.rowId in slot_ids:
-            manual_assignments.setdefault((assignment.clinicianId, assignment.dateISO), []).append(
-                assignment.rowId
-            )
-    # Track orphaned assignments (reference slots not in template) - this indicates data integrity issues
-    orphaned_assignments = skipped_assignments  # Assignments with rowId not in any known slot
+    # manual_assignments: for solver constraints (slots in the template for target dates)
+    # all_manual_assignments: for continuity/overlap checks (includes all template slots)
+    manual_assignments, all_manual_assignments, orphaned_assignments = _collect_manual_assignments(
+        state,
+        day_isos,
+        slot_ids,
+        all_slot_intervals,
+        is_on_vac,
+    )
 
     solver_settings = SolverSettings.model_validate(state.solverSettings or {})
     pref_weight: Dict[str, Dict[str, int]] = {}
@@ -908,62 +1539,27 @@ def _solve_range_impl(
         for idx, class_id in enumerate(preferred):
             weights[class_id] = max(1, len(preferred) - idx)
         pref_weight[clinician.id] = weights
-    working_window_by_clinician_date: Dict[Tuple[str, str], Tuple[str, int, int]] = {}
-    for clinician in state.clinicians:
-        for date_iso in target_day_isos:
-            weekday_key = weekday_by_iso.get(date_iso)
-            if not weekday_key:
-                continue
-            requirement, start_minutes, end_minutes = _get_clinician_time_window(
-                clinician, weekday_key
-            )
-            if requirement == "none" or start_minutes is None or end_minutes is None:
-                continue
-            working_window_by_clinician_date[(clinician.id, date_iso)] = (
-                requirement,
-                start_minutes,
-                end_minutes,
-            )
+    working_window_by_clinician_date = _build_working_window_by_clinician_date(
+        state,
+        target_day_isos,
+        weekday_by_iso,
+    )
 
     model = cp_model.CpModel()
-    var_map: Dict[Tuple[str, str, str], cp_model.IntVar] = {}
-    time_window_terms: List[cp_model.IntVar] = []
-
-    active_slots_by_date: Dict[str, List[Dict[str, Any]]] = {}
-    for date_iso in target_day_isos:
-        day_type = day_type_by_iso.get(date_iso)
-        active_slots_by_date[date_iso] = [
-            ctx
-            for ctx in slot_contexts
-            if ctx.get("day_type") == day_type
-        ]
-
-    # Build vars
-    for clinician in state.clinicians:
-        for date_iso in target_day_isos:
-            if is_on_vac(clinician.id, date_iso):
-                continue
-            window = working_window_by_clinician_date.get((clinician.id, date_iso))
-            for ctx in active_slots_by_date.get(date_iso, []):
-                if ctx["section_id"] not in clinician.qualifiedClassIds:
-                    continue
-                slot_id = ctx["slot_id"]
-                interval = slot_intervals.get(slot_id)
-                if not interval:
-                    continue
-                start, end, _loc = interval
-                fits_window = False
-                if window:
-                    requirement, window_start, window_end = window
-                    fits_window = (
-                        start >= window_start and end <= window_end
-                    )
-                    if requirement == "mandatory" and not fits_window:
-                        continue
-                var = model.NewBoolVar(f"x_{clinician.id}_{date_iso}_{slot_id}")
-                var_map[(clinician.id, date_iso, slot_id)] = var
-                if window and window[0] == "preference" and fits_window:
-                    time_window_terms.append(var)
+    active_slots_by_date = _build_active_slots_by_date(
+        slot_contexts,
+        day_type_by_iso,
+        target_day_isos,
+    )
+    var_map, time_window_terms = _build_assignment_vars(
+        model,
+        state,
+        target_day_isos,
+        active_slots_by_date,
+        slot_intervals,
+        working_window_by_clinician_date,
+        is_on_vac,
+    )
     timer.checkpoint("create_variables")
 
     on_progress("phase", {"phase": "overlap_constraints", "label": "Preparation (4/10): Adding schedule conflict rules..."})
@@ -994,319 +1590,56 @@ def _solve_range_impl(
                 diagnostics.append(f"No overlap between slot sections {slot_section_ids} and clinician qualifications {clinician_section_ids}.")
 
     # Overlap + location constraints (optimized: group by clinician+date to avoid O(n²))
-    # Build a lookup: clinician_id -> date -> list of (slot_id, var, start, end, loc)
-    vars_by_clinician_date: Dict[str, Dict[str, List[Tuple[str, cp_model.IntVar, int, int, str]]]] = {}
-    for (cid, date_iso, sid), var in var_map.items():
-        interval = slot_intervals.get(sid)
-        if not interval:
-            continue
-        start, end, loc = interval
-        if cid not in vars_by_clinician_date:
-            vars_by_clinician_date[cid] = {}
-        if date_iso not in vars_by_clinician_date[cid]:
-            vars_by_clinician_date[cid][date_iso] = []
-        vars_by_clinician_date[cid][date_iso].append((sid, var, start, end, loc))
+    vars_by_clinician_date = _group_vars_by_clinician_date(var_map, slot_intervals)
 
     # Build manual assignments lookup: clinician_id -> date -> list of (start, end, loc)
-    # Uses all_manual_assignments (from all locations) for gap penalty calculations
-    manual_by_clinician_date: Dict[str, Dict[str, List[Tuple[int, int, str]]]] = {}
-    for (cid, date_iso), row_ids in all_manual_assignments.items():
-        if cid not in manual_by_clinician_date:
-            manual_by_clinician_date[cid] = {}
-        if date_iso not in manual_by_clinician_date[cid]:
-            manual_by_clinician_date[cid][date_iso] = []
-        for row_id in row_ids:
-            interval = all_slot_intervals.get(row_id)
-            if not interval:
-                continue  # Already tracked in orphaned_assignments
-            start, end, loc = interval
-            manual_by_clinician_date[cid][date_iso].append((start, end, loc))
+    # Uses all_manual_assignments (from all locations) for continuity and overlap checks.
+    manual_by_clinician_date = _build_manual_by_clinician_date(
+        all_manual_assignments,
+        all_slot_intervals,
+    )
     timer.checkpoint("vacation_and_manual_setup")
 
-    # Now process constraints per clinician, per day (O(slots_per_day²) instead of O(total_slots²))
-    for clinician in state.clinicians:
-        cid = clinician.id
-        clinician_vars = vars_by_clinician_date.get(cid, {})
-        clinician_manual = manual_by_clinician_date.get(cid, {})
-
-        for date_iso, day_vars in clinician_vars.items():
-            # Overlap constraints within the same day
-            for i in range(len(day_vars)):
-                _sid_i, var_i, start_i, end_i, loc_i = day_vars[i]
-                for j in range(i + 1, len(day_vars)):
-                    _sid_j, var_j, start_j, end_j, loc_j = day_vars[j]
-                    overlaps = not (end_i <= start_j or end_j <= start_i)
-                    if overlaps:
-                        model.Add(var_i + var_j <= 1)
-                    # Location constraint (same day, different location)
-                    if (
-                        solver_settings.enforceSameLocationPerDay
-                        and loc_i
-                        and loc_j
-                        and loc_i != loc_j
-                    ):
-                        model.Add(var_i + var_j <= 1)
-
-            # Check against manual assignments on the same day
-            day_manual = clinician_manual.get(date_iso, [])
-            for _sid_i, var_i, start_i, end_i, loc_i in day_vars:
-                for start_m, end_m, loc_m in day_manual:
-                    overlaps = not (end_i <= start_m or end_m <= start_i)
-                    if overlaps:
-                        model.Add(var_i <= 0)
-                    if (
-                        solver_settings.enforceSameLocationPerDay
-                        and loc_i
-                        and loc_m
-                        and loc_i != loc_m
-                    ):
-                        model.Add(var_i <= 0)
-
-        # Cross-day overlap check (for slots that might span midnight)
-        # Only need to check adjacent days
-        sorted_dates = sorted(clinician_vars.keys())
-        for idx, date_iso in enumerate(sorted_dates):
-            if idx == 0:
-                continue
-            prev_date = sorted_dates[idx - 1]
-            day_index_curr = day_index_by_iso.get(date_iso)
-            day_index_prev = day_index_by_iso.get(prev_date)
-            if day_index_curr is None or day_index_prev is None:
-                continue
-            # Only check if days are actually adjacent
-            if day_index_curr - day_index_prev != 1:
-                continue
-            curr_vars = clinician_vars[date_iso]
-            prev_vars = clinician_vars[prev_date]
-            for _sid_c, var_c, start_c, end_c, _loc_c in curr_vars:
-                abs_start_c = start_c + day_index_curr * 24 * 60
-                abs_end_c = end_c + day_index_curr * 24 * 60
-                for _sid_p, var_p, start_p, end_p, _loc_p in prev_vars:
-                    abs_start_p = start_p + day_index_prev * 24 * 60
-                    abs_end_p = end_p + day_index_prev * 24 * 60
-                    overlaps = not (abs_end_c <= abs_start_p or abs_end_p <= abs_start_c)
-                    if overlaps:
-                        model.Add(var_c + var_p <= 1)
-
-            # Also check manual from previous day
-            prev_manual = clinician_manual.get(prev_date, [])
-            for _sid_c, var_c, start_c, end_c, _loc_c in curr_vars:
-                abs_start_c = start_c + day_index_curr * 24 * 60
-                abs_end_c = end_c + day_index_curr * 24 * 60
-                for start_m, end_m, _loc_m in prev_manual:
-                    abs_start_m = start_m + day_index_prev * 24 * 60
-                    abs_end_m = end_m + day_index_prev * 24 * 60
-                    overlaps = not (abs_end_c <= abs_start_m or abs_end_m <= abs_start_c)
-                    if overlaps:
-                        model.Add(var_c <= 0)
+    _add_overlap_constraints(
+        model,
+        solver_settings,
+        vars_by_clinician_date,
+        manual_by_clinician_date,
+        day_index_by_iso,
+    )
     timer.checkpoint("overlap_constraints")
 
     on_progress("phase", {"phase": "coverage_constraints", "label": "Preparation (5/10): Applying staffing requirements..."})
     # Coverage + rules
-    coverage_terms = []
-    slack_terms = []
     notes: List[str] = []
 
     # Add warning if there are orphaned assignments (slots not in template)
     if orphaned_assignments:
         notes.append(f"WARNING: {len(orphaned_assignments)} assignment(s) reference slots not in the template and were ignored by the solver.")
-    total_slots = len(slot_contexts)
-    order_weight_by_slot_id: Dict[str, int] = {}
-    BIG = 20
-    total_required = 0
 
-    # Build lookup: (date, slot_id) -> list of vars (for coverage constraints)
-    vars_by_date_slot: Dict[Tuple[str, str], List[cp_model.IntVar]] = {}
-    for (cid, date_iso, sid), var in var_map.items():
-        key = (date_iso, sid)
-        if key not in vars_by_date_slot:
-            vars_by_date_slot[key] = []
-        vars_by_date_slot[key].append(var)
-
-    # Build lookup: (date, slot_id) -> manual count
-    manual_count_by_date_slot: Dict[Tuple[str, str], int] = {}
-    for (cid, diso), row_ids in manual_assignments.items():
-        for rid in row_ids:
-            key = (diso, rid)
-            manual_count_by_date_slot[key] = manual_count_by_date_slot.get(key, 0) + 1
-
-    # First pass: collect slot info for wave-based distribution
-    slot_date_info: List[Dict[str, Any]] = []
-    for index, ctx in enumerate(slot_contexts):
-        slot_id = ctx["slot_id"]
-        order_weight = max(1, total_slots - index) * 10
-        order_weight_by_slot_id[slot_id] = order_weight
-        for date_iso in target_day_isos:
-            day_type = day_type_by_iso.get(date_iso)
-            if ctx.get("day_type") != day_type:
-                continue
-            raw_required = getattr(ctx["slot"], "requiredSlots", 0)
-            base_required = raw_required if isinstance(raw_required, int) else 0
-            override = state.slotOverridesByKey.get(f"{slot_id}__{date_iso}", 0)
-            target = max(0, base_required + override)
-            total_required += target
-            already = manual_count_by_date_slot.get((date_iso, slot_id), 0)
-            missing = max(0, target - already)
-            vars_here = vars_by_date_slot.get((date_iso, slot_id), [])
-            slot_date_info.append({
-                "ctx": ctx,
-                "slot_id": slot_id,
-                "date_iso": date_iso,
-                "order_weight": order_weight,
-                "base_required": base_required,
-                "target": target,
-                "already": already,
-                "missing": missing,
-                "vars_here": vars_here,
-            })
-
-    # Calculate wave multiplier for equal distribution when not only_fill_required
-    # Wave multiplier determines how many times we can fill all slots proportionally
-    wave_multiplier = 1
-    if not payload.only_fill_required:
-        total_available_clinicians = len(set(cid for (cid, _, _) in var_map.keys()))
-        total_base_required = sum(info["base_required"] for info in slot_date_info if info["base_required"] > 0)
-        if total_base_required > 0:
-            # Calculate how many complete waves we can do with available clinicians
-            wave_multiplier = max(1, total_available_clinicians // total_base_required)
-
-    for info in slot_date_info:
-        slot_id = info["slot_id"]
-        date_iso = info["date_iso"]
-        order_weight = info["order_weight"]
-        base_required = info["base_required"]
-        target = info["target"]
-        already = info["already"]
-        missing = info["missing"]
-        vars_here = info["vars_here"]
-
-        if missing == 0:
-            if payload.only_fill_required and vars_here:
-                model.Add(sum(vars_here) == 0)
-            continue
-        if vars_here:
-            covered = model.NewBoolVar(f"covered_{slot_id}_{date_iso}")
-            model.Add(sum(vars_here) + already >= covered)
-            coverage_terms.append(covered * order_weight)
-            # Calculate slot capacity based on wave distribution
-            if payload.only_fill_required:
-                # Only fill to required amount
-                slot_capacity = missing
-            else:
-                # Wave-based: allow up to (base_required * wave_multiplier) - already
-                wave_target = base_required * wave_multiplier
-                slot_capacity = max(missing, wave_target - already)
-            model.Add(sum(vars_here) <= slot_capacity)
-        slack = model.NewIntVar(0, missing, f"slack_{slot_id}_{date_iso}")
-        if vars_here:
-            model.Add(sum(vars_here) + slack + already >= missing)
-        else:
-            model.Add(slack + already >= missing)
-        slack_terms.append(slack * order_weight)
+    coverage_terms, slack_terms, total_required, order_weight_by_slot_id = _add_coverage_constraints(
+        model,
+        payload,
+        state,
+        slot_contexts,
+        target_day_isos,
+        day_type_by_iso,
+        var_map,
+        manual_assignments,
+    )
     timer.checkpoint("coverage_constraints")
 
     on_progress("phase", {"phase": "on_call_rest_days", "label": "Preparation (6/10): Setting up on-call rest rules..."})
-    # On-call rest days
-    rest_class_id = solver_settings.onCallRestClassId
-    rest_before = max(0, solver_settings.onCallRestDaysBefore or 0)
-    rest_after = max(0, solver_settings.onCallRestDaysAfter or 0)
-    rest_shift_row_ids = {
-        ctx["slot_id"]
-        for ctx in slot_contexts
-        if ctx["section_id"] == rest_class_id
-    }
-
-    # Pre-check for manual on-call rest day conflicts
-    rest_day_conflicts: List[str] = []
-    if (
-        solver_settings.onCallRestEnabled
-        and rest_shift_row_ids
-        and (rest_before > 0 or rest_after > 0)
-    ):
-        on_call_dates_by_cid: Dict[str, List[Tuple[int, str]]] = {}
-        for (cid, date_iso), row_ids in manual_assignments.items():
-            if any(rid in rest_shift_row_ids for rid in row_ids):
-                idx = day_index_by_iso.get(date_iso)
-                if idx is not None:
-                    on_call_dates_by_cid.setdefault(cid, []).append((idx, date_iso))
-
-        for cid, on_call_list in on_call_dates_by_cid.items():
-            for on_call_idx, on_call_date in on_call_list:
-                for offset in range(1, rest_before + 1):
-                    check_idx = on_call_idx - offset
-                    if 0 <= check_idx < len(day_isos):
-                        check_date = day_isos[check_idx]
-                        if manual_assignments.get((cid, check_date)):
-                            rest_day_conflicts.append(
-                                f"{cid}: on-call {on_call_date} but assigned on {check_date} (rest day before)"
-                            )
-                for offset in range(1, rest_after + 1):
-                    check_idx = on_call_idx + offset
-                    if 0 <= check_idx < len(day_isos):
-                        check_date = day_isos[check_idx]
-                        if manual_assignments.get((cid, check_date)):
-                            rest_day_conflicts.append(
-                                f"{cid}: on-call {on_call_date} but assigned on {check_date} (rest day after)"
-                            )
-
-    if (
-        solver_settings.onCallRestEnabled
-        and rest_shift_row_ids
-        and (rest_before > 0 or rest_after > 0)
-    ):
-        for clinician in state.clinicians:
-            clinician_vars = vars_by_clinician_date.get(clinician.id, {})
-            for day_index, date_iso in enumerate(day_isos):
-                manual_rows = manual_assignments.get((clinician.id, date_iso), [])
-                manual_on_call = any(
-                    row_id in rest_shift_row_ids for row_id in manual_rows
-                )
-                # Use optimized lookup instead of scanning all var_map
-                day_vars = clinician_vars.get(date_iso, [])
-                on_call_vars = [
-                    var for (sid, var, _s, _e, _l) in day_vars
-                    if sid in rest_shift_row_ids
-                ]
-                if not manual_on_call and not on_call_vars:
-                    continue
-                on_call_var: Optional[cp_model.IntVar] = None
-                if not manual_on_call:
-                    on_call_var = model.NewBoolVar(
-                        f"on_call_{clinician.id}_{date_iso}"
-                    )
-                    model.Add(sum(on_call_vars) >= on_call_var)
-                    for var in on_call_vars:
-                        model.Add(var <= on_call_var)
-
-                def apply_rest_constraint(target_idx: int) -> None:
-                    if target_idx < 0 or target_idx >= len(day_isos):
-                        return
-                    target_date = day_isos[target_idx]
-                    if target_date not in target_date_set:
-                        return
-                    # Use optimized lookup instead of scanning all var_map
-                    target_day_vars = clinician_vars.get(target_date, [])
-                    vars_target = [var for (_sid, var, _s, _e, _l) in target_day_vars]
-                    manual_target = len(
-                        manual_assignments.get((clinician.id, target_date), [])
-                    )
-                    if manual_on_call:
-                        if manual_target > 0:
-                            return
-                        if vars_target:
-                            model.Add(sum(vars_target) == 0)
-                        return
-                    if on_call_var is None:
-                        return
-                    if manual_target > 0:
-                        model.Add(on_call_var == 0)
-                    elif vars_target:
-                        model.Add(sum(vars_target) <= BIG * (1 - on_call_var))
-
-                for offset in range(1, rest_before + 1):
-                    apply_rest_constraint(day_index - offset)
-                for offset in range(1, rest_after + 1):
-                    apply_rest_constraint(day_index + offset)
+    rest_day_conflicts, rest_shift_row_ids, rest_before, rest_after = _add_on_call_rest_constraints(
+        model,
+        solver_settings,
+        slot_contexts,
+        manual_assignments,
+        vars_by_clinician_date,
+        target_date_set,
+        day_isos,
+        day_index_by_iso,
+    )
 
     # Add rest day conflict warnings to notes
     if rest_day_conflicts:
@@ -1314,185 +1647,26 @@ def _solve_range_impl(
     timer.checkpoint("on_call_rest_days")
 
     on_progress("phase", {"phase": "working_hours_constraints", "label": "Preparation (7/10): Balancing working hours..."})
-    hours_penalty_terms: List[cp_model.IntVar] = []
-    total_days = len(target_day_isos)
-    scale = total_days / 7.0 if total_days else 0
-    slot_duration_by_id = {
-        slot_id: max(0, end - start)
-        for slot_id, (start, end, _loc) in slot_intervals.items()
-    }
-    manual_minutes_by_clinician: Dict[str, int] = {c.id: 0 for c in state.clinicians}
-    for (clinician_id, date_iso), row_ids in manual_assignments.items():
-        if date_iso not in target_date_set:
-            continue
-        total_minutes = 0
-        for row_id in row_ids:
-            duration = slot_duration_by_id.get(row_id)
-            if duration is None:
-                continue
-            total_minutes += duration
-        manual_minutes_by_clinician[clinician_id] = (
-            manual_minutes_by_clinician.get(clinician_id, 0) + total_minutes
-        )
-    for clinician in state.clinicians:
-        if not isinstance(clinician.workingHoursPerWeek, (int, float)):
-            continue
-        if clinician.workingHoursPerWeek <= 0:
-            continue
-        # Use per-clinician tolerance (default 5 hours)
-        tolerance_hours = max(0, clinician.workingHoursToleranceHours or 5)
-        target_minutes = int(round(clinician.workingHoursPerWeek * 60 * scale))
-        tol_minutes = int(round(tolerance_hours * 60 * scale))
-        if target_minutes <= 0 and tol_minutes <= 0:
-            continue
-        # Use optimized lookup instead of scanning all var_map
-        clinician_date_vars = vars_by_clinician_date.get(clinician.id, {})
-        decision_terms = []
-        max_decision_minutes = 0
-        for _date_iso, day_vars in clinician_date_vars.items():
-            for (sid, var, _s, _e, _l) in day_vars:
-                duration = slot_duration_by_id.get(sid, 0)
-                decision_terms.append(var * duration)
-                max_decision_minutes += duration
-        manual_minutes = manual_minutes_by_clinician.get(clinician.id, 0)
-        max_total = manual_minutes + max_decision_minutes
-        target_minus_tol = max(0, target_minutes - tol_minutes)
-        target_plus_tol = target_minutes + tol_minutes
-        total_minutes_expr = manual_minutes + sum(decision_terms)
-        max_under = max(max_total, target_minus_tol)
-        under = model.NewIntVar(0, max_under, f"under_{clinician.id}")
-        over = model.NewIntVar(0, max_total, f"over_{clinician.id}")
-        model.Add(under >= target_minus_tol - total_minutes_expr)
-        model.Add(over >= total_minutes_expr - target_plus_tol)
-        under_blocks = model.NewIntVar(
-            0,
-            max_under // WORKING_HOURS_BLOCK_MINUTES + 1,
-            f"under_blocks_{clinician.id}",
-        )
-        over_blocks = model.NewIntVar(
-            0,
-            max_total // WORKING_HOURS_BLOCK_MINUTES + 1,
-            f"over_blocks_{clinician.id}",
-        )
-        model.AddDivisionEquality(under_blocks, under, WORKING_HOURS_BLOCK_MINUTES)
-        model.AddDivisionEquality(over_blocks, over, WORKING_HOURS_BLOCK_MINUTES)
-        hours_penalty_terms.append(under_blocks + over_blocks)
+    hours_penalty_terms = _add_working_hours_constraints(
+        model,
+        state,
+        target_day_isos,
+        target_date_set,
+        manual_assignments,
+        vars_by_clinician_date,
+        slot_intervals,
+    )
     timer.checkpoint("working_hours_constraints")
 
-    on_progress("phase", {"phase": "gap_penalty_constraints", "label": "Preparation (8/10): Applying gap penalties..."})
-    # Gap penalty: penalize non-adjacent shifts on the same day for the same clinician
-    # A gap is when a clinician has shifts that don't connect (there's time between them)
-    # This includes gaps between:
-    # 1. Two solver variables (both can be assigned)
-    # 2. A solver variable and a manual assignment (manual is fixed, penalize if solver assigns the variable)
-    gap_penalty_terms: List[Any] = []
+    on_progress("phase", {"phase": "continuity_constraints", "label": "Preparation (8/10): Enforcing continuous shifts..."})
+    _add_continuity_constraints(
+        model,
+        solver_settings,
+        vars_by_clinician_date,
+        manual_by_clinician_date,
+    )
 
-    if solver_settings.preferContinuousShifts:
-        # Build index: (end_time, location) -> list of slot_ids that END at this time
-        slots_ending_at: Dict[Tuple[int, str], List[str]] = {}
-        slots_starting_at: Dict[Tuple[int, str], List[str]] = {}
-        for slot_id, (start, end, loc) in slot_intervals.items():
-            slots_ending_at.setdefault((end, loc), []).append(slot_id)
-            slots_starting_at.setdefault((start, loc), []).append(slot_id)
-
-        # Build set of adjacent pairs for quick lookup (based on slot_id pairs)
-        adjacent_pairs: set[Tuple[str, str]] = set()
-        for (end_time, loc), ending_slots in slots_ending_at.items():
-            starting_slots = slots_starting_at.get((end_time, loc), [])
-            for slot_a in ending_slots:
-                for slot_b in starting_slots:
-                    if slot_a != slot_b:
-                        adjacent_pairs.add((slot_a, slot_b))
-                        adjacent_pairs.add((slot_b, slot_a))  # Add both directions
-
-        # Helper to check if two intervals are adjacent (touching at same time+location)
-        def intervals_adjacent(end_a: int, start_b: int, loc_a: str, loc_b: str) -> bool:
-            return end_a == start_b and loc_a == loc_b
-
-        # Gap penalty: For each (clinician, date), penalize non-adjacent slot pairs
-        # A gap exists when both slots are assigned and they don't connect (one ends before the other starts)
-        # We check ALL pairs, not just consecutive, because the solver might assign non-adjacent slots
-        gap_idx = 0
-        for cid, clinician_dates in vars_by_clinician_date.items():
-            clinician_manual = manual_by_clinician_date.get(cid, {})
-
-            for date_iso, day_vars in clinician_dates.items():
-                # Get manual assignments for this clinician on this date
-                manual_slots = clinician_manual.get(date_iso, [])
-
-                # Part 1: Gaps between solver variables (existing logic)
-                if len(day_vars) >= 2:
-                    slot_list = [(sid, var, start, end, loc) for (sid, var, start, end, loc) in day_vars]
-
-                    for i in range(len(slot_list)):
-                        sid_a, var_a, start_a, end_a, loc_a = slot_list[i]
-                        for j in range(i + 1, len(slot_list)):
-                            sid_b, var_b, start_b, end_b, loc_b = slot_list[j]
-
-                            if (sid_a, sid_b) not in adjacent_pairs:
-                                has_gap = (end_a < start_b) or (end_b < start_a)
-                                if has_gap:
-                                    gap_var = model.NewBoolVar(f"gap{gap_idx}")
-                                    gap_idx += 1
-                                    model.AddMultiplicationEquality(gap_var, [var_a, var_b])
-                                    gap_penalty_terms.append(gap_var)
-
-                # Part 2: Gaps between solver variables and manual assignments
-                # Manual assignments are fixed (always assigned), so the gap penalty
-                # activates when the solver assigns a variable that creates a gap
-                if manual_slots and day_vars:
-                    for (sid, var, start, end, loc) in day_vars:
-                        for (m_start, m_end, m_loc) in manual_slots:
-                            # Check if the solver slot and manual slot are adjacent
-                            is_adjacent = (
-                                intervals_adjacent(end, m_start, loc, m_loc) or
-                                intervals_adjacent(m_end, start, m_loc, loc)
-                            )
-                            if not is_adjacent:
-                                # Check if there's actually a gap (non-overlapping, non-touching)
-                                has_gap = (end < m_start) or (m_end < start)
-                                if has_gap:
-                                    # Penalty = var (if solver assigns this slot, it creates a gap with manual)
-                                    gap_penalty_terms.append(var)
-
-        # Part 3: Gaps between manual assignments themselves
-        # If two manual slots have a gap, we add a constant penalty (1) for that gap.
-        # If a solver variable can fill that gap, we subtract var from the penalty.
-        # Net effect: if solver fills the gap, penalty = 1 - 1 = 0. If not filled, penalty = 1.
-        for cid, clinician_manual_dates in manual_by_clinician_date.items():
-            clinician_vars = vars_by_clinician_date.get(cid, {})
-
-            for date_iso, manual_slots in clinician_manual_dates.items():
-                if len(manual_slots) < 2:
-                    continue
-
-                # Get solver variables for this clinician on this date
-                day_vars = clinician_vars.get(date_iso, [])
-
-                # Sort manual slots by start time
-                sorted_manual = sorted(manual_slots, key=lambda x: x[0])
-                for i in range(len(sorted_manual) - 1):
-                    m1_start, m1_end, m1_loc = sorted_manual[i]
-                    m2_start, m2_end, m2_loc = sorted_manual[i + 1]
-
-                    # Check if there's a gap between these two manual slots (not adjacent)
-                    gap_exists = m1_end < m2_start and not intervals_adjacent(m1_end, m2_start, m1_loc, m2_loc)
-
-                    if gap_exists:
-                        # Add constant penalty for this manual-to-manual gap
-                        gap_penalty_terms.append(1)
-
-                        # Find solver variables that could fill this gap
-                        if day_vars:
-                            for (sid, var, start, end, loc) in day_vars:
-                                # Check if this solver slot bridges the gap
-                                connects_m1 = intervals_adjacent(m1_end, start, m1_loc, loc)
-                                connects_m2 = intervals_adjacent(end, m2_start, loc, m2_loc)
-                                if connects_m1 and connects_m2:
-                                    # This slot fills the gap! Subtract var to cancel the penalty when assigned
-                                    gap_penalty_terms.append(-var)
-
-    timer.checkpoint("gap_penalty_constraints")
+    timer.checkpoint("continuity_constraints")
 
     on_progress("phase", {"phase": "objective_setup", "label": "Preparation (9/10): Finalizing optimization goals..."})
     total_slack = sum(slack_terms) if slack_terms else 0
@@ -1512,8 +1686,6 @@ def _solve_range_impl(
     total_preference = sum(preference_terms) if preference_terms else 0
     total_time_window_preference = sum(time_window_terms) if time_window_terms else 0
     total_hours_penalty = sum(hours_penalty_terms) if hours_penalty_terms else 0
-    total_gap_penalty = sum(gap_penalty_terms) if gap_penalty_terms else 0
-
     # Total assignments - used to maximize distribution when not only_fill_required
     total_assignments = sum(var for var in var_map.values())
 
@@ -1528,7 +1700,6 @@ def _solve_range_impl(
     w_total_assignments = get_weight('weightTotalAssignments', DEFAULT_WEIGHT_TOTAL_ASSIGNMENTS)
     w_slot_priority = get_weight('weightSlotPriority', DEFAULT_WEIGHT_SLOT_PRIORITY)
     w_time_window = get_weight('weightTimeWindow', DEFAULT_WEIGHT_TIME_WINDOW)
-    w_gap_penalty = get_weight('weightGapPenalty', DEFAULT_WEIGHT_GAP_PENALTY)
     w_section_pref = get_weight('weightSectionPreference', DEFAULT_WEIGHT_SECTION_PREFERENCE)
     w_working_hours = get_weight('weightWorkingHours', DEFAULT_WEIGHT_WORKING_HOURS)
 
@@ -1538,7 +1709,6 @@ def _solve_range_impl(
             + total_slack * w_slack
             - total_preference * w_section_pref
             - total_time_window_preference * w_time_window
-            + total_gap_penalty * w_gap_penalty
             + total_hours_penalty * w_working_hours
         )
     else:
@@ -1550,7 +1720,6 @@ def _solve_range_impl(
             - total_priority * w_slot_priority
             - total_preference * w_section_pref
             - total_time_window_preference * w_time_window
-            + total_gap_penalty * w_gap_penalty
             + total_hours_penalty * w_working_hours
         )
     timer.checkpoint("objective_setup")
@@ -1827,7 +1996,6 @@ def _solve_range_impl(
         eval_slack = sum(solver.Value(t) for t in slack_terms) if slack_terms else 0
         eval_preference = sum(solver.Value(t) for t in preference_terms) if preference_terms else 0
         eval_time_window = sum(solver.Value(t) for t in time_window_terms) if time_window_terms else 0
-        eval_gap_penalty = sum(solver.Value(t) for t in gap_penalty_terms) if gap_penalty_terms else 0
         eval_hours_penalty = sum(solver.Value(t) for t in hours_penalty_terms) if hours_penalty_terms else 0
 
         sub_scores = SolverSubScores(
@@ -1836,7 +2004,6 @@ def _solve_range_impl(
             total_assignments=len(new_assignments),
             preference_score=eval_preference,
             time_window_score=eval_time_window,
-            gap_penalty=eval_gap_penalty,
             hours_penalty=eval_hours_penalty,
         )
 

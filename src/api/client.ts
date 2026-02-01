@@ -141,7 +141,6 @@ export type SolverSettings = {
   weightTotalAssignments?: number; // Maximize total assignments (default: 100)
   weightSlotPriority?: number; // Prefer slots in template order (default: 10)
   weightTimeWindow?: number; // Respect preferred working time windows (default: 5)
-  weightGapPenalty?: number; // Penalize non-adjacent shifts on same day (default: 50)
   weightSectionPreference?: number; // Assign to preferred sections (default: 1)
   weightWorkingHours?: number; // Stay within target working hours (default: 1)
 };
@@ -178,6 +177,13 @@ export type UserStateExport = {
   exportedAt: string;
   sourceUser: string;
   state: AppState;
+};
+
+export type ScheduleSnapshotExport = {
+  version: number;
+  exportedAt: string;
+  sourceUser?: string;
+  assignments: Assignment[];
 };
 
 export type UserRole = "admin" | "user";
@@ -492,7 +498,6 @@ export type SolverSubScores = {
   total_assignments: number;
   preference_score: number;
   time_window_score: number;
-  gap_penalty: number;
   hours_penalty: number;
 };
 

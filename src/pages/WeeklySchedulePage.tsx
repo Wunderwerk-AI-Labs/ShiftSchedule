@@ -33,6 +33,7 @@ import {
   type AuthUser,
   type Holiday,
   type IcalPublishStatus,
+  type ScheduleSnapshotExport,
   type SolverDebugInfo,
   type SolverSettings,
   type WeeklyCalendarTemplate,
@@ -134,6 +135,12 @@ import {
   normalizeSubShifts,
   type ScheduleRow,
 } from "../lib/shiftRows";
+
+type ScheduleSnapshotImportResult = {
+  imported: number;
+  droppedClinicians: number;
+  droppedSlots: number;
+};
 
 const defaultAppState = normalizeAppState({
   locations: defaultLocations,
@@ -683,6 +690,79 @@ export default function WeeklySchedulePage({
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const buildScheduleSnapshot = (): ScheduleSnapshotExport => ({
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    sourceUser: currentUser.username,
+    assignments: toAssignments(),
+  });
+
+  const extractAssignmentsFromSnapshot = (payload: unknown): Assignment[] | null => {
+    if (!payload || typeof payload !== "object") return null;
+    const maybePayload = payload as { assignments?: Assignment[]; state?: { assignments?: Assignment[] } };
+    if (Array.isArray(maybePayload.assignments)) return maybePayload.assignments;
+    if (Array.isArray(maybePayload.state?.assignments)) return maybePayload.state.assignments;
+    return null;
+  };
+
+  const handleExportScheduleSnapshot = () => {
+    const snapshot = buildScheduleSnapshot();
+    const dateStamp = snapshot.exportedAt.slice(0, 10);
+    downloadTextFile(
+      `schedule-snapshot-${dateStamp}.json`,
+      "application/json",
+      `${JSON.stringify(snapshot, null, 2)}\n`,
+    );
+  };
+
+  const handleImportScheduleSnapshot = async (
+    payload: unknown,
+  ): Promise<ScheduleSnapshotImportResult> => {
+    const assignments = extractAssignmentsFromSnapshot(payload);
+    if (!assignments) {
+      throw new Error("No assignments found in the snapshot file.");
+    }
+
+    const clinicianIds = new Set(clinicians.map((clinician) => clinician.id));
+    const filteredByClinician = assignments.filter((assignment) =>
+      clinicianIds.has(assignment.clinicianId),
+    );
+    const droppedClinicians = assignments.length - filteredByClinician.length;
+
+    const { state: normalized } = normalizeAppState({
+      locations,
+      locationsEnabled,
+      rows,
+      clinicians,
+      assignments: filteredByClinician,
+      minSlotsByRowId,
+      slotOverridesByKey,
+      holidays,
+      holidayCountry,
+      holidayYear,
+      publishedWeekStartISOs,
+      solverSettings,
+      weeklyTemplate,
+    });
+
+    const normalizedAssignments = normalized.assignments ?? [];
+    const droppedSlots = filteredByClinician.length - normalizedAssignments.length;
+
+    if (hasLoaded && loadedUserId === currentUser.username) {
+      saveState(normalized).catch(() => {
+        /* Backend optional during local-only dev */
+      });
+    }
+
+    setAssignmentMap(buildAssignmentMap(normalizedAssignments));
+
+    return {
+      imported: normalizedAssignments.length,
+      droppedClinicians,
+      droppedSlots,
+    };
   };
 
   const toAssignments = () => {
@@ -3413,6 +3493,8 @@ export default function WeeklySchedulePage({
                 ),
               );
             }}
+            onExportScheduleSnapshot={handleExportScheduleSnapshot}
+            onImportScheduleSnapshot={handleImportScheduleSnapshot}
           />
           <AdminUsersPanel
             isAdmin={currentUser.role === "admin"}

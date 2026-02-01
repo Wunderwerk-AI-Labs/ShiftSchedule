@@ -12,14 +12,16 @@ const DEFAULT_WEIGHTS = {
   weightTotalAssignments: 100,
   weightSlotPriority: 10,
   weightTimeWindow: 5,
-  weightGapPenalty: 50,
   weightSectionPreference: 1,
   weightWorkingHours: 1,
 };
 
 type WeightKey = keyof typeof DEFAULT_WEIGHTS;
 
-const WEIGHT_LABELS: Record<WeightKey, { label: string; description: string; tooltip: string; distributeOnly?: boolean }> = {
+const WEIGHT_LABELS: Record<
+  WeightKey,
+  { label: string; description: string; tooltip: string; distributeOnly?: boolean }
+> = {
   weightCoverage: {
     label: "Coverage",
     description: "Fill required slots",
@@ -46,11 +48,6 @@ const WEIGHT_LABELS: Record<WeightKey, { label: string; description: string; too
     label: "Time Window",
     description: "Respect preferred times",
     tooltip: "Considers each person's preferred working hours. Higher values mean the planner tries harder to match people with their preferred time slots.",
-  },
-  weightGapPenalty: {
-    label: "Gap Penalty",
-    description: "Avoid gaps between shifts",
-    tooltip: "Penalizes gaps in someone's day. If a person works morning and afternoon with a break in between, higher values discourage this split schedule.",
   },
   weightSectionPreference: {
     label: "Section Preference",
