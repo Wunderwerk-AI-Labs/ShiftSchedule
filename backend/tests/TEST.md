@@ -87,44 +87,44 @@ state = make_martin_like_state(day_types=["mon"], include_vacations=True)
 
 ### What's Included
 
-The Martin-like fixture creates:
+The fixture creates a realistic radiology department:
 
 **Locations (2):**
-- Kirchberg (loc-kirchberg)
-- Zitha (loc-zitha)
+- Main Campus (loc-main-campus)
+- North Wing (loc-north-wing)
 
 **Clinicians (8):**
 | ID | Name | Specialization |
 |----|------|----------------|
-| clin-alice | Dr. Alice Schmidt | Senior, broad qualifications |
-| clin-bob | Dr. Bob Mueller | Senior, cardiac focus |
-| clin-carol | Dr. Carol Weber | Senior, mammography focus |
-| clin-david | Dr. David Klein | Junior, CT/Echo |
-| clin-emma | Dr. Emma Fischer | Junior, Zitha focus |
-| clin-frank | Dr. Frank Bauer | Junior, neuro focus |
-| clin-greta | Dr. Greta Hoffmann | Specialist, cardiac MRI |
-| clin-hans | Dr. Hans Richter | Specialist, mammography |
+| clin-chen | Dr. Sarah Chen | Senior, broad qualifications |
+| clin-patel | Dr. Raj Patel | Senior, cardiac focus |
+| clin-johnson | Dr. Emily Johnson | Senior, mammography focus |
+| clin-williams | Dr. Michael Williams | Junior, CT/Ultrasound |
+| clin-garcia | Dr. Maria Garcia | Junior, North Wing focus |
+| clin-kim | Dr. James Kim | Junior, neuro focus |
+| clin-nguyen | Dr. Lisa Nguyen | Specialist, cardiac MRI |
+| clin-brown | Dr. David Brown | Specialist, mammography |
 
 **Sections (20+):**
-- CT tout HK, CT arthro HK
-- IRM neuro HK, IRM tout HK, IRM cardio HK
-- Echo tout HK
-- MG tout HK, MG stereo HK
-- CT tout ZK, CT biopsie ZK
-- IRM tout ZK, IRM seno ZK, IRM neuro ZK
-- Echo tout ZK, MG tout ZK
-- Staff meetings, On-call shifts
+- CT General MC, CT Interventional MC
+- MRI Neuro MC, MRI General MC, MRI Cardiac MC
+- Ultrasound General MC
+- Mammography General MC, Mammography Stereo MC
+- CT General NW, CT Biopsy NW
+- MRI General NW, MRI Breast NW, MRI Neuro NW
+- Ultrasound General NW, Mammography General NW
+- Morning Rounds, MDT meetings, On-call shifts
 
 **Time Patterns:**
 | Slot Type | Time | Notes |
 |-----------|------|-------|
-| Staff meeting | 06:30-07:30 | Kirchberg & Zitha |
-| Morning | 07:30-13:00 | Kirchberg |
-| Morning | 07:30-11:30 | Zitha |
-| Midday | 11:30-15:30 | Zitha only |
-| Afternoon | 13:00-16:00 | Kirchberg |
-| Afternoon | 15:30-19:00 | Zitha |
-| Evening | 16:00-19:00 | Kirchberg |
+| Morning Rounds | 06:30-07:30 | Main Campus & North Wing |
+| Morning | 07:30-13:00 | Main Campus |
+| Morning | 07:30-11:30 | North Wing |
+| Midday | 11:30-15:30 | North Wing only |
+| Afternoon | 13:00-16:00 | Main Campus |
+| Afternoon | 15:30-19:00 | North Wing |
+| Evening | 16:00-19:00 | Main Campus |
 
 ### Checking for Gaps
 

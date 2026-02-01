@@ -1,10 +1,10 @@
 """
-Test fixtures that mimic Martin's complex radiology department setup.
+Test fixtures that mimic a complex radiology department setup.
 
 This creates a realistic test environment with:
-- Multiple locations (Kirchberg, Zitha, Cloche d'Or)
-- Many sections (CT, IRM, Echo, MG, Staff meetings, etc.)
-- Complex time patterns (06:30-07:30 staff, 07:30-11:30, 11:30-15:30, 15:30-19:00)
+- Multiple locations (Main Campus, North Wing, South Site)
+- Many sections (CT, MRI, Ultrasound, Mammography, Staff meetings, etc.)
+- Complex time patterns (06:30-07:30 rounds, 07:30-11:30, 11:30-15:30, 15:30-19:00)
 - Multiple clinicians with varying qualifications
 
 Use these fixtures for testing solver behavior without accessing real user data.
@@ -33,35 +33,35 @@ from backend.models import (
 # =============================================================================
 
 SECTIONS = {
-    # Kirchberg sections
-    "ct-tout-hk": "CT tout HK",
-    "ct-arthro-hk": "CT arthro HK",
-    "irm-neuro-hk": "IRM neuro HK",
-    "irm-tout-hk": "IRM tout HK",
-    "irm-cardio-hk": "IRM cardio HK",
-    "echo-tout-hk": "Echo tout HK",
-    "mg-tout-hk": "MG tout HK",
-    "mg-stereo-hk": "MG stereo HK",
-    # Zitha sections
-    "ct-tout-zk": "CT tout ZK",
-    "ct-biopsie-zk": "CT biopsie ZK",
-    "irm-tout-zk": "IRM tout ZK",
-    "irm-seno-zk": "IRM seno ZK",
-    "irm-neuro-zk": "IRM neuro ZK",
-    "echo-tout-zk": "Echo tout ZK",
-    "mg-tout-zk": "MG tout ZK",
-    # Cloche d'Or sections
-    "cor-tout": "COR tout",
-    "cor-neuro": "COR neuro",
+    # Main Campus sections
+    "ct-general-mc": "CT General MC",
+    "ct-interv-mc": "CT Interventional MC",
+    "mri-neuro-mc": "MRI Neuro MC",
+    "mri-general-mc": "MRI General MC",
+    "mri-cardiac-mc": "MRI Cardiac MC",
+    "us-general-mc": "Ultrasound General MC",
+    "mammo-general-mc": "Mammography General MC",
+    "mammo-stereo-mc": "Mammography Stereo MC",
+    # North Wing sections
+    "ct-general-nw": "CT General NW",
+    "ct-biopsy-nw": "CT Biopsy NW",
+    "mri-general-nw": "MRI General NW",
+    "mri-breast-nw": "MRI Breast NW",
+    "mri-neuro-nw": "MRI Neuro NW",
+    "us-general-nw": "Ultrasound General NW",
+    "mammo-general-nw": "Mammography General NW",
+    # South Site sections
+    "imaging-general-ss": "Imaging General SS",
+    "imaging-neuro-ss": "Imaging Neuro SS",
     # Staff/Meeting sections
-    "tout-matin": "Tout matin",
-    "tout-soir": "Tout soir",
-    "staff-uro": "Staff Uro",
-    "staff-gyn": "Staff Gyn",
-    "staff-onco": "Staff onco merc",
+    "morning-rounds": "Morning Rounds",
+    "evening-rounds": "Evening Rounds",
+    "mdt-urology": "MDT Urology",
+    "mdt-gynecology": "MDT Gynecology",
+    "mdt-oncology": "MDT Oncology",
     # On-call
-    "garde-hk": "Garde HK",
-    "astreinte": "Astreinte",
+    "oncall-mc": "On-Call MC",
+    "standby": "Standby",
 }
 
 
@@ -72,9 +72,9 @@ SECTIONS = {
 def make_locations() -> List[Location]:
     """Create the three hospital locations."""
     return [
-        Location(id="loc-kirchberg", name="Kirchberg"),
-        Location(id="loc-zitha", name="Zitha"),
-        Location(id="loc-cdo", name="Cloche d'Or"),
+        Location(id="loc-main-campus", name="Main Campus"),
+        Location(id="loc-north-wing", name="North Wing"),
+        Location(id="loc-south-site", name="South Site"),
     ]
 
 
@@ -85,105 +85,105 @@ def make_locations() -> List[Location]:
 def make_martin_like_clinicians() -> List[Clinician]:
     """
     Create a set of clinicians with varying qualifications.
-    Mimics the diversity in Martin's setup.
+    Mimics the diversity in a real radiology department.
     """
     return [
         # Senior radiologists - qualified for most sections
         Clinician(
-            id="clin-alice",
-            name="Dr. Alice Schmidt",
+            id="clin-chen",
+            name="Dr. Sarah Chen",
             qualifiedClassIds=[
-                "ct-tout-hk", "ct-arthro-hk", "irm-neuro-hk", "irm-tout-hk",
-                "echo-tout-hk", "mg-tout-hk", "ct-tout-zk", "irm-tout-zk",
-                "tout-matin", "tout-soir", "garde-hk", "astreinte",
+                "ct-general-mc", "ct-interv-mc", "mri-neuro-mc", "mri-general-mc",
+                "us-general-mc", "mammo-general-mc", "ct-general-nw", "mri-general-nw",
+                "morning-rounds", "evening-rounds", "oncall-mc", "standby",
             ],
-            preferredClassIds=["irm-neuro-hk", "irm-tout-hk"],
+            preferredClassIds=["mri-neuro-mc", "mri-general-mc"],
             vacations=[],
             workingHoursPerWeek=40.0,
         ),
         Clinician(
-            id="clin-bob",
-            name="Dr. Bob Mueller",
+            id="clin-patel",
+            name="Dr. Raj Patel",
             qualifiedClassIds=[
-                "ct-tout-hk", "irm-tout-hk", "irm-cardio-hk", "echo-tout-hk",
-                "ct-tout-zk", "irm-tout-zk", "irm-seno-zk",
-                "tout-matin", "garde-hk",
+                "ct-general-mc", "mri-general-mc", "mri-cardiac-mc", "us-general-mc",
+                "ct-general-nw", "mri-general-nw", "mri-breast-nw",
+                "morning-rounds", "oncall-mc",
             ],
-            preferredClassIds=["irm-cardio-hk"],
+            preferredClassIds=["mri-cardiac-mc"],
             vacations=[],
             workingHoursPerWeek=40.0,
         ),
         Clinician(
-            id="clin-carol",
-            name="Dr. Carol Weber",
+            id="clin-johnson",
+            name="Dr. Emily Johnson",
             qualifiedClassIds=[
-                "irm-neuro-hk", "irm-tout-hk", "mg-tout-hk", "mg-stereo-hk",
-                "irm-tout-zk", "irm-neuro-zk", "mg-tout-zk",
-                "cor-tout", "cor-neuro",
-                "tout-matin", "staff-uro", "staff-gyn",
+                "mri-neuro-mc", "mri-general-mc", "mammo-general-mc", "mammo-stereo-mc",
+                "mri-general-nw", "mri-neuro-nw", "mammo-general-nw",
+                "imaging-general-ss", "imaging-neuro-ss",
+                "morning-rounds", "mdt-urology", "mdt-gynecology",
             ],
-            preferredClassIds=["mg-tout-hk", "mg-stereo-hk"],
+            preferredClassIds=["mammo-general-mc", "mammo-stereo-mc"],
             vacations=[],
             workingHoursPerWeek=33.0,
         ),
         # Junior radiologists - more limited qualifications
         Clinician(
-            id="clin-david",
-            name="Dr. David Klein",
+            id="clin-williams",
+            name="Dr. Michael Williams",
             qualifiedClassIds=[
-                "ct-tout-hk", "ct-tout-zk", "echo-tout-hk", "echo-tout-zk",
-                "tout-matin", "tout-soir",
+                "ct-general-mc", "ct-general-nw", "us-general-mc", "us-general-nw",
+                "morning-rounds", "evening-rounds",
             ],
-            preferredClassIds=["ct-tout-hk"],
+            preferredClassIds=["ct-general-mc"],
             vacations=[],
             workingHoursPerWeek=40.0,
         ),
         Clinician(
-            id="clin-emma",
-            name="Dr. Emma Fischer",
+            id="clin-garcia",
+            name="Dr. Maria Garcia",
             qualifiedClassIds=[
-                "irm-tout-zk", "irm-seno-zk", "mg-tout-zk",
-                "echo-tout-zk",
-                "tout-matin",
+                "mri-general-nw", "mri-breast-nw", "mammo-general-nw",
+                "us-general-nw",
+                "morning-rounds",
             ],
-            preferredClassIds=["irm-seno-zk"],
+            preferredClassIds=["mri-breast-nw"],
             vacations=[],
             workingHoursPerWeek=40.0,
         ),
         Clinician(
-            id="clin-frank",
-            name="Dr. Frank Bauer",
+            id="clin-kim",
+            name="Dr. James Kim",
             qualifiedClassIds=[
-                "ct-tout-hk", "ct-arthro-hk", "irm-neuro-hk",
-                "garde-hk", "astreinte",
-                "tout-matin", "tout-soir",
+                "ct-general-mc", "ct-interv-mc", "mri-neuro-mc",
+                "oncall-mc", "standby",
+                "morning-rounds", "evening-rounds",
             ],
-            preferredClassIds=["irm-neuro-hk"],
+            preferredClassIds=["mri-neuro-mc"],
             vacations=[],
             workingHoursPerWeek=40.0,
         ),
         # Specialists
         Clinician(
-            id="clin-greta",
-            name="Dr. Greta Hoffmann",
+            id="clin-nguyen",
+            name="Dr. Lisa Nguyen",
             qualifiedClassIds=[
-                "irm-cardio-hk", "irm-neuro-hk", "irm-tout-hk",
-                "cor-neuro",
-                "staff-onco",
+                "mri-cardiac-mc", "mri-neuro-mc", "mri-general-mc",
+                "imaging-neuro-ss",
+                "mdt-oncology",
             ],
-            preferredClassIds=["irm-cardio-hk"],
+            preferredClassIds=["mri-cardiac-mc"],
             vacations=[],
             workingHoursPerWeek=32.0,
         ),
         Clinician(
-            id="clin-hans",
-            name="Dr. Hans Richter",
+            id="clin-brown",
+            name="Dr. David Brown",
             qualifiedClassIds=[
-                "mg-tout-hk", "mg-stereo-hk", "mg-tout-zk",
-                "irm-seno-zk",
-                "staff-gyn",
+                "mammo-general-mc", "mammo-stereo-mc", "mammo-general-nw",
+                "mri-breast-nw",
+                "mdt-gynecology",
             ],
-            preferredClassIds=["mg-stereo-hk"],
+            preferredClassIds=["mammo-stereo-mc"],
             vacations=[],
             workingHoursPerWeek=40.0,
         ),
@@ -219,79 +219,79 @@ def _make_slot(
     )
 
 
-def make_kirchberg_slots(day_type: str) -> List[TemplateSlot]:
-    """Create Kirchberg slots for a given day type."""
+def make_main_campus_slots(day_type: str) -> List[TemplateSlot]:
+    """Create Main Campus slots for a given day type."""
     col_band_id = f"col-{day_type}-1"
     slots = []
 
-    # Morning staff meeting (06:30-07:30)
+    # Morning rounds (06:30-07:30)
     slots.append(_make_slot(
-        f"tout-matin-hk__{day_type}",
-        "loc-kirchberg", "row-staff", col_band_id,
-        "block-tout-matin", "06:30", "07:30", required=1
+        f"morning-rounds-mc__{day_type}",
+        "loc-main-campus", "row-staff", col_band_id,
+        "block-morning-rounds", "06:30", "07:30", required=1
     ))
 
     # Morning slots (07:30-13:00)
-    for section in ["ct-tout-hk", "irm-neuro-hk", "irm-cardio-hk", "echo-tout-hk", "mg-stereo-hk"]:
+    for section in ["ct-general-mc", "mri-neuro-mc", "mri-cardiac-mc", "us-general-mc", "mammo-stereo-mc"]:
         slots.append(_make_slot(
             f"{section}-morning__{day_type}",
-            "loc-kirchberg", f"row-{section}", col_band_id,
+            "loc-main-campus", f"row-{section}", col_band_id,
             f"block-{section}", "07:30", "13:00", required=1
         ))
 
     # Afternoon slots (13:00-16:00)
-    for section in ["ct-tout-hk", "irm-neuro-hk", "echo-tout-hk", "mg-tout-hk"]:
+    for section in ["ct-general-mc", "mri-neuro-mc", "us-general-mc", "mammo-general-mc"]:
         slots.append(_make_slot(
             f"{section}-afternoon__{day_type}",
-            "loc-kirchberg", f"row-{section}", col_band_id,
+            "loc-main-campus", f"row-{section}", col_band_id,
             f"block-{section}", "13:00", "16:00", required=1
         ))
 
     # Evening slots (16:00-19:00)
-    for section in ["ct-tout-hk", "irm-neuro-hk"]:
+    for section in ["ct-general-mc", "mri-neuro-mc"]:
         slots.append(_make_slot(
             f"{section}-evening__{day_type}",
-            "loc-kirchberg", f"row-{section}", col_band_id,
+            "loc-main-campus", f"row-{section}", col_band_id,
             f"block-{section}", "16:00", "19:00", required=1
         ))
 
     return slots
 
 
-def make_zitha_slots(day_type: str) -> List[TemplateSlot]:
-    """Create Zitha slots for a given day type."""
+def make_north_wing_slots(day_type: str) -> List[TemplateSlot]:
+    """Create North Wing slots for a given day type."""
     col_band_id = f"col-{day_type}-1"
     slots = []
 
-    # Morning staff meeting (06:30-07:30) - only on weekdays
+    # Morning rounds (06:30-07:30) - only on weekdays
     if day_type not in ["sat", "sun", "holiday"]:
         slots.append(_make_slot(
-            f"tout-matin-zk__{day_type}",
-            "loc-zitha", "row-staff-zk", col_band_id,
-            "block-tout-matin", "06:30", "07:30", required=1
+            f"morning-rounds-nw__{day_type}",
+            "loc-north-wing", "row-staff-nw", col_band_id,
+            "block-morning-rounds", "06:30", "07:30", required=1
         ))
 
     # Morning slots (07:30-11:30)
-    for section in ["ct-tout-zk", "irm-tout-zk", "echo-tout-zk", "mg-tout-zk"]:
+    for section in ["ct-general-nw", "mri-general-nw", "us-general-nw", "mammo-general-nw"]:
         slots.append(_make_slot(
             f"{section}-morning__{day_type}",
-            "loc-zitha", f"row-{section}", col_band_id,
+            "loc-north-wing", f"row-{section}", col_band_id,
             f"block-{section}", "07:30", "11:30", required=1
         ))
 
     # Midday slots (11:30-15:30)
-    for section in ["ct-biopsie-zk", "irm-seno-zk", "echo-tout-zk"]:
+    for section in ["ct-biopsy-nw", "mri-breast-nw", "us-general-nw"]:
         slots.append(_make_slot(
             f"{section}-midday__{day_type}",
-            "loc-zitha", f"row-{section}", col_band_id,
+            "loc-north-wing", f"row-{section}", col_band_id,
             f"block-{section}", "11:30", "15:30", required=1
         ))
 
     # Afternoon slots (15:30-19:00)
-    for section in ["ct-tout-zk", "irm-tout-zk"]:
+    for section in ["ct-general-nw", "mri-general-nw"]:
         slots.append(_make_slot(
             f"{section}-afternoon__{day_type}",
-            "loc-zitha", f"row-{section}", col_band_id,
+            "loc-north-wing", f"row-{section}", col_band_id,
             f"block-{section}", "15:30", "19:00", required=1
         ))
 
@@ -307,7 +307,7 @@ def make_martin_like_state(
     include_vacations: bool = False,
 ) -> AppState:
     """
-    Create a complete AppState that mimics Martin's radiology department.
+    Create a complete AppState that mimics a complex radiology department.
 
     Args:
         day_types: Which day types to include slots for. Default: ["mon", "tue", "wed", "thu", "fri"]
@@ -324,7 +324,7 @@ def make_martin_like_state(
 
     # Add some vacations if requested
     if include_vacations:
-        # Alice is on vacation for a few days
+        # Dr. Chen is on vacation for a few days
         clinicians[0].vacations = [
             VacationRange(id="vac-1", startISO="2026-01-07", endISO="2026-01-09"),
         ]
@@ -332,13 +332,14 @@ def make_martin_like_state(
     # Create workplace rows for all sections
     rows = []
     for section_id, section_name in SECTIONS.items():
+        loc_id = "loc-main-campus" if "mc" in section_id else "loc-north-wing" if "nw" in section_id else "loc-south-site"
         rows.append(WorkplaceRow(
             id=section_id,
             name=section_name,
             kind="class",
             dotColorClass="bg-slate-400",
             blockColor="#E8E1F5",
-            locationId="loc-kirchberg" if "hk" in section_id else "loc-zitha" if "zk" in section_id else "loc-cdo",
+            locationId=loc_id,
             subShifts=[],
         ))
 
@@ -355,38 +356,38 @@ def make_martin_like_state(
     ]
 
     # Create column bands for all day types
-    col_bands_kirchberg = [
+    col_bands_main = [
         TemplateColBand(id=f"col-{day_type}-1", label="", order=1, dayType=day_type)
         for day_type in day_types
     ]
-    col_bands_zitha = [
+    col_bands_north = [
         TemplateColBand(id=f"col-{day_type}-1", label="", order=1, dayType=day_type)
         for day_type in day_types
     ]
 
     # Create row bands
-    row_bands_kirchberg = [
+    row_bands_main = [
         TemplateRowBand(id="row-staff", label="Staff", order=0),
     ] + [
         TemplateRowBand(id=f"row-{section_id}", label=section_name, order=i+1)
         for i, (section_id, section_name) in enumerate(SECTIONS.items())
-        if "hk" in section_id or section_id in ["tout-matin", "tout-soir", "garde-hk", "astreinte"]
+        if "mc" in section_id or section_id in ["morning-rounds", "evening-rounds", "oncall-mc", "standby"]
     ]
 
-    row_bands_zitha = [
-        TemplateRowBand(id="row-staff-zk", label="Staff", order=0),
+    row_bands_north = [
+        TemplateRowBand(id="row-staff-nw", label="Staff", order=0),
     ] + [
         TemplateRowBand(id=f"row-{section_id}", label=section_name, order=i+1)
         for i, (section_id, section_name) in enumerate(SECTIONS.items())
-        if "zk" in section_id
+        if "nw" in section_id
     ]
 
     # Create all slots for all day types
-    kirchberg_slots = []
-    zitha_slots = []
+    main_slots = []
+    north_slots = []
     for day_type in day_types:
-        kirchberg_slots.extend(make_kirchberg_slots(day_type))
-        zitha_slots.extend(make_zitha_slots(day_type))
+        main_slots.extend(make_main_campus_slots(day_type))
+        north_slots.extend(make_north_wing_slots(day_type))
 
     # Build template
     template = WeeklyCalendarTemplate(
@@ -394,26 +395,26 @@ def make_martin_like_state(
         blocks=blocks,
         locations=[
             WeeklyTemplateLocation(
-                locationId="loc-kirchberg",
-                rowBands=row_bands_kirchberg,
-                colBands=col_bands_kirchberg,
-                slots=kirchberg_slots,
+                locationId="loc-main-campus",
+                rowBands=row_bands_main,
+                colBands=col_bands_main,
+                slots=main_slots,
             ),
             WeeklyTemplateLocation(
-                locationId="loc-zitha",
-                rowBands=row_bands_zitha,
-                colBands=col_bands_zitha,
-                slots=zitha_slots,
+                locationId="loc-north-wing",
+                rowBands=row_bands_north,
+                colBands=col_bands_north,
+                slots=north_slots,
             ),
         ],
     )
 
-    # Solver settings matching Martin's
+    # Solver settings
     solver_settings = {
         "enforceSameLocationPerDay": True,
         "preferContinuousShifts": True,
         "onCallRestEnabled": False,
-        "onCallRestClassId": "garde-hk",
+        "onCallRestClassId": "oncall-mc",
         "onCallRestDaysBefore": 1,
         "onCallRestDaysAfter": 1,
     }
