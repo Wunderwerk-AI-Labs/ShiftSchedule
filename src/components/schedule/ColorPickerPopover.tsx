@@ -257,6 +257,18 @@ export default function ColorPickerPopover({
                 Custom
               </span>
               <input
+                type="color"
+                value={value || "#ffffff"}
+                onChange={(event) => {
+                  const normalized = normalizeHexColor(event.target.value);
+                  if (normalized) {
+                    applyValue(normalized);
+                  }
+                }}
+                className="h-6 w-6 cursor-pointer rounded border border-slate-200 bg-transparent p-0 dark:border-slate-700"
+                aria-label="Pick a custom color"
+              />
+              <input
                 type="text"
                 inputMode="text"
                 spellCheck={false}
