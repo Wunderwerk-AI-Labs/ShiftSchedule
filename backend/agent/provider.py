@@ -99,6 +99,10 @@ class ProviderResponse:
     # Opaque provider content blocks for replaying this assistant turn
     # verbatim (see ChatMessage.raw_content).
     raw_content: Optional[List[dict]] = None
+    # Wall-clock seconds this single generation call took, filled in by the
+    # harness around ``complete``. Summed over successful calls to report the
+    # endpoint's average generation speed (output tokens / generation time).
+    generation_seconds: float = 0.0
 
 
 class LLMProvider(ABC):

@@ -86,9 +86,12 @@ RETRY_BACKOFF_SECONDS = (2.0, 8.0)
 # each further day would burn 3 more doomed API calls.
 MAX_CONSECUTIVE_FAILED_DAYS = 2
 # Cap for a single LLM request. Sized for slow self-hosted reasoning models
-# (a 100B+ model can spend several minutes thinking through the first digest);
-# the run's own wall-clock deadline still bounds the total via min().
-MAX_PER_CALL_TIMEOUT_SECONDS = 600.0
+# on a busy endpoint: at ~13 tok/s (measured on the clinic's Flash model) a
+# reasoning-heavy turn can run many minutes, and cutting it mid-generation
+# wastes the whole call. Raised 600 -> 1200 so such a turn completes; the
+# run's own wall-clock deadline still bounds the total via min() (and UI
+# runs carry no wall-clock deadline at all).
+MAX_PER_CALL_TIMEOUT_SECONDS = 1200.0
 # Per-event cap for thought/reasoning text in the live feed. Generous — the
 # admin wants to read chains of thought in FULL (the UI opens them in a
 # dedicated dialog) — but bounded so a runaway model cannot bloat the SSE
@@ -124,12 +127,18 @@ def _complete_with_retry(
     """
     response: Optional[ProviderResponse] = None
     for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+        _call_started = time.time()
         response = provider.complete(
             system=system,
             messages=messages,
             tools=tools,
             timeout_seconds=compute_timeout(),
         )
+        # Record how long this generation took, so the harness can report the
+        # endpoint's average tokens/second (see absorb_response). Only the
+        # returned (last) attempt's time is kept — failed attempts and backoff
+        # sleeps must not distort the generation-speed figure.
+        response.generation_seconds = time.time() - _call_started
         if not (response.stop_reason == "error" and response.retryable):
             return response
         if attempt >= RETRY_MAX_ATTEMPTS or cancel_event.is_set():
@@ -328,6 +337,9 @@ def agent_solve_range(
     total_output_tokens = 0
     total_cache_read_tokens = 0
     total_cache_creation_tokens = 0
+    # Summed wall-clock of the successful LLM generation calls; used to report
+    # the endpoint's average output tokens/second.
+    total_generation_seconds = 0.0
 
     def emit_agent(kind: str, payload: Optional[dict] = None) -> None:
         """Dedicated SSE event type for the live agent panel. Older frontends
@@ -700,6 +712,16 @@ def agent_solve_range(
                     "output_tokens": total_output_tokens,
                     "cache_read_input_tokens": total_cache_read_tokens,
                     "cache_creation_input_tokens": total_cache_creation_tokens,
+                    # Average generation speed of the endpoint over this run
+                    # (output tokens / summed generation time). Lets the admin
+                    # see how fast the chosen model actually is, and track
+                    # endpoint tuning. None until a call has produced output.
+                    "generation_seconds": round(total_generation_seconds, 1),
+                    "output_tokens_per_second": (
+                        round(total_output_tokens / total_generation_seconds, 1)
+                        if total_generation_seconds > 0 and total_output_tokens > 0
+                        else None
+                    ),
                     "seed_score": executor.seed_score,
                     "best_score": executor.best_score,
                     # Post-run review: the model's own closing summary (real
@@ -796,10 +818,12 @@ def agent_solve_range(
         the repair loop and the day-by-day loop."""
         nonlocal total_input_tokens, total_output_tokens
         nonlocal total_cache_read_tokens, total_cache_creation_tokens, final_summary
+        nonlocal total_generation_seconds
         total_input_tokens += response.usage.get("input_tokens", 0)
         total_output_tokens += response.usage.get("output_tokens", 0)
         total_cache_read_tokens += response.usage.get("cache_read_input_tokens", 0)
         total_cache_creation_tokens += response.usage.get("cache_creation_input_tokens", 0)
+        total_generation_seconds += getattr(response, "generation_seconds", 0.0) or 0.0
         if response.reasoning:
             # Chain of thought of reasoning models — shown expandable in the
             # live feed and kept in the run log. Aliases restored like text.

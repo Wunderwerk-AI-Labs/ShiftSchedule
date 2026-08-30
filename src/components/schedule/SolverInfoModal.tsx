@@ -883,6 +883,18 @@ export default function SolverInfoModal({
                       )} in · ${fmtTokens(agent.output_tokens)} out`,
                     },
                   ];
+                  // Endpoint generation speed — handy for self-hosted models
+                  // where the admin is tuning throughput. Null on older runs
+                  // or when a run produced no output before erroring.
+                  if (
+                    agent.output_tokens_per_second !== null &&
+                    agent.output_tokens_per_second !== undefined
+                  ) {
+                    tiles.push({
+                      label: "Speed",
+                      value: `${agent.output_tokens_per_second} tok/s`,
+                    });
+                  }
                   // Only API models have a known price; self-hosted models
                   // cost nothing per run, so no cost tile at all.
                   if (cost !== null) {

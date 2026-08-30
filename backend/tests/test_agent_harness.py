@@ -8,7 +8,7 @@ import time
 from backend.agent.config import AgentConfig
 from backend.agent.harness import agent_solve_range
 from backend.agent.mock_provider import MockProvider
-from backend.agent.provider import LLMProvider, ProviderResponse
+from backend.agent.provider import LLMProvider, ProviderResponse, ToolCall
 from backend.models import SolveRangeRequest
 
 from .conftest import make_app_state, make_clinician
@@ -1095,3 +1095,71 @@ def test_day_by_day_runs_final_range_review():
         n.startswith("Final range review: 1 additional change") for n in result["notes"]
     )
     assert any(n.startswith("No unresolved issues") for n in result["notes"])
+
+
+class SlowGeneratingProvider(LLMProvider):
+    """Each call takes measurable wall time and reports output tokens, so the
+    harness can compute a non-zero generation speed."""
+
+    def __init__(self, delay_s: float = 0.05, out_tokens: int = 40):
+        self.calls = 0
+        self._delay = delay_s
+        self._out = out_tokens
+
+    def complete(self, *, system, messages, tools, timeout_seconds) -> ProviderResponse:
+        self.calls += 1
+        time.sleep(self._delay)
+        usage = {"input_tokens": 200, "output_tokens": self._out}
+        if self.calls == 1:
+            return ProviderResponse(
+                text=None,
+                tool_calls=[ToolCall(id="c1", name="get_plan_overview", arguments={})],
+                stop_reason="tool_use",
+                usage=usage,
+            )
+        return ProviderResponse(
+            text="done", tool_calls=[], stop_reason="end_turn", usage=usage,
+        )
+
+
+def test_reports_endpoint_generation_speed():
+    """debug_info.agent exposes generation_seconds and output_tokens_per_second
+    computed from the summed generation time of successful calls."""
+    state = _two_clinician_state()
+    result = agent_solve_range(
+        _payload(),
+        state,
+        MockCancelEvent(),
+        ProgressRecorder(),
+        time.time(),
+        provider=SlowGeneratingProvider(delay_s=0.05, out_tokens=40),
+        config=_config(),
+    )
+    agent = result["debugInfo"]["agent"]
+    # Two calls * 40 output tokens, each ~0.05 s of generation.
+    assert agent["output_tokens"] == 80
+    assert agent["generation_seconds"] > 0
+    tps = agent["output_tokens_per_second"]
+    assert tps is not None and tps > 0
+    # 80 output tokens over ~0.1 s of generation -> on the order of hundreds
+    # (exact value depends on scheduling jitter; generation_seconds is rounded
+    # in the payload, so compare loosely rather than to the derived quotient).
+    assert 80 / (agent["generation_seconds"] + 0.05) <= tps <= 80 / max(
+        agent["generation_seconds"] - 0.05, 1e-6
+    )
+
+
+def test_generation_speed_is_none_when_no_output():
+    """A run that produces no output tokens (immediate end) reports None, not a
+    divide-by-zero."""
+    state = _two_clinician_state()
+    result = agent_solve_range(
+        _payload(),
+        state,
+        MockCancelEvent(),
+        ProgressRecorder(),
+        time.time(),
+        provider=MockProvider([]),  # ends immediately, 0 output tokens
+        config=_config(),
+    )
+    assert result["debugInfo"]["agent"]["output_tokens_per_second"] is None

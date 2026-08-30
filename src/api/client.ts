@@ -758,6 +758,11 @@ export type SolverAgentDebug = {
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  /** Summed wall-clock of the LLM generation calls this run. */
+  generation_seconds?: number | null;
+  /** Average endpoint speed: output tokens / generation time. Null until a
+   * call produced output (e.g. an immediate provider error). */
+  output_tokens_per_second?: number | null;
   seed_score?: number;
   best_score?: number;
   /** The model's own closing summary of the run (real names restored). */

@@ -313,6 +313,7 @@ def main() -> None:
         "moves_rejected": agent.get("moves_rejected"),
         "input_tokens": agent.get("input_tokens"),
         "output_tokens": agent.get("output_tokens"),
+        "tok_per_s": agent.get("output_tokens_per_second"),
         "open_slots_seed": len(agent.get("open_slots_seed") or []),
         "open_slots_final": len(agent.get("open_slots_final") or []),
         "improvement": improvement,
