@@ -24,12 +24,16 @@ import {
 } from "../../api/client";
 import { AGENT_MODEL_OPTIONS, formatCostUSD } from "../../lib/llmPricing";
 
-// Self-hosted models offered as one-click presets (both served by the
+// Self-hosted models offered as one-click presets (all served by the
 // clinic's LiteLLM endpoint); anything else via "Custom model name".
 const SELF_HOSTED_MODEL_PRESETS = [
   "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4",
   "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+  "unsloth/Qwen3.8-Flash-Next-GGUF",
 ];
+
+// Drop the "org/" prefix (Qwen/, unsloth/, …) for a compact picker label.
+const presetLabel = (id: string) => id.split("/").pop() ?? id;
 import { DEFAULT_AGENT_INSTRUCTIONS } from "../../lib/agentSettings";
 import WeeklyTemplateBuilder from "./WeeklyTemplateBuilder";
 import CustomSelect from "./CustomSelect";
@@ -670,7 +674,7 @@ export default function SettingsView({
                       options={[
                         ...SELF_HOSTED_MODEL_PRESETS.map((id) => ({
                           value: id,
-                          label: id.replace("Qwen/", ""),
+                          label: presetLabel(id),
                         })),
                         { value: "__custom__", label: "Custom model name…" },
                       ]}
