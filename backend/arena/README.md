@@ -441,3 +441,41 @@ limit anymore — runs end on the iteration budget or manual abort. The
 three production incidents of 2026-07-11/12 are structurally impossible
 in this model: no long-lived HTTP request exists to cut, and the previous
 plan is never stripped before a run.
+
+## Model lineup change + evaluation round 5 (v1.50, 2026-08-30)
+
+The self-hosted endpoint's `/models` listing changed. The `llm-diag`
+workflow now reports it serves (chat-capable): `Qwen/Qwen3.5-35B-A3B-GPTQ-Int4`,
+`unsloth/Qwen3.8-Flash-Next-GGUF` (the current admin default),
+`Qwen/Qwen3.5-122B-A10B-GPTQ-Int4-cliniva` (the 122B, **renamed** — the old
+`…-Int4` id now 400s "invalid model name"), plus `Qwen/Qwen3.8-27B`,
+`Qwen/Qwen3-30B-A3B-Instruct-2507-FP8`, `openai/gpt-oss-20b` and
+`mistralai/Mistral-Small-4-119B`. Endpoint generation speed measured ~13 tok/s.
+
+Decision: the app keeps **two** self-hosted presets — the 35B and the Flash;
+the 122B preset was dropped (v1.50). Both kept models were verified on the
+real endpoint, in the production strategy (`day_by_day`; `repair` is
+deactivated in the UI), base scenario, start 2026-02-02, 3 days:
+
+| model | strategy | duration | iter | moves acc/rej | open slots | short days | hours dev (min) | verdict |
+|---|---|---|---|---|---|---|---|---|
+| 35B | day_by_day | 549 s | 152 | 111/0 | 87 → 0 | 1 → 2 | 15717 → 7902 | ✅ pass |
+| Flash | day_by_day | 1795 s* | 142 | 97/1 | 87 → 0 | 1 → 2 | 15717 → 8077 | ✅ pass |
+| 35B | repair | 165 s | 12 | 26/34 | 0 → 0 | 15 → 6 | — | ✅ pass |
+| Flash | repair | 1495 s* | 3 | 0/0 | 0 → 0 | 15 (no change) | — | ⚠ times out |
+
+*hit the run's wall-clock budget.
+
+Both models **succeed in production mode** (day_by_day): each builds the
+full 3-day range from scratch and fills all 87 required positions (87 → 0
+open), with essentially identical quality. The 35B is ~3.3× faster and is
+the everyday default; Flash reaches the same coverage but is slow at the
+endpoint's ~13 tok/s and only just finished within 30 min (its final range
+review was cut off by the budget, after the plan was already complete).
+
+Why Flash "fails" in `repair` but not `day_by_day`: repair feeds the whole
+seed-plan digest into each call, so at ~13 tok/s a single reasoning turn
+runs ~500 s and the third one exceeds the 600 s per-call cap — the run then
+returns the untouched seed. day_by_day sends one day's smaller context per
+call, keeping each turn short enough to make progress. Since the UI only
+uses day_by_day, this repair limitation is not a production concern.
