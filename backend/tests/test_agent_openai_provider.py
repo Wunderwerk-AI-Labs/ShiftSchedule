@@ -231,3 +231,27 @@ def test_verify_tls_off_builds_client_with_unverified_http_client():
     # The SDK client was constructed with a custom httpx client; enough to
     # assert construction succeeded and the base_url stuck.
     assert str(provider._client.base_url).startswith("https://134.130.13.43:4000/v1")
+
+
+def test_reasoning_effort_passed_via_extra_body():
+    """When configured, reasoning_effort is sent to the endpoint (extra_body),
+    and omitted entirely when not set."""
+    provider = OpenAICompatibleProvider(
+        AgentConfig(provider="openai", model="my-local-model",
+                    openai_base_url="http://127.0.0.1:9/v1",
+                    reasoning_effort="low")
+    )
+    provider._client = _StubClient(_completion(content="ok", finish_reason="stop"))
+    provider.complete(
+        system="s", messages=[ChatMessage(role="user", content="hi")],
+        tools=[], timeout_seconds=30,
+    )
+    assert provider._client.last_kwargs["extra_body"] == {"reasoning_effort": "low"}
+
+    # Not configured -> no extra_body key at all.
+    plain = _provider_with(_completion(content="ok", finish_reason="stop"))
+    plain.complete(
+        system="s", messages=[ChatMessage(role="user", content="hi")],
+        tools=[], timeout_seconds=30,
+    )
+    assert "extra_body" not in plain._client.last_kwargs

@@ -151,6 +151,13 @@ class OpenAICompatibleProvider(LLMProvider):
                 "max_tokens": self._config.max_tokens,
                 "messages": to_openai_messages(system, messages),
             }
+            effort = (self._config.reasoning_effort or "").strip().lower()
+            if effort:
+                # LiteLLM/vLLM honour ``reasoning_effort`` and translate it per
+                # model; lower effort trims the chain of thought -> fewer output
+                # tokens, faster turns. Sent via extra_body so it reaches the
+                # endpoint verbatim even on SDK versions that don't type it.
+                request_kwargs["extra_body"] = {"reasoning_effort": effort}
             if tools:
                 # Some servers reject an empty tools array — omit it for
                 # plain chat calls (e.g. the admin connection test).

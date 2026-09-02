@@ -25,6 +25,9 @@ on:
       strategy:
         description: "day_by_day (standard) | repair (benchmark reference)"
         default: "day_by_day"
+      reasoning:
+        description: "reasoning effort: (empty) | low | medium | high"
+        default: ""
 
 jobs:
   arena:
@@ -66,14 +69,16 @@ jobs:
           MODEL: ${{ inputs.model }}
           SCENARIO: ${{ inputs.scenario }}
           STRATEGY: ${{ inputs.strategy }}
+          REASONING: ${{ inputs.reasoning }}
         run: |
-          ssh truhn-target START="$START" DAYS="$DAYS" TIMEOUT="$TIMEOUT" MODEL="$MODEL" SCENARIO="$SCENARIO" STRATEGY="$STRATEGY" bash -s <<'EOF'
+          ssh truhn-target START="$START" DAYS="$DAYS" TIMEOUT="$TIMEOUT" MODEL="$MODEL" SCENARIO="$SCENARIO" STRATEGY="$STRATEGY" REASONING="$REASONING" bash -s <<'EOF'
           set -euo pipefail
           cd /opt/app
           EXTRA=()
           [ -n "$MODEL" ] && EXTRA=(--model "$MODEL")
           [ -n "$SCENARIO" ] && EXTRA+=(--scenario "$SCENARIO")
           [ -n "$STRATEGY" ] && EXTRA+=(--strategy "$STRATEGY")
+          [ -n "$REASONING" ] && EXTRA+=(--reasoning-effort "$REASONING")
           docker compose -f docker-compose.proxied.yml exec -T backend \
             python -m backend.arena.run \
               --start "$START" --days "$DAYS" --timeout "$TIMEOUT" "${EXTRA[@]}"

@@ -38,6 +38,11 @@ class AgentConfig:
     # False = accept self-signed certificates on the OpenAI-compatible
     # endpoint (e.g. an internal vLLM/LiteLLM server on a trusted network).
     openai_verify_tls: bool = True
+    # Optional reasoning-effort hint for reasoning models ("low"/"medium"/
+    # "high"). None = let the model/endpoint decide. Passed through to the
+    # OpenAI-compatible endpoint (LiteLLM/vLLM honour ``reasoning_effort``);
+    # lower effort = fewer thinking tokens = faster, cheaper turns.
+    reasoning_effort: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -60,4 +65,6 @@ class AgentConfig:
                 (os.environ.get("OPENAI_VERIFY_TLS") or "true").strip().lower()
                 not in ("0", "false", "no")
             ),
+            reasoning_effort=(os.environ.get("AGENT_REASONING_EFFORT") or "").strip()
+            or None,
         )

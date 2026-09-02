@@ -257,6 +257,12 @@ def main() -> None:
         help="agent approach: build day by day (the standard), or repair "
              "the heuristic draft (kept for benchmarks)",
     )
+    parser.add_argument(
+        "--reasoning-effort", default=None,
+        choices=["low", "medium", "high"],
+        help="reasoning-effort hint for the model (fewer thinking tokens = "
+             "faster); passed to the OpenAI-compatible endpoint",
+    )
     args = parser.parse_args()
 
     end = date.fromisoformat(args.start) + timedelta(days=args.days - 1)
@@ -275,6 +281,8 @@ def main() -> None:
         config.model = args.model
     if args.max_iterations:
         config.max_iterations = args.max_iterations
+    if args.reasoning_effort:
+        config.reasoning_effort = args.reasoning_effort
 
     def on_progress(kind: str, data: dict) -> None:
         # One line per iteration: progress for the human AND keepalive
