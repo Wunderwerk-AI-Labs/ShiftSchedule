@@ -12,6 +12,7 @@ on:
       - "**.md"
       - ".github/workflows/agent-arena.yml"
       - ".github/workflows/backend-logs.yml"
+      - ".github/workflows/set-agent-model.yml"
   pull_request:
     branches: [main]
 

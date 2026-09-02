@@ -479,3 +479,52 @@ runs ~500 s and the third one exceeds the 600 s per-call cap — the run then
 returns the untouched seed. day_by_day sends one day's smaller context per
 call, keeping each turn short enough to make progress. Since the UI only
 uses day_by_day, this repair limitation is not a production concern.
+
+## Evaluation round 6: model re-roll + reasoning-effort sweep (v1.52, 2026-09-02)
+
+The clinic re-rolled the Flash model: the endpoint now serves it as
+`VnimanieAI/Qwen3.8-Flash-Next-W4A16` (the old `unsloth/Qwen3.8-Flash-Next-GGUF`
+id 400s). A new chat model `Qwen/Qwen3.8-27B` also appeared. Added an optional
+reasoning-effort control (`--reasoning-effort` / workflow `reasoning` input,
+plumbed to the OpenAI-compatible endpoint via `extra_body`).
+
+**Endpoint bug found:** `reasoning=medium` is currently rejected across the
+whole Qwen3.8 family — LiteLLM translates OpenAI `medium` to a model-side
+`high`, which these models don't accept (they support `xhigh` (default, =
+"full"), `medium`, `low`). So only `low` and `full`(=xhigh) were measurable;
+`medium` needs a LiteLLM proxy-config fix on the endpoint side.
+
+All runs day_by_day, base, start 2026-02-02, current v1.52 code:
+
+| model | reasoning | days | tok/s | duration | moves acc/rej | open | short (final) |
+|---|---|---|---|---|---|---|---|
+| Flash W4A16 | full | 1 | 103 | 351 s | 38/0 | 30→0 | 1 |
+| Flash W4A16 | low  | 1 | 65  | 478 s | 66/71 | 30→0 | 2 |
+| 27B         | full | 1 | 35  | 895 s | 34/0 | 30→0 | 2 |
+| 27B         | low  | 1 | 33  | 248 s | 32/0 | 30→0 | 2 |
+| Flash W4A16 | full | 3 | 102 | 783 s | 101/6 | 87→0 | 6 |
+| Flash W4A16 | low  | 3 | 60  | 1604 s | 179/586 | 87→0 | 5 |
+| 27B         | full | 3 | 37  | 2672 s | 103/6 | 87→0 | 4 |
+| 27B         | low  | 3 | 34  | 670 s | 109/0 | 87→0 | 2 |
+
+Findings:
+- **All eight reach full coverage** (open → 0). The differentiators are speed
+  and cleanliness (rejected moves = wasted effort).
+- **The reasoning knob is model-dependent, in opposite directions.**
+  Flash needs **full**: at `low` it churns illegal moves (71 then **586**
+  rejected) and ends up *slower* than full (1604 s vs 783 s on 3d). The 27B
+  prefers **low**: clean (0 rejected), ~4× faster than its own full (670 s vs
+  2672 s on 3d), and best short-day count (2).
+- Raw throughput: the new W4A16 Flash is ~102 tok/s (nearly 2× the old GGUF's
+  56) and ~3× the 27B's ~35 tok/s.
+- Best clean configs: **27B @ low** (fastest clean wall-clock, 248 s/670 s) and
+  **Flash @ full** (highest throughput, 351 s/783 s) — near-tied on time.
+  Avoid Flash @ low (sloppy) and 27B @ full (slow).
+
+**Decision:** set **Flash W4A16 at full reasoning** as the global default
+model for everyone (admin `openai_model` = `VnimanieAI/Qwen3.8-Flash-Next-W4A16`,
+no reasoning_effort override). It is the highest-throughput model, clean at
+full, and a safe single default across day counts. The 27B@low result is a
+strong alternative to revisit; the `medium` rows are still open pending the
+LiteLLM fix. (Single run per cell, base scenario — directional, not
+statistical.)
