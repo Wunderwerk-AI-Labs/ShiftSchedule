@@ -56,7 +56,8 @@ capacity, and the invariant that matters is "no NEW violations".
 
 Design notes
 ------------
-- Pure functions, no I/O, no global state. Safe to call from any request path.
+- Pure functions, no I/O. Bounded memoization of date/time parsing only;
+  state-dependent rules are read afresh on every call.
 - Does NOT import from ``solver.py`` to avoid a circular dependency with the
   subprocess-spawning code in that module. The small helpers (time parsing,
   slot-interval construction) are duplicated with a comment noting the source.
@@ -68,6 +69,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .constants import (
@@ -139,6 +141,7 @@ class ValidationReport:
 # ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=2048)
 def _parse_time_to_minutes(value: Optional[str]) -> Optional[int]:
     """Parse ``HH:MM`` → minutes from midnight. Mirrors ``solver._parse_time_to_minutes``."""
     if not value:
@@ -222,6 +225,7 @@ def _is_on_vacation(clinician: Clinician, date_iso: str) -> bool:
     return False
 
 
+@lru_cache(maxsize=4096)
 def _day_offset(date_iso: str, origin_iso: str) -> int:
     """Whole-day offset between two ISO dates (can be negative)."""
     origin = datetime.fromisoformat(f"{origin_iso}T00:00:00").date()
@@ -229,6 +233,7 @@ def _day_offset(date_iso: str, origin_iso: str) -> int:
     return (target - origin).days
 
 
+@lru_cache(maxsize=4096)
 def _weekday_key(date_iso: str) -> str:
     """``mon``..``sun`` for an ISO date. Mirrors ``solver._get_weekday_key``."""
     dt = datetime.fromisoformat(f"{date_iso}T00:00:00")
@@ -629,6 +634,9 @@ def validate_mandatory_windows(
     """
     clinicians_by_id = {c.id: c for c in state.clinicians}
     slot_intervals = _build_slot_lookup(state)
+    # This cache lasts ONE validation call; changed clinician windows are
+    # always read again on the next proposal, including the acceptance gate.
+    windows = {}
     out: List[Violation] = []
     for a in assignments:
         if a.rowId.startswith("pool-"):
@@ -639,7 +647,10 @@ def validate_mandatory_windows(
         interval = slot_intervals.get(a.rowId)
         if interval is None:
             continue
-        window = _mandatory_window(clinician, _weekday_key(a.dateISO))
+        window_key = (a.clinicianId, _weekday_key(a.dateISO))
+        if window_key not in windows:
+            windows[window_key] = _mandatory_window(clinician, window_key[1])
+        window = windows[window_key]
         if window is None:
             continue
         w_start, w_end = window
@@ -815,9 +826,12 @@ def validate_capacity(
         key = (a.rowId, a.dateISO)
         counts[key] = counts.get(key, 0) + 1
 
+    # A day can occur in many slot instances. Recompute holiday-dependent
+    # types once per date on every validation, never cache them across states.
+    day_types = {day: _day_type(day, state) for day in {date_iso for _, date_iso in counts}}
     out: List[Violation] = []
     for (slot_id, date_iso), count in counts.items():
-        if slot_day_type.get(slot_id) != _day_type(date_iso, state):
+        if slot_day_type.get(slot_id) != day_types[date_iso]:
             continue
         slot = slot_by_id[slot_id]
         raw_required = getattr(slot, "requiredSlots", 0)

@@ -10,6 +10,7 @@ from __future__ import annotations
 from backend.models import (
     AppState,
     Assignment,
+    Holiday,
     Location,
     PreferredWorkingTime,
     SolverSettings,
@@ -79,6 +80,38 @@ def test_empty_assignment_list_is_valid():
     state = make_app_state()
     report = validate_assignments(state, [])
     assert report.is_valid
+
+
+def test_repeated_validation_reads_changed_holidays_and_template_times():
+    state = make_app_state()
+    assignments = [make_assignment("a", "slot-a__mon", "2026-01-05", "clin-1"),
+                   make_assignment("b", "slot-a__mon", "2026-01-05", "clin-1")]
+    assert validate_capacity(state, assignments, only_fill_required=True)
+    state.holidays.append(Holiday(dateISO="2026-01-05", name="new holiday"))
+    assert not validate_capacity(state, assignments, only_fill_required=True)
+    state.holidays.clear()
+    assert validate_capacity(state, assignments, only_fill_required=True)
+    state.clinicians[0].preferredWorkingTimes = {
+        "mon": PreferredWorkingTime(startTime="08:00", endTime="12:00", requirement="mandatory")}
+    assert validate_mandatory_windows(state, assignments)
+    state.weeklyTemplate.locations[0].slots[0].endTime = "12:00"
+    assert not validate_mandatory_windows(state, assignments)
+    state.clinicians[0].preferredWorkingTimes["mon"].endTime = "11:00"
+    assert validate_mandatory_windows(state, assignments)
+
+
+def test_work_windows_do_not_leak_between_people_or_separate_states():
+    clinicians = [make_clinician("a", "Alice"), make_clinician("b", "Bob")]
+    clinicians[0].preferredWorkingTimes = {
+        "mon": PreferredWorkingTime(startTime="08:00", endTime="12:00", requirement="mandatory")}
+    state = make_app_state(clinicians=clinicians)
+    assignments = [make_assignment(cid, "slot-a__mon", "2026-01-05", cid) for cid in ("a", "b")]
+    assert [v.clinician_id for v in validate_mandatory_windows(state, assignments)] == ["a"]
+    other = state.model_copy(deep=True)
+    other.clinicians[1].preferredWorkingTimes = other.clinicians[0].preferredWorkingTimes
+    other.clinicians[0].preferredWorkingTimes = {}
+    assert [v.clinician_id for v in validate_mandatory_windows(other, assignments)] == ["b"]
+    assert [v.clinician_id for v in validate_mandatory_windows(state, assignments)] == ["a"]
 
 
 # ---------------------------------------------------------------------------
