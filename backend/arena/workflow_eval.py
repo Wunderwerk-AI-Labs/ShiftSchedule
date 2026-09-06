@@ -61,6 +61,7 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
             apply(data["candidates"][0])
     visited = []
     incomplete = []
+    search_limits = []
     for day in ctx.target_day_isos:
         if ex._tool_seconds_left() <= 5:
             incomplete.append(day)
@@ -75,6 +76,7 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
                 data = apply(data["candidates"][0]) or call("suggest_day_blocks", dateISO=day)
                 continue
             chosen = None
+            checks_incomplete = False
             checks = [("suggest_rescue_moves", "rescues"), ("suggest_balance_moves", "offers")]
             counts = ex._counts_by_instance(ex._working_list())
             if neighborhood and any(i.date_iso == day and counts.get(i.slot_key, 0) < i.target for i in ctx.instances.values()):
@@ -82,7 +84,12 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
             for name, field in checks:
                 checked = call(name, dateISO=day)
                 if checked.get("search_status") in ("incomplete", "budget_exhausted"):
-                    incomplete.append(day)
+                    checks_incomplete = True
+                    search_limits.append({"tool": name, "dateISO": day,
+                                          "status": checked["search_status"],
+                                          "scope": checked.get("search_scope"),
+                                          "note": checked.get("note"),
+                                          "not_searched": checked.get("not_searched")})
                 for offer in checked.get(field, []):
                     better = offer.get("improves_best")
                     if better is None:
@@ -93,6 +100,8 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
                 if chosen:
                     break
             if not chosen:
+                if checks_incomplete:
+                    incomplete.append(day)
                 break
             data = apply(chosen) or call("suggest_day_blocks", dateISO=day)
         else:
@@ -105,7 +114,8 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
               "new_hard_violations": sum(ex._is_new_hard(v) for v in hard),
               "fixed_unchanged": ex.fixed_assignments == state.assignments,
               "visited_days": len(visited), "incomplete_days": sorted(set(incomplete)),
-              "tool_calls": dict(calls), "controller_calls": sum(calls.values())}
+              "tool_calls": dict(calls), "controller_calls": sum(calls.values()),
+              "search_limits_encountered": search_limits[-20:]}
     if hasattr(ex, "reference_assignments"):
         from backend.agent.quality import extra_metrics
         result["additional_metrics"] = extra_metrics(ex, best)

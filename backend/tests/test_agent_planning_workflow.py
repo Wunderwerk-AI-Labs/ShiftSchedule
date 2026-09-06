@@ -210,3 +210,17 @@ def test_neighborhood_gate_rejects_cross_boundary_rest_conflict():
     result = run(ex, "repair_neighborhood", dateISO=MON)
     assert not result["proposals"]
     assert not ex.current
+
+
+def test_full_slot_candidate_list_does_not_claim_replacements_are_impossible():
+    state = make_app_state(clinicians=[make_clinician("a", "Alice"), make_clinician("b", "Bob")])
+    ex = executor(state, [make_assignment("draft", "slot-a__mon", MON, "a", source="solver")])
+    candidates = run(ex, "list_candidates_for_slot", slot_key=f"slot-a__mon__{MON}")
+    assert not any(c["eligible"] for c in candidates["candidates"])
+    assert candidates["scope"] == "direct_additions_only"
+    assert "does NOT mean no replacement exists" in candidates["note"]
+    swap = run(ex, "apply_moves", dry_run=True, moves=[
+        {"action": "unassign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "a"},
+        {"action": "assign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "b"},
+    ])
+    assert swap["valid"]

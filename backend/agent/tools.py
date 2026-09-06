@@ -964,6 +964,11 @@ class PlanToolExecutor:
         return {
             "slot_key": self._alias_slot_key(slot_key),
             "capacity_left": capacity_left,
+            "scope": "direct_additions_only",
+            "note": ("This slot is full. Zero eligible direct additions does NOT mean no replacement exists. "
+                     "Use suggest_balance_moves, a joint search, or dry-run an atomic unassign/assign batch to test replacements."
+                     if capacity_left <= 0 else
+                     "Eligibility describes adding a clinician to this slot in the current plan; joint rearrangements may change it."),
             "candidates": candidates,
         }
 
