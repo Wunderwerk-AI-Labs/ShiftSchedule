@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import type { PreferredWorkingTimes } from "../../api/client";
+import type { PreferredWorkingTimes, WorkPattern } from "../../api/client";
 import { buttonPrimary } from "../../lib/buttonStyles";
 import { cx } from "../../lib/classNames";
 import ClinicianEditor from "./ClinicianEditor";
@@ -17,6 +17,7 @@ type ClinicianEditModalProps = {
     workingHoursPerWeek?: number;
     workingHoursToleranceHours?: number;
     planningWishes?: string;
+    workPattern?: WorkPattern;
   } | null;
   classRows: Array<{ id: string; name: string }>;
   onToggleQualification: (clinicianId: string, classId: string) => void;
@@ -27,6 +28,7 @@ type ClinicianEditModalProps = {
   ) => void;
   onUpdateWorkingHours: (clinicianId: string, workingHoursPerWeek?: number) => void;
   onUpdateWorkingHoursTolerance: (clinicianId: string, toleranceHours?: number) => void;
+  onUpdateWorkPattern?: (clinicianId: string, workPattern?: WorkPattern) => void;
   onUpdatePlanningWishes: (clinicianId: string, planningWishes?: string) => void;
   onUpdatePreferredWorkingTimes: (
     clinicianId: string,
@@ -54,6 +56,7 @@ export default function ClinicianEditModal({
   onUpdateWorkingHours,
   onUpdateWorkingHoursTolerance,
   onUpdatePlanningWishes,
+  onUpdateWorkPattern,
   onUpdatePreferredWorkingTimes,
   onAddVacation,
   onUpdateVacation,
@@ -172,6 +175,7 @@ export default function ClinicianEditModal({
               onUpdateWorkingHours={onUpdateWorkingHours}
               onUpdateWorkingHoursTolerance={onUpdateWorkingHoursTolerance}
               onUpdatePlanningWishes={onUpdatePlanningWishes}
+              onUpdateWorkPattern={onUpdateWorkPattern}
               onUpdatePreferredWorkingTimes={onUpdatePreferredWorkingTimes}
               onToggleQualification={onToggleQualification}
               onReorderQualification={onReorderQualification}

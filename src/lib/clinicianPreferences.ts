@@ -2,7 +2,23 @@ import type {
   PreferredWorkingTime,
   PreferredWorkingTimeRequirement,
   PreferredWorkingTimes,
+  WorkPattern,
 } from "../api/client";
+
+export const normalizeWorkPattern = (raw?: WorkPattern | null): WorkPattern | undefined => {
+  if (!raw || typeof raw !== "object") return undefined;
+  const bounded = (value: unknown, max: number) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= max
+      ? value : undefined;
+  const daysPerWeek = bounded(raw.daysPerWeek, 7);
+  const dailyHours = bounded(raw.dailyHours, 24);
+  const preferredDaysOff = Array.isArray(raw.preferredDaysOff)
+    ? [...new Set(raw.preferredDaysOff.filter(day =>
+        ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(day)))]
+    : [];
+  return daysPerWeek || dailyHours || preferredDaysOff.length
+    ? { daysPerWeek, dailyHours, preferredDaysOff } : undefined;
+};
 
 const DEFAULT_START = "07:00";
 const DEFAULT_END = "17:00";

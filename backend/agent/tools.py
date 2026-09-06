@@ -33,6 +33,10 @@ from ..validation import (
     validate_assignments,
     validate_solver_rules,
 )
+from .workflow import PlanningWorkflow, SEARCH_TOOLS
+from .neighborhood import analyze_bottlenecks, explain_unfilled, repair_neighborhood
+from .quality import BALANCED_FIELDS, CLASSIC_FIELDS, extra_metrics
+from ..planning_preferences import daily_min_minutes, daily_target_minutes
 
 AGENT_ASSIGNMENT_SOURCE = "solver"
 
@@ -44,16 +48,49 @@ DAY_ONLY_TOOL_NAMES = {
     "suggest_day_blocks",
     "suggest_rescue_moves",
     "suggest_balance_moves",
+    "apply_proposal",
+    "get_search_history",
+    "repair_neighborhood",
+    "analyze_bottlenecks",
+    "explain_unfilled",
 }
 
 TOOL_SPECS_RAW = [
     {
+        "name": "repair_neighborhood",
+        "description": "Search a joint rearrangement of at most three days around dateISO, preserving fixed entries and outside-week/rest context. Use after simple same-day rescue fails. Returns checked proposal IDs, search limits and status. Never interpret no proposal as proof of infeasibility. This is a bounded coverage-repair experiment.",
+        "input_schema": {"type": "object", "properties": {
+            "dateISO": {"type": "string"}, "max_changes": {"type": "integer", "minimum": 1, "maximum": 12},
+            "seconds": {"type": "number", "minimum": 0.1, "maximum": 10}},
+            "required": ["dateISO"], "additionalProperties": False},
+    },
+    {
+        "name": "analyze_bottlenecks",
+        "description": "Find scarce or blocked required slots across the range (or dateISO). Inspect future days before consuming a rare clinician's weekly hours. Counts reflect direct current eligibility, not a proof that rearrangement is impossible.",
+        "input_schema": {"type": "object", "properties": {"dateISO": {"type": "string"}}, "additionalProperties": False},
+    },
+    {
+        "name": "explain_unfilled",
+        "description": "Explain remaining required gaps using the actual candidate gate and current search history. Returns direct blockers, search limits and unsearched cases; no invented impossibility claims.",
+        "input_schema": {"type": "object", "properties": {"dateISO": {"type": "string"}}, "additionalProperties": False},
+    },
+    {
+        "name": "apply_proposal",
+        "description": "Apply a checked proposal by its proposal_id. The whole batch is revalidated atomically. Returns verification AND the next suggestions; use those directly without another inspection call. Stale proposals are refused. Repeated application is harmless and reports already_applied.",
+        "input_schema": {"type": "object", "properties": {"proposal_id": {"type": "string"}},
+                         "required": ["proposal_id"], "additionalProperties": False},
+    },
+    {
+        "name": "get_search_history",
+        "description": "Recent repair and inspection results, bound to a plan revision. Reuse current results instead of repeating an unchanged unsuccessful search. Older results are context only: weekly hours and rest can change across days.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
         "name": "get_plan_overview",
         "description": (
             "Current plan status: the quality tiers in strict priority order "
-            "(hard violations in range > open required slots > short days > "
-            "soft-rule violations > weekly-hours deviation > preference/load "
-            "bonus), coverage statistics, violation counts by code, and the "
+            "(see quality_order and quality_profile), coverage statistics, "
+            "violation counts by code, and the "
             "quality of your best snapshot so far. Call this to orient "
             "yourself and after applying moves."
         ),
@@ -405,9 +442,12 @@ class PlanToolExecutor:
         *,
         on_improvement: Optional[Callable[[float, List[Assignment]], None]] = None,
         on_activity: Optional[Callable[[str, dict], None]] = None,
+        reference_assignments: Optional[List[Assignment]] = None,
     ):
         self.state = state
         self.ctx = ctx
+        self.reference_assignments = list(reference_assignments or [])
+        self.quality_fields = BALANCED_FIELDS if ctx.settings.agentQualityProfile == "balanced" else CLASSIC_FIELDS
         self.on_improvement = on_improvement
         # Live-activity hook for the UI: called with (kind, payload) for
         # human-readable progress (applied/rejected move batches).
@@ -467,6 +507,7 @@ class PlanToolExecutor:
         # was cut. Expensive tool loops call _tool_seconds_left() and stop
         # early with a partial result.
         self.wall_deadline: Optional[float] = None
+        self.workflow = PlanningWorkflow(self)
 
         # Baseline = violations of the seed plan. Only NEW hard violations
         # beyond this set block acceptance. For magnitude-typed violations
@@ -515,7 +556,7 @@ class PlanToolExecutor:
         self,
         working: List[Assignment],
         hard_violations: Optional[List[Violation]] = None,
-    ) -> Tuple[int, int, int, int, int, int]:
+    ) -> Tuple[int, ...]:
         """Lexicographic plan quality — smaller is better, compared tier by
         tier: (hard violations in the solve range, open required slots, short
         days, soft-rule violations, weekly hours deviation minutes,
@@ -546,6 +587,12 @@ class PlanToolExecutor:
         bonus = stats.section_preference_matches + stats.time_window_fits
         if not self.ctx.only_fill_required:
             bonus += stats.total_assignments
+        if self.ctx.settings.agentQualityProfile == "balanced":
+            metrics = extra_metrics(self, working)
+            metrics.update(hard_violations_in_range=hard_in_range, open_required_slots=stats.open_slots,
+                           soft_rule_violations=soft, hours_deviation_minutes=stats.working_hours_deviation_minutes,
+                           negative_preference_bonus=-bonus)
+            return tuple(metrics[field] for field in self.quality_fields)
         return (
             hard_in_range,
             stats.open_slots,
@@ -556,10 +603,15 @@ class PlanToolExecutor:
         )
 
     @staticmethod
-    def encode_quality(quality: Tuple[int, int, int, int, int, int]) -> float:
+    def encode_quality(quality: Tuple[int, ...]) -> float:
         """Monotone-ish scalar for the live chart/history (lower = better).
         Saturated per tier so a huge lower tier can't visually outrank a
         higher one; NOT used for any accept/best decision."""
+        if len(quality) != 6:
+            # Display only. Actual snapshot selection always compares the
+            # complete ordered tuple, never this compressed chart value.
+            return float(quality[0]*100_000_000 + quality[1]*1_000_000 +
+                         sum(min(999, max(0, value))*10**(-index) for index, value in enumerate(quality[2:])))
         hard, open_slots_, short, soft, hours_dev, neg_bonus = quality
         return float(
             hard * 100_000_000
@@ -570,7 +622,9 @@ class PlanToolExecutor:
             + max(-4_999, neg_bonus)
         )
 
-    def quality_dict(self, quality: Tuple[int, int, int, int, int, int]) -> dict:
+    def quality_dict(self, quality: Tuple[int, ...]) -> dict:
+        if self.ctx.settings.agentQualityProfile == "balanced":
+            return dict(zip(self.quality_fields, quality))
         return {
             "hard_violations_in_range": quality[0],
             "open_required_slots": quality[1],
@@ -648,6 +702,10 @@ class PlanToolExecutor:
             hard_counts[v.code] = hard_counts.get(v.code, 0) + 1
         new_hard = [v for v in hard if self._is_new_hard(v)]
         return {
+            "quality_profile": self.ctx.settings.agentQualityProfile,
+            "quality_order": list(self.quality_fields),
+            "plan_revision": self.workflow.revision,
+            "additional_quality_metrics": extra_metrics(self, working),
             "quality": {
                 **self.quality_dict(quality),
                 "note": "strict priority order, improve the highest tier first",
@@ -673,6 +731,11 @@ class PlanToolExecutor:
         from .provider import ToolResult
 
         handlers = {
+            "repair_neighborhood": lambda args: repair_neighborhood(self, args),
+            "analyze_bottlenecks": lambda args: analyze_bottlenecks(self, args),
+            "explain_unfilled": lambda args: explain_unfilled(self, args),
+            "apply_proposal": self.workflow.apply,
+            "get_search_history": lambda args: self.workflow.summary(),
             "get_plan_overview": self._tool_overview,
             "get_violations": self._tool_violations,
             "list_open_slots": self._tool_open_slots,
@@ -692,7 +755,9 @@ class PlanToolExecutor:
         if handler is None:
             return ToolResult(tool_call_id, _dump({"error": f"Unknown tool: {name}"}), True)
         try:
-            return ToolResult(tool_call_id, _dump(handler(arguments or {})))
+            args = arguments or {}
+            result = self.workflow.search(name, args, handler) if name in SEARCH_TOOLS else handler(args)
+            return ToolResult(tool_call_id, _dump(result))
         except Exception as exc:  # tool bugs must not kill the solve
             return ToolResult(tool_call_id, _dump({"error": str(exc)}), True)
 
@@ -965,12 +1030,8 @@ class PlanToolExecutor:
             if clinician is None:
                 continue
             window = self.ctx.window_by_clinician_date.get((cid, date_iso))
-            contract = clinician.workingHoursPerWeek
-            if window is not None:
-                min_minutes = max(1, (window[2] - window[1]) // 2)
-            elif isinstance(contract, (int, float)) and contract > 0:
-                min_minutes = max(1, int(round(contract * 60 / 5)) // 2)
-            else:
+            min_minutes = daily_min_minutes(clinician, window)
+            if min_minutes is None:
                 continue
             total = 0
             slots = []
@@ -1167,12 +1228,7 @@ class PlanToolExecutor:
         if clinician is None:
             return None
         window = self.ctx.window_by_clinician_date.get((cid, date_iso))
-        if window is not None:
-            return max(1, (window[2] - window[1]) // 2)
-        contract = clinician.workingHoursPerWeek
-        if isinstance(contract, (int, float)) and contract > 0:
-            return max(1, int(round(contract * 60 / 5)) // 2)
-        return None
+        return daily_min_minutes(clinician, window)
 
     def _window_fit_fields(
         self, cid: str, date_iso: str, start: int, end: int
@@ -1204,15 +1260,8 @@ class PlanToolExecutor:
         as the daily target and one person got a 13.5h auto-built chain
         while colleagues had 1h days)."""
         clinician = self.clinicians_by_id.get(cid)
-        contract = clinician.workingHoursPerWeek if clinician else None
-        if isinstance(contract, (int, float)) and contract > 0:
-            target = max(60, int(round(contract * 60 / 5)))
-        else:
-            target = 480
         window = self.ctx.window_by_clinician_date.get((cid, date_iso))
-        if window is not None:
-            target = min(target, max(60, window[2] - window[1]))
-        return min(target, self.MAX_CHAIN_TARGET_MINUTES)
+        return daily_target_minutes(clinician, window) if clinician else 480
 
     def _tool_ytd_progress(self, args: dict) -> dict:
         as_of = args.get("dateISO") or self.ctx.start_iso
@@ -1513,10 +1562,14 @@ class PlanToolExecutor:
         start_candidates = self._candidates_for_slot(slot_key)
         eligible = [
             c for c in start_candidates.get("candidates", []) if c["eligible"]
-        ][:6]
+        ]
         single = bool(args.get("single"))
         out = []
-        for cand in eligible:
+        not_searched = []
+        for candidate_index, cand in enumerate(eligible):
+            if self._tool_seconds_left() <= 5:
+                not_searched = [c["clinicianId"] for c in eligible[candidate_index:]]
+                break
             cid = self._resolve_clinician(cand["clinicianId"])
             block_keys, block_start, block_end = self._greedy_day_block(
                 cid, inst, counts
@@ -1597,7 +1650,37 @@ class PlanToolExecutor:
                 return (c["overloaded"], 0, not fits_window, ytd, -c["block_hours"])
             return (c["overloaded"], 1, -c["block_hours"], not fits_window, ytd)
 
-        out.sort(key=_rank)
+        if self.ctx.settings.agentQualityProfile == "balanced":
+            checked = []
+            for candidate in out:
+                if self._tool_seconds_left() <= 5:
+                    not_searched.append(candidate["clinicianId"])
+                    continue
+                moves = [{"action": "assign", "slot_key": key, "clinicianId": candidate["clinicianId"]}
+                         for key in candidate["block"]]
+                preview = self._tool_apply_moves({"moves": moves, "dry_run": True})
+                if preview.get("valid"):
+                    candidate.update(self.workflow.propose(
+                        moves, next_tool="suggest_day_blocks",
+                        next_args={"duty_pass": True} if single else {"dateISO": inst.date_iso},
+                        preview=preview))
+                    checked.append(candidate)
+            out = sorted(checked, key=lambda c: tuple(c["quality_after"][field] for field in self.quality_fields))
+        else:
+            out.sort(key=_rank)
+        # Limit the response AFTER comparing work blocks. A later candidate
+        # may be the only person able to turn a one-hour stint into a full day.
+        total_options = len(out)
+        out = out[:6]
+        for candidate in out:
+            if candidate.get("proposal_id"):
+                continue
+            moves = [{"action": "assign", "slot_key": key, "clinicianId": candidate["clinicianId"]}
+                     for key in candidate["block"]]
+            candidate.update(self.workflow.propose(
+                moves, next_tool="suggest_day_blocks",
+                next_args={"duty_pass": True} if single else {"dateISO": inst.date_iso}
+            ))
         on_call_class = (
             self.ctx.settings.onCallRestClassId
             if getattr(self.ctx.settings, "onCallRestEnabled", False)
@@ -1608,10 +1691,12 @@ class PlanToolExecutor:
             "section": self.section_names.get(inst.section_id, inst.section_id),
             **({"on_call": True} if inst.section_id == on_call_class else {}),
             **auto_extras,
+            "ranking": "active quality profile" if self.ctx.settings.agentQualityProfile == "balanced" else "day length, window fit and YTD load",
             "note": "Each candidate comes with the contiguous block they "
             "could work starting at this slot (adjacent open slots chained "
             "up to their preferred daily hours, all legality-checked). "
-            "Candidates are pre-sorted: daily minimum met first, within "
+            "In the balanced profile candidates are sorted by quality_after. "
+            "In classic: daily minimum met first, within "
             "that preferred-working-time fit (window_fit), then lowest "
             "ytd_worked_pct; when NO block reaches the minimum, the "
             "LONGEST block first — one person on a longer stint beats two "
@@ -1621,10 +1706,14 @@ class PlanToolExecutor:
             "candidates when minimum and fairness are comparable. "
             "week_hours above contract_hours is LEGAL up to week_hours_max "
             "(personal tolerance) — do not avoid such candidates. Apply "
-            "the chosen block as ONE apply_moves batch (all assigns "
-            "together). meets_daily_minimum=false = would stay a short "
+            "the chosen block with apply_proposal(proposal_id); its next.result "
+            "contains fresh suggestions. meets_daily_minimum=false = would stay a short "
             "day - prefer candidates above it.",
             "candidates": out,
+            "evaluated_candidates": len(eligible) - len(not_searched),
+            "more_options": max(0, total_options - len(out)),
+            "search_status": "incomplete" if not_searched else "completed",
+            **({"not_searched": not_searched} if not_searched else {}),
         }
 
     def _tool_suggest_rescue_moves(self, args: dict) -> dict:
@@ -1771,11 +1860,18 @@ class PlanToolExecutor:
             "its 3 moves EXACTLY as given in ONE apply_moves call, then "
             "re-check with suggest_day_blocks (other rescues may have gone "
             "stale — re-query instead of applying several at once). Slots "
-            "in truly_unfillable have no single-move rescue either: report "
-            "them in your summary.",
+            "in no_rescue_found have no repair in this same-day, depth-1 "
+            "search. A longer or cross-day chain may still work; this is "
+            "not a proof of infeasibility.",
             "rescues": rescues,
-            "truly_unfillable": no_rescue,
+            "no_rescue_found": no_rescue,
+            "search_scope": {"days": [date_iso], "relocated_assignments": 1},
+            "search_status": "incomplete" if not_searched else "completed",
         }
+        for rescue in rescues:
+            rescue.update(self.workflow.propose(
+                rescue["batch"], next_tool="suggest_day_blocks", next_args={"dateISO": date_iso}
+            ))
         if not_searched:
             out["not_searched"] = not_searched
             out["note"] += (
@@ -2115,19 +2211,25 @@ class PlanToolExecutor:
                 "(the receiver's day ends up that far past their "
                 "comfortable span) — clearing a mini-stint is usually worth "
                 "an overshoot up to ~1h, your call. Problems without an "
-                "offer have no legal transfer; mention them in your summary."
+                "offer had no transfer found within this bounded search."
             )
         else:
             out["note"] = (
-                "Problems found but no legal transfer exists (contiguity, "
-                "hours caps or hard rules block every handover). Mention "
-                "them in your final day summary and finish."
+                "No legal transfer was found among the handovers examined. "
+                "The candidate and search limits do not prove that no "
+                "other repair exists. Report the unresolved problems."
             )
         if ran_out_of_time:
             out["note"] += (
                 " NOTE: the run's time budget is nearly spent — the search "
                 "was cut short; finish the day now."
             )
+        out["search_status"] = "incomplete" if ran_out_of_time else "completed"
+        out["search_scope"] = {"days": [date_iso], "kind": "bounded_same_day_handovers"}
+        for offer in offers:
+            offer.update(self.workflow.propose(
+                offer["batch"], next_tool="suggest_balance_moves", next_args={"dateISO": date_iso}
+            ))
         return out
 
     def _greedy_day_block(
@@ -2146,7 +2248,7 @@ class PlanToolExecutor:
         qualified = set(clinician.qualifiedClassIds or [])
         date_iso = start_inst.date_iso
 
-        target = self._daily_target_minutes(cid, date_iso)
+        target = min(self._daily_target_minutes(cid, date_iso), self.MAX_CHAIN_TARGET_MINUTES)
         existing = sum(e - s for s, e in self._day_intervals(cid, date_iso))
         # A PREFERENCE window steers the chain's position: once the daily
         # minimum is reached, the chain stops growing past the window edge
@@ -2342,6 +2444,8 @@ class PlanToolExecutor:
 
         changed = trial != self.current
         self.current = trial
+        if changed:
+            self.workflow.changed()
         self.moves_accepted += len(moves)
         quality = self._quality(trial_list, hard_violations=trial_hard)
         improved = quality < self.best_quality

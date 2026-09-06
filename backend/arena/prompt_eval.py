@@ -89,6 +89,8 @@ def main():
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default=None)
     parser.add_argument("--mock", action="store_true", help="Exercise tracing without an endpoint or settings access")
     parser.add_argument("--evaluation-ref", default="local")
+    parser.add_argument("--quality-profile", choices=["classic", "balanced"], default="classic")
+    parser.add_argument("--neighborhood", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.days <= 7 or not 1 <= args.timeout <= 3600:
         parser.error("Use 1–7 days and a 1–3600 second budget")
@@ -107,6 +109,8 @@ def main():
         print(f"PROMPT_EVAL_{kind} {line}", flush=True)
 
     state = load_state()
+    state.solverSettings.update(agentQualityProfile=args.quality_profile,
+                               agentNeighborhoodSearch=args.neighborhood)
     end = (date.fromisoformat(args.start) + timedelta(days=args.days - 1)).isoformat()
     scenario_desc = apply_scenario(state, args.scenario, args.start, end)
     day, review = prompt_variant(args.variant)
@@ -143,7 +147,7 @@ def main():
             tool_counts[name] += 1
             timings[name] += elapsed
             payload = json.loads(result.content)
-            if name == "apply_moves" and payload.get("applied"):
+            if name in ("apply_moves", "apply_proposal") and payload.get("applied"):
                 inspection_streak = 0
                 if "WORSE" in payload.get("note", ""):
                     regressions.append(self.current_iteration)
@@ -185,6 +189,7 @@ def main():
     executor = executors[-1] if executors else None
     stats = plan_stats(executor.ctx, executor.best_assignments).model_dump() if executor else None
     report = {"variant": args.variant, "start": args.start, "days": args.days,
+              "quality_profile": args.quality_profile, "neighborhood": args.neighborhood,
               "scenario": args.scenario, "model": config.model, "duration_seconds": round(time.monotonic() - started, 1),
               "stop_reason": agent.get("stopReason"), "days_planned": agent.get("daysPlanned"),
               "days_incomplete": agent.get("daysIncomplete"), "days_skipped": agent.get("daysSkipped"),
@@ -192,6 +197,7 @@ def main():
               "moves_rejected": agent.get("moves_rejected"), "input_tokens": agent.get("input_tokens"),
               "output_tokens": agent.get("output_tokens"), "tok_per_s": agent.get("output_tokens_per_second"),
               "stats": stats, "best_quality": executor.quality_dict(executor.best_quality) if executor else None,
+              "new_hard_violations": sum(executor._is_new_hard(v) for v in executor._hard_violations(executor._full_plan(executor.best_assignments))) if executor else None,
               "unsolved": agent.get("unsolved"), "violations_summary": (agent.get("violations_final") or ["unavailable"])[0],
               "tool_counts": dict(tool_counts), "tool_seconds": {k: round(v, 2) for k, v in timings.items()},
               "multi_tool_calls": sum(len(c["tools"]) > 1 for c in calls),

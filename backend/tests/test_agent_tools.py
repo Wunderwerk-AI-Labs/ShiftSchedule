@@ -1265,7 +1265,7 @@ def test_suggest_rescue_moves_frees_blocked_clinician_with_substitute():
 
     payload, is_error = _run(executor, "suggest_rescue_moves", {"dateISO": MON})
     assert not is_error
-    assert payload["truly_unfillable"] == []
+    assert payload["no_rescue_found"] == []
     rescue = payload["rescues"][0]
     assert rescue["frees"] == "Alice"
     assert rescue["substitute"] == "Bob"

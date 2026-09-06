@@ -556,3 +556,24 @@ cross-day review remains intact. The historical variant is preserved at
 guidance to the current production prompt. Source hashes distinguish these
 experiments. The final release combination has not been timed in a new model
 comparison; the historical speed measurements are not a release guarantee.
+
+## Harness experiments (v1.55)
+
+The `implementation` workflow input selects deployed code (default), this
+checkout, or this checkout with the optional balanced profile / neighborhood
+search. Checkout experiments run from a temporary directory on the model host;
+production source, calendars and settings are untouched. Saved provider settings
+are read through a read-only SQLite connection. The report records source hashes.
+
+For a model-free first-offer controller:
+
+```sh
+python -m backend.arena.workflow_eval --start 2026-02-02 --days 5
+python -m backend.arena.workflow_eval --start 2026-02-16 --days 5 --scenario crunch --profile balanced --neighborhood
+```
+
+This is a diagnostic baseline, not a replacement for the agent. It measures
+coverage, short days, other quality metrics, preserved fixed entries, new hard
+violations, unfinished days and controller calls. Calls are not model turns or
+latency measurements. Compare the same cases, time budgets and source versions;
+inspect separate quality fields rather than comparing scalar scores across profiles.

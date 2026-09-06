@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { cx } from "../../lib/classNames";
-import type { PreferredWorkingTimes } from "../../api/client";
+import type { PreferredWorkingTimes, WorkPattern } from "../../api/client";
 import {
   DEFAULT_PREFERRED_WORKING_TIMES,
   normalizePreferredWorkingTimes,
 } from "../../lib/clinicianPreferences";
+import WorkPatternEditor from "./WorkPatternEditor";
 import CustomSelect from "./CustomSelect";
 import CustomNumberInput from "./CustomNumberInput";
 import CustomTimePicker from "./CustomTimePicker";
@@ -38,12 +39,14 @@ type ClinicianEditorProps = {
     workingHoursPerWeek?: number;
     workingHoursToleranceHours?: number;
     planningWishes?: string;
+    workPattern?: WorkPattern;
   };
   classRows: Array<{ id: string; name: string }>;
   initialSection?: "vacations";
   vacationOnly?: boolean;
   onUpdateWorkingHours?: (clinicianId: string, workingHoursPerWeek?: number) => void;
   onUpdateWorkingHoursTolerance?: (clinicianId: string, toleranceHours?: number) => void;
+  onUpdateWorkPattern?: (clinicianId: string, workPattern?: WorkPattern) => void;
   onUpdatePlanningWishes?: (clinicianId: string, planningWishes?: string) => void;
   onUpdatePreferredWorkingTimes?: (
     clinicianId: string,
@@ -78,6 +81,7 @@ export default function ClinicianEditor({
   onUpdateWorkingHoursTolerance,
   onUpdatePreferredWorkingTimes,
   onUpdatePlanningWishes,
+  onUpdateWorkPattern,
 }: ClinicianEditorProps) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -570,6 +574,8 @@ export default function ClinicianEditor({
             </div>
           </div>
         </div>
+        <WorkPatternEditor value={clinician.workPattern}
+          onChange={value => onUpdateWorkPattern?.(clinician.id, value)} />
         <div className="mt-4 space-y-2">
           {preferredWorkingDays.map((day) => {
             const value = preferredWorkingTimes[day.id];

@@ -1,0 +1,127 @@
+"""Deterministic first-offer baseline. Never reads credentials or saves state.
+
+This measures tool/controller behavior, not language-model intelligence.
+Use the same script with an older checkout to compare the old tool layer.
+"""
+import argparse
+from collections import Counter
+from datetime import date, timedelta
+import json
+import time
+
+from backend.agent.tools import PlanToolExecutor
+from backend.arena.run import load_state, apply_scenario
+from backend.scoring import build_scoring_context, plan_stats
+
+
+def evaluate(start, days, scenario="base", profile="classic", neighborhood=False, seconds=120):
+    state = load_state()
+    end = (date.fromisoformat(start)+timedelta(days=days-1)).isoformat()
+    apply_scenario(state, scenario, start, end)
+    state.solverSettings.update(agentQualityProfile=profile, agentNeighborhoodSearch=neighborhood)
+    reference = [a for a in state.assignments if start <= a.dateISO <= end
+                 and a.source == "solver" and not a.rowId.startswith("pool-")]
+    state.assignments = [a for a in state.assignments if a not in reference]
+    ctx = build_scoring_context(state, start, end, only_fill_required=True)
+    begun = time.monotonic()
+    ex = PlanToolExecutor(state, ctx, [])
+    if hasattr(ex, "reference_assignments"):
+        ex.reference_assignments = reference
+    ex.wall_deadline = time.time()+seconds
+    calls = Counter()
+
+    def call(name, **arguments):
+        calls[name] += 1
+        result = ex.execute(name, arguments, "controller")
+        data = json.loads(result.content)
+        if result.is_error or "error" in data:
+            raise RuntimeError(f"{name}: {data}")
+        return data
+
+    def apply(offer):
+        if offer.get("proposal_id"):
+            return call("apply_proposal", proposal_id=offer["proposal_id"]).get("next", {}).get("result")
+        moves = offer.get("moves") or [{"action": "assign", "slot_key": key, "clinicianId": offer["clinicianId"]}
+                                      for key in offer["block"]]
+        result = call("apply_moves", moves=moves)
+        if not result.get("applied"):
+            raise RuntimeError(f"Rejected offered moves: {result}")
+        return None
+
+    # Staff on-call slots first, mirroring the harness's duty pre-pass.
+    duties = sorted((i for i in ctx.instances.values() if i.section_id == ctx.settings.onCallRestClassId),
+                    key=lambda i: (i.date_iso, i.start, i.slot_key))
+    for inst in duties:
+        if ex._tool_seconds_left() <= 5:
+            break
+        while ex._counts_by_instance(ex._working_list()).get(inst.slot_key, 0) < inst.target:
+            data = call("suggest_day_blocks", slot_key=inst.slot_key, single=True)
+            if not data.get("candidates"):
+                break
+            apply(data["candidates"][0])
+    visited = []
+    incomplete = []
+    for day in ctx.target_day_isos:
+        if ex._tool_seconds_left() <= 5:
+            incomplete.append(day)
+            continue
+        visited.append(day)
+        data = call("suggest_day_blocks", dateISO=day)
+        for _ in range(100):
+            if ex._tool_seconds_left() <= 5:
+                incomplete.append(day)
+                break
+            if data.get("candidates"):
+                data = apply(data["candidates"][0]) or call("suggest_day_blocks", dateISO=day)
+                continue
+            chosen = None
+            checks = [("suggest_rescue_moves", "rescues"), ("suggest_balance_moves", "offers")]
+            if neighborhood:
+                checks.insert(1, ("repair_neighborhood", "proposals"))
+            for name, field in checks:
+                checked = call(name, dateISO=day)
+                if checked.get("search_status") in ("incomplete", "budget_exhausted"):
+                    incomplete.append(day)
+                for offer in checked.get(field, []):
+                    better = offer.get("improves_best")
+                    if better is None:
+                        better = call("apply_moves", moves=offer["moves"], dry_run=True).get("improves_best")
+                    if better:
+                        chosen = offer
+                        break
+                if chosen:
+                    break
+            if not chosen:
+                break
+            data = apply(chosen) or call("suggest_day_blocks", dateISO=day)
+        else:
+            incomplete.append(day)
+    best = ex.best_assignments
+    hard = ex._hard_violations(ex._full_plan(best))
+    result = {"start": start, "days": days, "scenario": scenario, "profile": profile,
+              "neighborhood": neighborhood, "seconds": round(time.monotonic()-begun, 3),
+              "quality": ex.quality_dict(ex.best_quality), "stats": plan_stats(ctx, best).model_dump(),
+              "new_hard_violations": sum(ex._is_new_hard(v) for v in hard),
+              "fixed_unchanged": ex.fixed_assignments == state.assignments,
+              "visited_days": len(visited), "incomplete_days": sorted(set(incomplete)),
+              "tool_calls": dict(calls), "controller_calls": sum(calls.values())}
+    if hasattr(ex, "reference_assignments"):
+        from backend.agent.quality import extra_metrics
+        result["additional_metrics"] = extra_metrics(ex, best)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start", default="2026-02-02")
+    parser.add_argument("--days", type=int, default=5)
+    parser.add_argument("--scenario", default="base")
+    parser.add_argument("--profile", default="classic", choices=["classic", "balanced"])
+    parser.add_argument("--neighborhood", action="store_true")
+    parser.add_argument("--seconds", type=float, default=120)
+    args = parser.parse_args()
+    print(json.dumps(evaluate(**vars(args)), ensure_ascii=False), flush=True)
+
+
+if __name__ == "__main__":
+    main()

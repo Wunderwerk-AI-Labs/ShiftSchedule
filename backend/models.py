@@ -77,6 +77,13 @@ class Holiday(BaseModel):
     name: str
 
 
+class WorkPattern(BaseModel):
+    """Explicit soft work preferences; never overrides availability or caps."""
+    daysPerWeek: Optional[float] = Field(default=None, ge=1, le=7, allow_inf_nan=False)
+    dailyHours: Optional[float] = Field(default=None, ge=1, le=24, allow_inf_nan=False)
+    preferredDaysOff: List[Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]] = Field(default_factory=list)
+
+
 class Clinician(BaseModel):
     id: str
     name: str
@@ -93,6 +100,7 @@ class Clinician(BaseModel):
     # defaults to extra="ignore", an undeclared field would be silently
     # dropped on every save round-trip.
     planningWishes: Optional[str] = None
+    workPattern: Optional[WorkPattern] = None
 
 
 class PreferredWorkingTime(BaseModel):
@@ -209,6 +217,8 @@ class SolverSettings(BaseModel):
     # Agent solver: free-text admin instructions appended (pseudonymized) to
     # the problem digest. None -> DEFAULT_AGENT_INSTRUCTIONS; "" -> none.
     agentInstructions: Optional[str] = None
+    agentQualityProfile: Literal["classic", "balanced"] = "classic"
+    agentNeighborhoodSearch: bool = False
 
 
 class SolverRule(BaseModel):

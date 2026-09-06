@@ -34,6 +34,11 @@ on:
       reasoning:
         description: "reasoning effort: (empty) | low | medium | high"
         default: ""
+      implementation:
+        description: "Code/profile to test; checkout runs only in a temporary directory"
+        type: choice
+        options: [deployed, checkout, checkout-balanced, checkout-neighborhood, checkout-balanced-neighborhood]
+        default: deployed
 
 jobs:
   arena:
@@ -82,22 +87,10 @@ jobs:
           STRATEGY: ${{ inputs.strategy }}
           REASONING: ${{ inputs.reasoning }}
           VARIANT: ${{ inputs.variant }}
+          IMPLEMENTATION: ${{ inputs.implementation }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          argv = ["prompt_eval", "--evaluation-ref", os.environ["GITHUB_SHA"]]
-          for name in ("start", "days", "timeout", "model", "scenario", "strategy", "variant"):
-              value = os.environ.get(name.upper(), "")
-              if value:
-                  argv.extend(["--" + name, value])
-          if os.environ.get("REASONING"):
-              argv.extend(["--reasoning-effort", os.environ["REASONING"]])
-          source = "import sys\nsys.argv = " + repr(argv) + "\n"
-          source += Path("backend/arena/prompt_eval.py").read_text()
-          Path("arena_job.py").write_text(source)
-          PY
+          python3 -m backend.arena.build_job
           ssh truhn-target 'cd /opt/app && docker compose -f docker-compose.proxied.yml exec -T backend python -' \
             < arena_job.py | tee arena-trace.log
 

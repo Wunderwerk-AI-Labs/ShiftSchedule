@@ -1006,12 +1006,15 @@ def test_finalize_reports_all_clear_when_nothing_unsolved():
     )
     assert any(n.startswith("No unresolved issues") for n in result["notes"])
     unsolved = result["debugInfo"]["agent"]["unsolved"]
-    assert unsolved == {
+    assert {key: unsolved[key] for key in (
+        "open_slots", "short_days", "overlong_days", "outside_preferred_times"
+    )} == {
         "open_slots": [],
         "short_days": [],
         "overlong_days": [],
         "outside_preferred_times": [],
     }
+    assert unsolved["quality_metrics"]["structured_wish_violations"] == 0
 
 
 def test_unsolved_overview_counts_placements_outside_preferred_times():

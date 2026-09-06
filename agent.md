@@ -1432,3 +1432,36 @@ Database Inspector
 - `PUBLIC_BASE_URL` is set in `docker-compose.yml` as `https://${DOMAIN}/api` (don’t leave it blank).
 - If admin login fails after switching stacks, the existing DB user may still have the old password. Reset via:
   - `docker compose exec -T backend python - << 'PY' ...` (update `users` table in `/data/schedule.db`).
+
+## v1.55 — planning workflow and optional quality experiments
+
+- Suggestions now provide revision-bound proposal IDs. `apply_proposal` revalidates
+  an atomic batch and returns fresh suggestions; repeated applications are harmless.
+  Any plan change invalidates prior search results, including changes on other days.
+- Rank all eligible day blocks before limiting the response. Repeated searches on an
+  unchanged plan reuse results. Tool reports identify bounded search scope; a failed
+  shallow search does not claim infeasibility.
+- The harness checks rescue/balance opportunities before accepting a completed day
+  and verifies completion labels against the final returned snapshot. It reserves
+  range-review rounds and starts that review from the best verified plan.
+- `agentQualityProfile=classic` and `agentNeighborhoodSearch=false` remain defaults.
+  Balanced (preview) prioritizes hard violations, required coverage, section priority,
+  short/long-day discomfort, soft rules, structured wishes, hours deviation, recent
+  duty concentration, disruption and preferences, in that order. These priorities
+  are explicit, not an assertion that this is the only correct operational policy.
+- Personal `workPattern` fields: average days/week, target daily hours, preferred
+  weekdays off. All are soft preferences. Days/week derives day length from contract
+  hours; it is not an exact quota. Explicit daily hours override that derivation.
+  Legacy optimization objectives are unchanged; agent/statistics use the new pattern.
+- Duty distribution uses known recent night/weekend/on-call minutes, scaled by
+  contracted hours and eligible days. It is a proxy, not a legal or comprehensive
+  fairness certification. Free-text wishes remain model-interpreted and are reported
+  as not mechanically verified.
+- The optional neighborhood tool explores at most three dates, 120 slots, 1,800
+  decision variables, 12 changed assignments and 10 seconds per request. Its model
+  is a relaxation; every proposed result must pass the normal full-plan validator
+  and improve the active quality tuple. Failure proves neither infeasibility nor
+  optimality. Manual assignments and context beyond the requested dates stay fixed.
+- The arena can run checkout code from a temporary directory with read-only provider
+  settings, allowing real-model experiments before deployment. A deterministic
+  first-offer controller supplies a separate reference without any model calls.
