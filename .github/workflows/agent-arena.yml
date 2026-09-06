@@ -2,7 +2,8 @@ name: Agent arena (truhn.ai)
 
 # Benchmark the agent solver against the complex-practice fixture, ON the
 # production LXC (the only place that reaches the self-hosted LLM endpoint).
-# Uses the admin-configured provider/model; prints an ARENA_REPORT line.
+# Runs an isolated experiment process using the deployed harness and fixture.
+# The selected prompt variant never changes production files or saved settings.
 
 on:
   workflow_dispatch:
@@ -17,8 +18,13 @@ on:
         description: "Wall-clock budget in seconds"
         default: "600"
       model:
-        description: "Model override (empty = admin setting)"
-        default: ""
+        description: "Self-hosted model ID"
+        default: "VnimanieAI/Qwen3.8-Flash-Next-W4A16"
+      variant:
+        description: "Prompt experiment"
+        type: choice
+        options: [baseline, focused]
+        default: baseline
       scenario:
         description: "base | vacation-wave | understaffed | crunch | oncall | pinned | daynight"
         default: "base"
@@ -32,7 +38,12 @@ on:
 jobs:
   arena:
     runs-on: ubuntu-latest
+    timeout-minutes: 65
+    concurrency:
+      group: agent-arena-self-hosted-gpu
+      cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
       - name: Set up SSH (bastion jump)
         env:
           DEPLOY_SSH_KEY: ${{ secrets.SSH_KEY_FUER_SHIFTSCHEDULE_SERVER }}
@@ -70,16 +81,29 @@ jobs:
           SCENARIO: ${{ inputs.scenario }}
           STRATEGY: ${{ inputs.strategy }}
           REASONING: ${{ inputs.reasoning }}
+          VARIANT: ${{ inputs.variant }}
         run: |
-          ssh truhn-target START="$START" DAYS="$DAYS" TIMEOUT="$TIMEOUT" MODEL="$MODEL" SCENARIO="$SCENARIO" STRATEGY="$STRATEGY" REASONING="$REASONING" bash -s <<'EOF'
           set -euo pipefail
-          cd /opt/app
-          EXTRA=()
-          [ -n "$MODEL" ] && EXTRA=(--model "$MODEL")
-          [ -n "$SCENARIO" ] && EXTRA+=(--scenario "$SCENARIO")
-          [ -n "$STRATEGY" ] && EXTRA+=(--strategy "$STRATEGY")
-          [ -n "$REASONING" ] && EXTRA+=(--reasoning-effort "$REASONING")
-          docker compose -f docker-compose.proxied.yml exec -T backend \
-            python -m backend.arena.run \
-              --start "$START" --days "$DAYS" --timeout "$TIMEOUT" "${EXTRA[@]}"
-          EOF
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          argv = ["prompt_eval", "--evaluation-ref", os.environ["GITHUB_SHA"]]
+          for name in ("start", "days", "timeout", "model", "scenario", "strategy", "variant"):
+              value = os.environ.get(name.upper(), "")
+              if value:
+                  argv.extend(["--" + name, value])
+          if os.environ.get("REASONING"):
+              argv.extend(["--reasoning-effort", os.environ["REASONING"]])
+          source = "import sys\nsys.argv = " + repr(argv) + "\n"
+          source += Path("backend/arena/prompt_eval.py").read_text()
+          Path("arena_job.py").write_text(source)
+          PY
+          ssh truhn-target 'cd /opt/app && docker compose -f docker-compose.proxied.yml exec -T backend python -' \
+            < arena_job.py | tee arena-trace.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prompt-evaluation-${{ github.run_id }}
+          path: arena-trace.log
+          retention-days: 14
