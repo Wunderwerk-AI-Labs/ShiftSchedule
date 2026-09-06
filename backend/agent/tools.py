@@ -601,11 +601,9 @@ class PlanToolExecutor:
         )
         return report.violations
 
-    def _is_new_hard(self, v: Violation, extra_baseline: Optional[Set[Tuple]] = None) -> bool:
+    def _is_new_hard(self, v: Violation) -> bool:
         """True when a violation is NEW (or worsened) relative to the seed baseline."""
         key = _violation_key(v)
-        if extra_baseline is not None and key in extra_baseline:
-            return False
         if key not in self.baseline_hard_keys:
             return True
         if v.code == VIOLATION_WEEKLY_HOURS:
@@ -814,9 +812,6 @@ class PlanToolExecutor:
         working = self._working_list()
         counts = self._counts_by_instance(working)
         capacity_left = inst.capacity - counts.get(slot_key, 0)
-        current_hard_keys = {
-            _violation_key(v) for v in self._hard_violations(self._full_plan(working))
-        }
 
         candidates = []
         for clinician in self.state.clinicians:
@@ -836,7 +831,9 @@ class PlanToolExecutor:
                 {
                     v.code
                     for v in self._hard_violations(self._full_plan(trial))
-                    if self._is_new_hard(v, extra_baseline=current_hard_keys)
+                    # Match apply_moves exactly: an already-overfull fixed
+                    # week still blocks assignments that worsen its hours.
+                    if self._is_new_hard(v)
                 }
             )
             day_intervals = self._day_intervals(clinician.id, inst.date_iso)
