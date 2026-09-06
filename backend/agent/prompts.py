@@ -187,13 +187,9 @@ Hard constraints (violations of these block acceptance of a move batch):
   someone new.
 
 THE PROCEDURE (follow it exactly — it is how a human fills a day):
-1. get_day_priorities ONCE, for orientation: the day's unfilled slots in
-   PROCESSING ORDER — a slot only one person can take comes first (decide
-   it before that person is consumed), then on-call/duty slots (their
-   rest-day rules constrain the days around them, so they are fixed before
-   the day fills up), then the practice's slot priority (template order);
-   flexible low-priority slots (e.g. staff meetings) come last. Do NOT
-   simply work through the day chronologically.
+1. The initial digest already lists this day's priorities. Start
+   directly with step 2; do not spend an extra orientation round
+   re-reading those same priorities.
 2. suggest_day_blocks with dateISO only (no slot_key): it auto-selects the
    most urgent still-fillable slot in exactly that order and returns up to
    6 legal candidates, each with a precomputed contiguous work block
@@ -225,6 +221,18 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    together — never just the single slot when a block was offered), SECOND
    suggest_day_blocks (dateISO, no slot_key). The suggestion is computed
    after your batch applied, so it is fresh — one round per placement.
+   TOOL-CALL EXAMPLE (two actual calls in ONE assistant response):
+   If the latest suggestion offers clinician Ada Lovelace a block [K1, K2],
+   your next response contains these calls in order, using the actual
+   returned names and slot keys instead of these placeholders:
+     apply_moves({"moves":[{"action":"assign","slot_key":"K1","clinicianId":"Ada Lovelace"},
+                            {"action":"assign","slot_key":"K2","clinicianId":"Ada Lovelace"}]})
+     suggest_day_blocks({"dateISO":"the current date"})
+   The harness executes them sequentially, so the second sees the first's
+   result. Submit both calls together; do not wait a separate model turn
+   to request the next suggestion. If multiple calls are unavailable,
+   apply the whole block first and request the next suggestion on the
+   following turn. Do not add prose restating candidates or the next action.
 5. Repeat step 4 until suggest_day_blocks returns day_complete=true (every
    remaining open slot has eligible_count 0). If unfillable_slots remain,
    call suggest_rescue_moves(dateISO) ONCE: it searches whether moving one
@@ -285,9 +293,11 @@ Rules of engagement:
 Finish the day by replying WITHOUT tool calls ONLY when suggest_day_blocks
 reported day_complete=true (or every unfilled slot has eligible_count 0)
 AND the final review (suggest_balance_moves) has no offers left. Your final
-reply: one short paragraph — what you staffed, which slots stay open and
-why, and any imbalance the review could not fix. Then the harness moves you
-to the next day."""
+reply: one short paragraph, at most 100 words — verified coverage, remaining
+gaps and the blocking reasons actually returned by tools, plus unresolved
+imbalance. A bounded search finding no repair is not a proof that no legal
+solution exists. Do not invent blocking reasons or fixed assignments; name
+unsearched cases when reported. Then the harness moves you to the next day."""
 
 
 REVIEW_SYSTEM_PROMPT = """You are an expert clinician shift planner doing the FINAL REVIEW of a fully built week.
@@ -322,8 +332,12 @@ The digest may end with ADMIN INSTRUCTIONS and CLINICIAN WISHES: important
 soft goals (admin) and per-person free-text preferences, never overriding
 hard constraints or fixed assignments.
 
-Every reply must either CALL A TOOL or BE your final summary: what you
-fixed, what stays unsolved and why."""
+Every reply must either CALL A TOOL or BE your final summary. Keep the final
+summary to at most five short bullet points: changes actually applied,
+verified coverage, remaining gaps with tool-reported blocking reasons, and
+unresolved soft wishes. A bounded search finding no repair is not a proof
+that no legal solution exists. Do not invent reasons or fixed assignments;
+name unsearched cases when reported."""
 
 
 DUTY_SYSTEM_PROMPT = """You are an expert clinician shift planner. Before the day-by-day planning of this range starts, you staff its DUTY slots (on-call services) FIRST, across ALL days — the way a human planner fixes the 24/7 duty roster before any day work. Duties bind rest days around them and eat weekly-hours budgets: placed last they starve (observed in production: a whole weekend's on-call left empty because the week's hours were spent on ordinary day work first).

@@ -528,3 +528,31 @@ full, and a safe single default across day counts. The 27B@low result is a
 strong alternative to revisit; the `medium` rows are still open pending the
 LiteLLM fix. (Single run per cell, base scenario — directional, not
 statistical.)
+
+## Evaluation round 7: isolated Qwen prompt comparisons (2026-09-06)
+
+The [full evaluation and measured results](qwen-prompt-evaluation-2026-09-06.md)
+compare the production v1.53 prompts with a focused variant on the Luxembourg
+fixture. The normal day is repeated; a holiday-and-sickness crunch case checks
+failure handling. The experiment does not write schedules or saved settings.
+
+`prompt_eval.py` runs the deployed harness and fixture, overrides only the
+selected prompts inside its process, and records tool calls, model timings,
+quality tiers and source hashes. The arena workflow ships this evaluator via
+stdin and serializes its jobs on the shared model endpoint. Its artifacts keep
+the full traces for 14 days; the evaluation report links every run.
+
+The traces also exposed a candidate-inspection bug: an existing weekly-hours
+violation hid further worsening from `list_candidates_for_slot`, although the
+assignment gate rejected the same move. The v1.54 correction uses the same
+gate for both and includes a regression test. The six model comparisons use
+the unchanged deployed tools; the correction is verified separately against
+the captured fixture cases and the backend test suite.
+
+v1.54 also adopts the concrete two-call pipeline example, skips the duplicate
+priority lookup, and asks for short, evidence-based closing summaries. The final
+cross-day review remains intact. The historical variant is preserved at
+`3d9fa0c`; on v1.54, `focused` adds only the remaining experimental quality
+guidance to the current production prompt. Source hashes distinguish these
+experiments. The final release combination has not been timed in a new model
+comparison; the historical speed measurements are not a release guarantee.

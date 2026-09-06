@@ -1596,6 +1596,41 @@ def test_blocked_candidate_reports_week_overage_magnitude():
     assert weekly["over_by_hours"] == 3.0
 
 
+def test_candidates_match_apply_gate_when_fixed_week_is_already_over_cap():
+    """An existing weekly violation cannot make further overtime eligible.
+
+    Reproduced by the Luxembourg crunch arena: candidate inspection offered
+    clinicians whose fixed assignments already exhausted their weekly cap,
+    while day priorities and apply_moves correctly rejected the same move.
+    """
+    alice = make_clinician("clin-1", "Alice", working_hours_per_week=4)
+    alice.workingHoursToleranceHours = 0
+    state = make_app_state(
+        clinicians=[alice, make_clinician("clin-2", "Bob", working_hours_per_week=40)],
+        slots=[
+            make_template_slot(slot_id="slot-mon", col_band_id="col-mon-1"),
+            make_template_slot(slot_id="slot-tue", col_band_id="col-tue-1"),
+        ],
+        assignments=[make_assignment("fixed-mon", "slot-mon", MON, "clin-1")],
+    )
+    executor = _make_executor(state, start=TUE, end=TUE)
+    key = f"slot-tue__{TUE}"
+    candidates, _ = _run(executor, "list_candidates_for_slot", {"slot_key": key})
+    by_name = {candidate["clinicianId"]: candidate for candidate in candidates["candidates"]}
+    assert by_name["Alice"]["eligible"] is False
+    assert "WEEKLY_HOURS" in by_name["Alice"]["reasons"]
+    assert by_name["Alice"]["week_over_cap_hours"] == 12.0
+    assert by_name["Bob"]["eligible"] is True  # unrelated old violation stays tolerated
+    for name, expected in (("Alice", False), ("Bob", True)):
+        preview, _ = _run(executor, "apply_moves", {
+            "dry_run": True,
+            "moves": [{"action": "assign", "slot_key": key, "clinicianId": name}],
+        })
+        assert preview["valid"] is expected
+    priorities, _ = _run(executor, "get_day_priorities", {"dateISO": TUE})
+    assert priorities["slots"][0]["eligible_count"] == 1
+
+
 def test_suggest_day_blocks_reports_daily_min_threshold():
     """meets_daily_minimum=false alone is binary; daily_min_hours grades it
     (1h of a 4h minimum is a real stub, 3.5h is a near fit)."""
