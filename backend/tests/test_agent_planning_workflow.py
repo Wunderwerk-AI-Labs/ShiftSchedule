@@ -1,6 +1,8 @@
 """Behavioral regressions for proposal selection, revisions and search scope."""
 import json
 
+import pytest
+
 from backend.agent.tools import PlanToolExecutor
 from backend.models import TemplateBlock
 from backend.scoring import build_scoring_context
@@ -8,6 +10,99 @@ from .conftest import make_app_state, make_assignment, make_clinician, make_temp
 
 MON = "2026-01-05"
 TUE = "2026-01-06"
+
+
+def test_direct_inspections_share_exact_checks_but_apply_revalidates(monkeypatch):
+    ex = executor()
+    original = ex._hard_violations
+    calls = []
+    def counted(plan):
+        calls.append(1)
+        return original(plan)
+    monkeypatch.setattr(ex, "_hard_violations", counted)
+    entries = ex._day_open_entries(MON)
+    count = len(calls)
+    candidates = run(ex, "list_candidates_for_slot", slot_key=entries[0]["slot_key"])
+    assert len(calls) == count
+    assert candidates["candidates"][0]["eligible"]
+    # Returned lists must not let a caller corrupt the cached validator result.
+    ex._direct_addition_codes("slot-a__mon", MON, "clin-1").append("corrupted")
+    assert ex._direct_addition_codes("slot-a__mon", MON, "clin-1") == []
+    run(ex, "apply_moves", moves=[{"action": "assign", "slot_key": entries[0]["slot_key"], "clinicianId": "clin-1"}], dry_run=True)
+    assert len(calls) > count
+    assert not ex.current
+
+
+def test_direct_checks_invalidate_when_other_day_consumes_weekly_hours():
+    clinician = make_clinician("a", "Alice", working_hours_per_week=8)
+    clinician.workingHoursToleranceHours = 0
+    ex = executor(make_app_state(clinicians=[clinician], slots=[
+        make_template_slot("mon"), make_template_slot("tue", col_band_id="col-tue-1"),
+    ]), end=TUE)
+    assert ex._direct_addition_codes("mon", MON, "a") == []
+    run(ex, "apply_moves", moves=[{"action": "assign", "slot_key": f"tue__{TUE}", "clinicianId": "a"}])
+    assert "WEEKLY_HOURS" in ex._direct_addition_codes("mon", MON, "a")
+
+
+def paginated_rescue_fixture(*, repair_at_tail=True):
+    # Sixteen impossible positions sort before a seventeenth repairable one.
+    sections = [f"impossible-{i:02}" for i in range(16)] + ["A", "B"]
+    clinicians = [make_clinician("a", "Alice", ["A", "B"], working_hours_per_week=40)]
+    if repair_at_tail:
+        clinicians.append(make_clinician("b", "Bob", ["B"], working_hours_per_week=40))
+    state = section_state(clinicians, [make_template_slot(s, block_id=s) for s in sections], sections)
+    return executor(state, [make_assignment("draft", "B", MON, "a", source="solver")])
+
+
+def test_rescue_continuation_reaches_seventeenth_slot_without_plan_change():
+    ex = paginated_rescue_fixture()
+    page1 = run(ex, "suggest_rescue_moves", dateISO=MON)
+    assert len(page1["searched_slots"]) == 16 and not page1["rescues"]
+    assert page1["search_status"] == "incomplete"
+    page2 = run(ex, "suggest_rescue_moves", dateISO=MON, cursor=page1["next_cursor"])
+    assert page2["rescues"] and page2["search_status"] == "completed"
+    assert set(page1["searched_slots"]).isdisjoint(page2["searched_slots"])
+    assert len(page2["searched_slots"]) == 1
+    assert ex.workflow.review_day(MON)["proposals"] == [page2["rescues"][0]["proposal_id"]]
+    applied = run(ex, "apply_proposal", proposal_id=page2["rescues"][0]["proposal_id"])
+    assert applied["applied"] and len(ex.current) == 2
+    stale = ex.execute("suggest_rescue_moves", {"dateISO": MON, "cursor": page1["next_cursor"]}, "test")
+    assert "stale" in json.loads(stale.content)["error"]
+
+
+def test_day_review_finishes_all_pages_before_accepting_no_rescue():
+    ex = paginated_rescue_fixture(repair_at_tail=False)
+    assert ex.workflow.review_day(MON)["complete"]
+    searches = [r for r in ex.workflow.searches if r["tool"] == "suggest_rescue_moves"]
+    assert len(searches) == 2
+    assert searches[-1]["status"] == "completed"
+
+
+@pytest.mark.parametrize("cursor", ["garbage", f"rescue:{TUE}:0:16", f"rescue:{MON}:99:16", f"rescue:{MON}:0:999", f"rescue:{MON}:0:0"])
+def test_invalid_rescue_cursor_is_actionable(cursor):
+    ex = paginated_rescue_fixture()
+    reply = ex.execute("suggest_rescue_moves", {"dateISO": MON, "cursor": cursor}, "test")
+    assert "Start again" in json.loads(reply.content)["error"]
+    assert len(ex.current) == 1
+
+
+def test_partial_search_still_returns_checked_improvements_to_harness(monkeypatch):
+    ex = paginated_rescue_fixture()
+    actual = ex._tool_suggest_rescue_moves({"dateISO": MON, "cursor": f"rescue:{MON}:0:16"})
+    actual.update(search_status="incomplete", not_searched=["uninspected"])
+    monkeypatch.setattr(ex, "_tool_suggest_rescue_moves", lambda _: actual)
+    review = ex.workflow.review_day(MON)
+    assert not review["complete"] and review["proposals"]
+    assert run(ex, "apply_proposal", proposal_id=review["proposals"][0])["applied"]
+
+
+def test_budget_cut_cannot_be_mistaken_for_a_completed_rescue_page(monkeypatch):
+    ex = paginated_rescue_fixture()
+    monkeypatch.setattr(ex, "_tool_seconds_left", lambda: 20)
+    result = run(ex, "suggest_rescue_moves", dateISO=MON)
+    assert result["search_status"] == "incomplete" and not result["searched_slots"]
+    assert len(result["not_searched"]) == 17 and "next_cursor" not in result
+    assert not ex.workflow.review_day(MON)["complete"]
 
 
 def run(executor, name, **arguments):

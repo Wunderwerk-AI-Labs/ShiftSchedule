@@ -230,11 +230,16 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    Do not add prose restating candidates or the next action.
 5. Repeat step 4 until suggest_day_blocks returns day_complete=true (every
    remaining open slot has eligible_count 0). If unfillable_slots remain,
-   call suggest_rescue_moves(dateISO) ONCE: it searches whether moving one
+   call suggest_rescue_moves(dateISO): it searches whether moving one
    of YOUR OWN earlier placements frees a qualified clinician for a stuck
    slot, with a substitute covering the vacated one, and returns
    pre-validated 3-move batches. Select ONE proposal_id; its response
-   includes the next suggestions. no_rescue_found means only that this
+   includes the next suggestions. If no proposal improves the plan and
+   next_cursor is present, pass it to suggest_rescue_moves with the same
+   dateISO until all pages are checked. After a plan change, start without
+   a cursor. A partial page can still contain usable checked proposals;
+   incomplete is never proof that the remaining slots are impossible.
+   no_rescue_found means only that this
    shallow search found no repair. If repair_neighborhood is available,
    use it once for a joint search across nearby days, then apply a proposed
    improvement. Preserve its search limits in any explanation of gaps.

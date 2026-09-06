@@ -82,21 +82,32 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
             if neighborhood and any(i.date_iso == day and counts.get(i.slot_key, 0) < i.target for i in ctx.instances.values()):
                 checks.insert(1, ("repair_neighborhood", "proposals"))
             for name, field in checks:
-                checked = call(name, dateISO=day)
-                if checked.get("search_status") in ("incomplete", "budget_exhausted"):
-                    checks_incomplete = True
-                    search_limits.append({"tool": name, "dateISO": day,
-                                          "status": checked["search_status"],
-                                          "scope": checked.get("search_scope"),
-                                          "note": checked.get("note"),
-                                          "not_searched": checked.get("not_searched")})
-                for offer in checked.get(field, []):
-                    better = offer.get("improves_best")
-                    if better is None:
-                        better = call("apply_moves", moves=offer.get("moves") or offer["batch"], dry_run=True).get("improves_best")
-                    if better:
-                        chosen = offer
+                arguments = {"dateISO": day}
+                seen_cursors = set()
+                while True:
+                    checked = call(name, **arguments)
+                    if checked.get("search_status") in ("incomplete", "budget_exhausted") and not checked.get("next_cursor"):
+                        checks_incomplete = True
+                        search_limits.append({"tool": name, "dateISO": day,
+                                              "status": checked["search_status"],
+                                              "scope": checked.get("search_scope"),
+                                              "note": checked.get("note"),
+                                              "not_searched": checked.get("not_searched")})
+                    for offer in checked.get(field, []):
+                        better = offer.get("improves_best")
+                        if better is None:
+                            better = call("apply_moves", moves=offer.get("moves") or offer["batch"], dry_run=True).get("improves_best")
+                        if better:
+                            chosen = offer
+                            break
+                    cursor = checked.get("next_cursor")
+                    if chosen or not cursor:
                         break
+                    if cursor in seen_cursors or ex._tool_seconds_left() < 25:
+                        checks_incomplete = True
+                        break
+                    seen_cursors.add(cursor)
+                    arguments = {"dateISO": day, "cursor": cursor}
                 if chosen:
                     break
             if not chosen:
@@ -119,6 +130,14 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
     if hasattr(ex, "reference_assignments"):
         from backend.agent.quality import extra_metrics
         result["additional_metrics"] = extra_metrics(ex, best)
+    if hasattr(ex, "workflow") and hasattr(ex.workflow, "direct_checks"):
+        result["candidate_validation_cache"] = {
+            "hits": ex.workflow.direct_check_hits, "misses": ex.workflow.direct_check_misses,
+        }
+    # Hash identities, not generated assignment IDs, for exact outcome comparisons.
+    import hashlib
+    identities = sorted((a.rowId, a.dateISO, a.clinicianId) for a in best)
+    result["plan_identity_hash"] = hashlib.sha256(json.dumps(identities).encode()).hexdigest()
     return result
 
 

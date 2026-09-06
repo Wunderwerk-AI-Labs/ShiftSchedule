@@ -311,14 +311,16 @@ TOOL_SPECS_RAW = [
             "substitute taking the vacated slot. Returns ready-to-apply "
             "3-move batches (unassign the blocker, assign the substitute, "
             "assign the freed clinician to the stuck slot), each validated "
-            "against the exact apply gate — apply a rescue batch EXACTLY as "
-            "given, then re-check with suggest_day_blocks. Fixed/manual "
+            "against the exact apply gate. Apply its proposal_id with apply_proposal. "
+            "Searches up to 16 blocked slots per call; follow next_cursor to "
+            "inspect the rest on the SAME unchanged plan. After a change start "
+            "again without a cursor. Fixed/manual "
             "assignments are never touched. Use it when suggest_day_blocks "
             "reports day_complete=true but unfillable_slots remain."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"dateISO": {"type": "string"}},
+            "properties": {"dateISO": {"type": "string"}, "cursor": {"type": "string"}},
             "required": ["dateISO"],
             "additionalProperties": False,
         },
@@ -895,16 +897,7 @@ class PlanToolExecutor:
                      "eligible": False, "reasons": ["ALREADY_ASSIGNED"]}
                 )
                 continue
-            trial = working + [self._make_assignment(inst.slot_id, inst.date_iso, clinician.id)]
-            new_codes = sorted(
-                {
-                    v.code
-                    for v in self._hard_violations(self._full_plan(trial))
-                    # Match apply_moves exactly: an already-overfull fixed
-                    # week still blocks assignments that worsen its hours.
-                    if self._is_new_hard(v)
-                }
-            )
+            new_codes = self._direct_addition_codes(inst.slot_id, inst.date_iso, clinician.id)
             day_intervals = self._day_intervals(clinician.id, inst.date_iso)
             entry = {
                 "clinicianId": self._alias(clinician.id),
@@ -1200,6 +1193,27 @@ class PlanToolExecutor:
         )
         return options[:6]
 
+    def _direct_addition_codes(self, slot_id: str, date_iso: str, cid: str) -> List[str]:
+        """Reuse exact inspection results only within the current plan revision.
+
+        This is never the acceptance gate: apply_moves independently validates
+        every batch. A change on ANY day clears these results (hours/rest).
+        """
+        key = (slot_id, date_iso, cid)
+        cache = self.workflow.direct_checks
+        if key in cache:
+            self.workflow.direct_check_hits += 1
+            cache.move_to_end(key)
+            return list(cache[key])
+        self.workflow.direct_check_misses += 1
+        trial = self._working_list() + [self._make_assignment(slot_id, date_iso, cid)]
+        codes = tuple(sorted({v.code for v in self._hard_violations(self._full_plan(trial))
+                              if self._is_new_hard(v)}))
+        cache[key] = codes
+        while len(cache) > 4096:
+            cache.popitem(last=False)
+        return list(codes)
+
     def _fix_option_blocked_by(
         self,
         cid: str,
@@ -1215,6 +1229,8 @@ class PlanToolExecutor:
         mean "this batch will be accepted". That includes the
         worsened-weekly-hours case — piling more hours onto an already-over
         week keeps the violation key but is still rejected on apply."""
+        if taken_from is None and (slot_id, date_iso, cid) not in self.current and (slot_id, date_iso, cid) not in self.fixed_identity:
+            return self._direct_addition_codes(slot_id, date_iso, cid)
         trial = dict(self.current)
         if taken_from is not None:
             trial.pop((slot_id, date_iso, taken_from), None)
@@ -1742,13 +1758,20 @@ class PlanToolExecutor:
                 "error": f"{date_iso} is outside the solve range "
                 f"({self.ctx.start_iso} to {self.ctx.end_iso})."
             }
+        offset = 0
+        cursor = args.get("cursor")
+        if cursor is not None:
+            prefix = f"rescue:{date_iso}:{self.workflow.revision}:"
+            if not isinstance(cursor, str) or not cursor.startswith(prefix) or not cursor[len(prefix):].isdigit():
+                return {"error": "Invalid or stale rescue cursor. Start again with dateISO only."}
+            offset = int(cursor[len(prefix):])
         entries = self._day_open_entries(date_iso)
         stuck_all = [e for e in entries if e["eligible_count"] == 0]
-        # Search cap: a real production day showed 14 stuck slots — an
-        # unexplained cap made the model puzzle over the missing ones, so
-        # anything beyond it is reported as not_searched instead of silence.
-        stuck = stuck_all[:16]
-        not_searched = [e["slot_key"] for e in stuck_all[16:]]
+        if cursor is not None and (offset <= 0 or offset >= len(stuck_all)):
+            return {"error": "Rescue cursor is outside the blocked-slot list. Start again with dateISO only."}
+        stuck = stuck_all[offset:offset + 16]
+        next_offset = offset + len(stuck)
+        not_searched = [e["slot_key"] for e in stuck_all[next_offset:]]
         fillable_left = sum(1 for e in entries if e["eligible_count"] > 0)
         if not stuck:
             return {
@@ -1776,6 +1799,7 @@ class PlanToolExecutor:
             # clock (the harness only checks it between LLM rounds).
             if self._tool_seconds_left() < 25:
                 rescue_time_out = True
+                next_offset = offset + entry_index
                 not_searched.extend(e["slot_key"] for e in stuck[entry_index:])
                 break
             inst = self.ctx.instances[entry["raw_slot_key"]]
@@ -1867,9 +1891,9 @@ class PlanToolExecutor:
                 no_rescue.append(entry["slot_key"])
         out = {
             "dateISO": date_iso,
-            "note": "Each rescue is a pre-validated NET-GAIN batch: apply "
-            "its 3 moves EXACTLY as given in ONE apply_moves call, then "
-            "re-check with suggest_day_blocks (other rescues may have gone "
+            "note": "Each rescue is a pre-validated NET-GAIN batch: use "
+            "apply_proposal with its proposal_id and use the returned next suggestions "
+            "(other rescues may have gone "
             "stale — re-query instead of applying several at once). Slots "
             "in no_rescue_found have no repair in this same-day, depth-1 "
             "search. A longer or cross-day chain may still work; this is "
@@ -1878,6 +1902,7 @@ class PlanToolExecutor:
             "no_rescue_found": no_rescue,
             "search_scope": {"days": [date_iso], "relocated_assignments": 1},
             "search_status": "incomplete" if not_searched else "completed",
+            "searched_slots": [e["slot_key"] for e in stuck[:next_offset - offset]],
         }
         for rescue in rescues:
             rescue.update(self.workflow.propose(
@@ -1886,10 +1911,12 @@ class PlanToolExecutor:
         if not_searched:
             out["not_searched"] = not_searched
             out["note"] += (
-                " not_searched lists stuck slots beyond this call's search "
-                "cap — call suggest_rescue_moves again after applying the "
-                "offered rescues to cover them."
+                " not_searched lists slots not checked in this page. "
+                "If no offer improves the plan, follow next_cursor to check the rest. "
+                "After applying an offer, restart without a cursor."
             )
+            if not rescue_time_out:
+                out["next_cursor"] = f"rescue:{date_iso}:{self.workflow.revision}:{next_offset}"
         if rescue_time_out:
             out["note"] += (
                 " NOTE: the run's time budget is nearly spent — the search "

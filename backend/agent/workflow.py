@@ -30,6 +30,9 @@ class PlanningWorkflow:
         self.searches = deque(maxlen=80)
         self.cache = OrderedDict()
         self.cache_budgets = {}
+        self.direct_checks = OrderedDict()
+        self.direct_check_hits = 0
+        self.direct_check_misses = 0
 
     def changed(self):
         self.revision += 1
@@ -37,6 +40,7 @@ class PlanningWorkflow:
         # weekly hours or rest constraints. Never reuse old negative results.
         self.cache.clear()
         self.cache_budgets.clear()
+        self.direct_checks.clear()
 
     def search(self, name, arguments, handler):
         key = (name, json.dumps(arguments, sort_keys=True, separators=(",", ":")))
@@ -170,12 +174,24 @@ class PlanningWorkflow:
                 checks.append(("repair_neighborhood", "proposals"))
         checks.append(("suggest_balance_moves", "offers"))
         for name, field in checks:
-            reply = ex.execute(name, {"dateISO": day}, "required-day-review")
-            data = json.loads(reply.content)
-            if reply.is_error or "error" in data or data.get("search_status") in ("incomplete", "budget_exhausted"):
-                return {"complete": False, "reason": f"{name} was not fully checked", "proposals": []}
-            proposals = [p["proposal_id"] for p in data.get(field, []) if p.get("proposal_id") and p.get("improves_best")]
-            if proposals:
-                return {"complete": False, "reason": f"{name} found a checked improvement",
-                        "proposals": proposals[:3]}
+            arguments = {"dateISO": day}
+            seen_cursors = set()
+            while True:
+                reply = ex.execute(name, arguments, "required-day-review")
+                data = json.loads(reply.content)
+                if reply.is_error or "error" in data:
+                    return {"complete": False, "reason": f"{name} failed", "proposals": []}
+                # A partial search can still contain fully validated offers.
+                proposals = [p["proposal_id"] for p in data.get(field, []) if p.get("proposal_id") and p.get("improves_best")]
+                if proposals:
+                    return {"complete": False, "reason": f"{name} found a checked improvement",
+                            "proposals": proposals[:3]}
+                cursor = data.get("next_cursor")
+                if name == "suggest_rescue_moves" and cursor and cursor not in seen_cursors and ex._tool_seconds_left() >= 25:
+                    seen_cursors.add(cursor)
+                    arguments = {"dateISO": day, "cursor": cursor}
+                    continue
+                if data.get("search_status") in ("incomplete", "budget_exhausted") or cursor:
+                    return {"complete": False, "reason": f"{name} was not fully checked", "proposals": []}
+                break
         return {"complete": True, "reason": "Required bounded checks completed", "proposals": []}

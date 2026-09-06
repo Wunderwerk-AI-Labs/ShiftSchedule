@@ -974,7 +974,7 @@ def agent_solve_range(
                 + wishes_block
             )
             messages = [ChatMessage(role="user", content=digest)]
-            guard = ProgressGuard(tuple(sorted(executor.current)))
+            guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
             truncation_nudges = 0
             on_progress(
                 "phase",
@@ -1229,7 +1229,7 @@ def agent_solve_range(
                 distribute_all=not ctx.only_fill_required,
             ) + admin_block + wishes_block
             messages: List[ChatMessage] = [ChatMessage(role="user", content=digest)]
-            guard = ProgressGuard(tuple(sorted(executor.current)))
+            guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
             completion_nudges = 0
             day_completed = False
             truncation_nudges = 0
@@ -1456,7 +1456,7 @@ def agent_solve_range(
                 + json.dumps(executor.workflow.summary(), ensure_ascii=False)
             )
             messages = [ChatMessage(role="user", content=review_digest)]
-            guard = ProgressGuard(tuple(sorted(executor.current)))
+            guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
             on_progress(
                 "phase",
                 {
@@ -1589,7 +1589,7 @@ def agent_solve_range(
     digest += admin_block + wishes_block
     messages: List[ChatMessage] = [ChatMessage(role="user", content=digest)]
     extra_notes: List[str] = []
-    guard = ProgressGuard(tuple(sorted(executor.current)))
+    guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
     truncation_nudges = 0
     emit_agent("stage", {"stage": "improve"})
 

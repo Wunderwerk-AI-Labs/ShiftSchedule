@@ -204,6 +204,11 @@ def main():
               "calls_by_phase": dict(Counter(c["phase"] for c in calls)),
               "quality_regression_iterations": regressions, "longest_inspection_streak": longest_inspection_streak,
               "notes": result.get("notes"), "hashes": hashes}
+    if executor and hasattr(getattr(executor, "workflow", None), "direct_checks"):
+        report["candidate_validation_cache"] = {
+            "hits": executor.workflow.direct_check_hits,
+            "misses": executor.workflow.direct_check_misses,
+        }
     emit("REPORT", report)
     emit("PLAN", {"assignments": result.get("assignments"), "start": args.start, "end": end})
     if not agent or any(c["stop_reason"] == "error" for c in calls):
