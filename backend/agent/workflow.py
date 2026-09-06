@@ -29,15 +29,18 @@ class PlanningWorkflow:
         self.search_counter = 0
         self.searches = deque(maxlen=80)
         self.cache = OrderedDict()
+        self.cache_budgets = {}
 
     def changed(self):
         self.revision += 1
         # Deliberately conservative: even a change on another day can alter
         # weekly hours or rest constraints. Never reuse old negative results.
         self.cache.clear()
+        self.cache_budgets.clear()
 
     def search(self, name, arguments, handler):
         key = (name, json.dumps(arguments, sort_keys=True, separators=(",", ":")))
+        budget_before = self.executor._tool_seconds_left()
         if key in self.cache:
             result = deepcopy(self.cache[key])
             def ids(value):
@@ -49,7 +52,9 @@ class PlanningWorkflow:
                 elif isinstance(value, list):
                     for child in value:
                         yield from ids(child)
-            if all(proposal_id in self.proposals for proposal_id in ids(result)):
+            more_budget = (result.get("search_status") in ("incomplete", "budget_exhausted")
+                           and budget_before > self.cache_budgets[key] + 1)
+            if not more_budget and all(proposal_id in self.proposals for proposal_id in ids(result)):
                 result["cached"] = True
                 return result
             # Bounded proposal storage may evict an old offer before its
@@ -76,11 +81,14 @@ class PlanningWorkflow:
             "offers": len(result.get("candidates", result.get("rescues", result.get("offers", result.get("proposals", []))))),
             "not_searched": result.get("not_searched", []),
         })
-        # Incomplete searches are recorded, but a later call can do more.
-        if result.get("search_status") not in ("incomplete", "budget_exhausted"):
-            self.cache[key] = deepcopy(result)
-            while len(self.cache) > 80:
-                self.cache.popitem(last=False)
+        # Repeating the same incomplete search with LESS remaining time
+        # cannot extend it. Changed parameters, plan or an increased budget
+        # allow another attempt without treating repetition as progress.
+        self.cache[key] = deepcopy(result)
+        self.cache_budgets[key] = budget_before
+        while len(self.cache) > 80:
+            expired, _ = self.cache.popitem(last=False)
+            self.cache_budgets.pop(expired, None)
         return result
 
     def propose(self, moves, *, next_tool, next_args, preview=None):

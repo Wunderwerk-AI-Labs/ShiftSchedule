@@ -168,6 +168,9 @@ def test_expired_inspection_never_claims_day_is_complete_or_candidates_impossibl
     assert result["search_status"] == "incomplete"
     assert not result.get("day_complete")
     assert "unfillable_slots" not in result
+    repeated = run(ex, "suggest_day_blocks", dateISO=MON)
+    assert repeated["cached"]
+    assert repeated["search_id"] == result["search_id"]
     ex.wall_deadline = None
     result = run(ex, "suggest_day_blocks", dateISO=MON)
     assert not result["cached"] and result["candidates"]
