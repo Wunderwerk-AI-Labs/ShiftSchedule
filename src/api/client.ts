@@ -1,3 +1,5 @@
+import { StateSaveQueue } from "../lib/stateSaveQueue";
+
 export type RowKind = "class" | "pool";
 
 export type Location = {
@@ -168,6 +170,7 @@ export type SolverRule = {
 };
 
 export type AppState = {
+  revision?: string | null;
   locations?: Location[];
   locationsEnabled?: boolean;
   rows: WorkplaceRow[];
@@ -500,15 +503,25 @@ export async function getState(): Promise<AppState> {
   return res.json();
 }
 
-export async function saveState(state: AppState): Promise<AppState> {
+const stateSaves = new StateSaveQueue<AppState>();
+export const adoptSavedState = (state: AppState) => stateSaves.adopt(state);
+export const flushStateSaves = () => stateSaves.drain();
+export const retryStateSaves = () => stateSaves.retry();
+
+export function saveState(state: AppState): Promise<AppState> {
+  const headers = buildHeaders();
+  return stateSaves.save(state, (snapshot) => sendState(snapshot, headers));
+}
+
+async function sendState(state: AppState, headers: HeadersInit): Promise<AppState> {
   const res = await fetch(`${API_BASE}/v1/state`, {
     method: "POST",
-    headers: buildHeaders(),
+    headers,
     body: JSON.stringify(state),
   });
   if (res.status === 401) handleUnauthorized();
   if (!res.ok) {
-    throw new Error(`Failed to save state: ${res.status}`);
+    await throwWithDetail(res, `Failed to save state: ${res.status}`);
   }
   return res.json();
 }
@@ -529,6 +542,7 @@ async function throwWithDetail(res: Response, fallback: string): Promise<never> 
   try {
     const body = await res.json();
     if (typeof body?.detail === "string") detail = body.detail;
+    else if (typeof body?.detail?.message === "string") detail = body.detail.message;
   } catch {
     /* non-JSON error body */
   }
@@ -752,6 +766,7 @@ export type SolverAgentDebug = {
   daysPlanned?: number;
   /** ISO dates the agent could not plan (failed or never reached). */
   daysSkipped?: string[];
+  daysIncomplete?: string[];
   moves_accepted?: number;
   moves_rejected?: number;
   input_tokens?: number;
@@ -884,6 +899,8 @@ export type SolverRunAgentUsage = {
 
 /** One row of the server-side run inbox (results are fetched per run). */
 export type SolverRunSummary = {
+  apply_blocked_reason?: string | null;
+  incomplete_dates?: string[];
   id: string;
   status: string;
   start_iso: string;
@@ -920,36 +937,45 @@ export async function getSolverRun(runId: string): Promise<SolverRunDetail> {
   return res.json();
 }
 
-/** Server-side atomic apply: replaces the range's solver assignments with
- * the run's result (manual entries always survive). Reload state after.
- * When the calendar changed inside the run's range since the run started,
- * the backend refuses with a 'calendar_changed' conflict - surfaced here
- * as CalendarChangedError so the UI can ask before forcing. */
-export async function applySolverRun(runId: string, force = false): Promise<void> {
+/** Distinguish reviewable conflicts from drafts that cannot be applied. */
+export class ApplyRunError extends Error {
+  constructor(message: string, public code: string, public revision?: string) {
+    super(message);
+  }
+}
+
+/** Apply a stored draft after any required confirmation; manual entries stay. */
+export async function applySolverRun(
+  runId: string, options: { force?: boolean; allowPartial?: boolean; revision?: string } = {},
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (options.force) params.set("force", "true");
+  if (options.allowPartial) params.set("allow_partial", "true");
+  if (options.revision) params.set("expected_revision", options.revision);
   const res = await fetch(
-    `${API_BASE}/v1/solve/runs/${encodeURIComponent(runId)}/apply${force ? "?force=true" : ""}`,
+    `${API_BASE}/v1/solve/runs/${encodeURIComponent(runId)}/apply?${params}`,
     { method: "POST", headers: buildHeaders() },
   );
   if (res.status === 401) handleUnauthorized();
   if (res.status === 409) {
     let code = "";
+    let revision: string | undefined;
     let message = "Applying the run was refused.";
     try {
       const body = (await res.json()) as {
-        detail?: { code?: string; message?: string } | string;
+        detail?: { code?: string; message?: string; revision?: string } | string;
       };
       if (typeof body.detail === "object" && body.detail) {
         code = body.detail.code ?? "";
         message = body.detail.message ?? message;
+        revision = body.detail.revision;
       } else if (typeof body.detail === "string") {
         message = body.detail;
       }
     } catch {
       // keep defaults
     }
-    const err = new Error(message);
-    err.name = code === "calendar_changed" ? "CalendarChangedError" : "ApplyRefusedError";
-    throw err;
+    throw new ApplyRunError(message, code, revision);
   }
   if (!res.ok) throw new Error(`Failed to apply solver run: ${res.status}`);
 }

@@ -247,7 +247,7 @@ def test_persistent_day_failure_skips_day_and_continues():
     }
     assert agent["daysSkipped"] == [TUE]
     assert agent["daysPlanned"] == 2
-    assert agent["stopReason"] == "completed"
+    assert agent["stopReason"] == "partial"
     assert any("day skipped" in n for n in result["notes"])
     # A lone failed day is no abort: the final range review still ran.
     assert any(n.startswith("Final range review:") for n in result["notes"])

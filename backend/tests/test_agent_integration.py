@@ -417,5 +417,5 @@ def test_day_by_day_failed_day_is_skipped_through_endpoint(
     agent = body["debugInfo"]["agent"]
     assert agent["daysSkipped"] == [TUE]
     assert agent["daysPlanned"] == 2
-    assert agent["stopReason"] == "completed"
+    assert agent["stopReason"] == "partial"
     assert any("day skipped" in n for n in body["notes"])

@@ -23,6 +23,10 @@ import {
   getIcalPublishStatus,
   getWebPublishStatus,
   getState,
+  adoptSavedState,
+  flushStateSaves,
+  retryStateSaves,
+  ApplyRunError,
   publishIcal,
   publishWeb,
   abortSolver,
@@ -377,6 +381,10 @@ export default function WeeklySchedulePage({
   const [vacationOverviewOpen, setVacationOverviewOpen] = useState(false);
   const [workingHoursOverviewOpen, setWorkingHoursOverviewOpen] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [calendarTransition, setCalendarTransition] = useState(false);
+  const calendarTransitionRef = useRef(false);
+  const saveTimerRef = useRef<number | null>(null);
   // Solver if/then rules have no editor in this UI; keep whatever the backend
   // stores instead of silently wiping the list on every save (every
   // normalizeAppState call below must include it).
@@ -875,12 +883,16 @@ export default function WeeklySchedulePage({
     const droppedSlots = filteredByClinician.length - normalizedAssignments.length;
 
     if (hasLoaded && loadedUserId === currentUser.username) {
-      saveState(normalized).catch(() => {
-        /* Backend optional during local-only dev */
-      });
+      pauseCalendarSaving();
+      try {
+        await saveState(normalized);
+        setAssignmentMap(buildAssignmentMap(normalizedAssignments));
+      } finally {
+        resumeCalendarSaving();
+      }
+    } else {
+      throw new Error("Wait until the calendar has loaded before importing.");
     }
-
-    setAssignmentMap(buildAssignmentMap(normalizedAssignments));
 
     return {
       imported: normalizedAssignments.length,
@@ -1317,38 +1329,58 @@ export default function WeeklySchedulePage({
     }
   };
 
-  const reloadAssignmentsFromServer = async () => {
-    const state = await getState();
-    const filteredAssignments = (state.assignments ?? []).filter(
-      (assignment) => assignment.rowId !== "pool-not-working",
-    );
-    setAssignmentMap(buildAssignmentMap(filteredAssignments));
+  const pauseCalendarSaving = () => {
+    calendarTransitionRef.current = true;
+    setCalendarTransition(true);
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+  };
+
+  const resumeCalendarSaving = () => {
+    calendarTransitionRef.current = false;
+    setCalendarTransition(false);
   };
 
   const handleApplyRun = async (runId: string) => {
+    if (calendarTransitionRef.current) return;
+    pauseCalendarSaving();
     try {
-      try {
-        await applySolverRun(runId);
-      } catch (err) {
-        // The calendar was edited inside the run's range after the run
-        // started - warn and ask before overwriting those changes.
-        if (err instanceof Error && err.name === "CalendarChangedError") {
-          const proceed = window.confirm(
-            "The calendar was changed in this timeframe while the run was " +
-              "working. Applying the plan will overwrite those changes.\n\n" +
-              "Apply anyway?",
-          );
-          if (!proceed) return;
-          await applySolverRun(runId, true);
-        } else {
-          throw err;
+      const current = buildCurrentStatePayload();
+      if (!current) throw new Error("The current calendar cannot be saved. Fix its template first.");
+      await saveState(current);
+      const options: { force?: boolean; allowPartial?: boolean; revision?: string } = {};
+      for (;;) {
+        try {
+          await applySolverRun(runId, options);
+          break;
+        } catch (err) {
+          if (err instanceof ApplyRunError &&
+              (err.code === "calendar_changed" || err.code === "partial_result")) {
+            if (!window.confirm(err.message)) return;
+            options.revision = err.revision;
+            if (err.code === "calendar_changed") {
+              options.force = true;
+              // A new revision invalidates any earlier partial-plan review.
+              options.allowPartial = false;
+            }
+            if (err.code === "partial_result") options.allowPartial = true;
+          } else {
+            throw err;
+          }
         }
       }
-      await reloadAssignmentsFromServer();
+      // Hydrate the complete server state: a forced apply may have accepted
+      // another tab's updated roster or template as well as its assignments.
+      const state = await getState();
+      hydrateStateSlices(normalizeAppState(state).state);
+      setSaveError(null);
       await refreshServerRuns();
-      showSolverNoticeBriefly("Plan applied to the schedule.", 4000);
-    } catch {
-      showSolverNoticeBriefly("Applying the run failed - try again.", 5000);
+      showSolverNoticeBriefly("Plan applied. A backup of the previous calendar is in Snapshots.", 5000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Applying the run failed.";
+      setAutoPlanError(message);
+      showSolverNoticeBriefly(message, 8000);
+    } finally {
+      resumeCalendarSaving();
     }
   };
 
@@ -1409,7 +1441,10 @@ export default function WeeklySchedulePage({
       // Partial runs (LLM errors or exhausted budgets skipped days) leave
       // those days' slots OPEN - without a prominent notice the gap only
       // shows up when someone scrolls to the end of the range.
-      const skippedDays = result?.debugInfo?.agent?.daysSkipped ?? [];
+      const skippedDays = [...new Set([
+        ...(result?.debugInfo?.agent?.daysSkipped ?? []),
+        ...(result?.debugInfo?.agent?.daysIncomplete ?? []),
+      ])];
       if (args.solverMode === "agent" && skippedDays.length > 0) {
         showSolverNoticeBriefly(
           `${skippedDays.length} day(s) could not be planned by the AI agent ` +
@@ -1438,7 +1473,7 @@ export default function WeeklySchedulePage({
 
       await refreshServerRuns();
       const applicable =
-        run.has_result && (run.status === "finished" || run.status === "aborted");
+        run.has_result && !run.apply_blocked_reason && (run.status === "finished" || run.status === "aborted");
       if (applicable && applyAfterAbortRef.current) {
         applyAfterAbortRef.current = false;
         await handleApplyRun(runId);
@@ -1449,7 +1484,7 @@ export default function WeeklySchedulePage({
           6000,
         );
       }
-      setAutoPlanProgress({ current: dateRangeLength, total: dateRangeLength });
+      setAutoPlanProgress({ current: result?.debugInfo?.agent?.daysPlanned ?? dateRangeLength, total: dateRangeLength });
       setAutoPlanLastRunStats({
         totalDays: dateRangeLength,
         durationMs: Date.now() - startedAt,
@@ -1500,6 +1535,10 @@ export default function WeeklySchedulePage({
     solverMode?: SolverMode;
   }) => {
     if (autoPlanRunning) return;
+    if (!hasLoaded || loadedUserId !== currentUser.username || saveError) {
+      setAutoPlanError(saveError ?? "Wait until the calendar has loaded before starting a plan.");
+      return;
+    }
     setAutoPlanError(null);
     setCoverageWarning(null);
     const dateRange = buildDateRange(args.startISO, args.endISO);
@@ -1564,10 +1603,7 @@ export default function WeeklySchedulePage({
         runToken,
       });
     } catch (err) {
-      const message =
-        err instanceof Error && err.name === "SolverBusyError"
-          ? err.message
-          : "The solver run could not be started.";
+      const message = err instanceof Error ? err.message : "The solver run could not be started.";
       setAutoPlanError(message);
       showSolverNoticeBriefly(message, 5000);
       setAutoPlanRunning(false);
@@ -2458,6 +2494,7 @@ export default function WeeklySchedulePage({
   // identically (mutates `normalized`'s rows/assignments like the
   // original load effect did — callers pass a fresh object).
   const hydrateStateSlices = (normalized: AppState) => {
+    adoptSavedState(normalized);
     if (normalized.locations?.length) setLocations(normalized.locations);
     setLocationsEnabled(normalized.locationsEnabled ?? true);
     if (normalized.rows?.length) {
@@ -2478,7 +2515,7 @@ export default function WeeklySchedulePage({
       setRows(nextRows);
       normalized.rows = nextRows;
     }
-    if (normalized.clinicians?.length) {
+    if (normalized.clinicians) {
       setClinicians(
         normalized.clinicians.map((clinician) => ({
           ...clinician,
@@ -2522,15 +2559,12 @@ export default function WeeklySchedulePage({
         if (!alive) return;
         const { state: normalized } = normalizeAppState(state);
         hydrateStateSlices(normalized);
+        setSaveError(null);
+        setLoadedUserId(currentUser.username);
+        setHasLoaded(true);
       })
       .catch(() => {
-        /* Backend optional during local-only dev */
-      })
-      .finally(() => {
-        if (alive) {
-          setLoadedUserId(currentUser.username);
-          setHasLoaded(true);
-        }
+        if (alive) setSaveError("The calendar could not be loaded. Reload before editing.");
       });
     return () => {
       alive = false;
@@ -2626,10 +2660,7 @@ export default function WeeklySchedulePage({
     return normalized;
   };
 
-  // Snapshot ("quicksave") handlers. Restore gates the debounced auto-save
-  // via hasLoaded: setting it false re-runs the save effect, whose cleanup
-  // clears any pending 500ms timer — so a stale pre-restore payload cannot
-  // be flushed after the restore lands.
+  // Flush pending edits and pause autosave while replacing calendar state.
   const handleSaveSnapshot = async (name: string) => {
     const payload = buildCurrentStatePayload();
     if (!payload) {
@@ -2641,26 +2672,31 @@ export default function WeeklySchedulePage({
   };
 
   const handleRestoreSnapshot = async (snapshotId: string) => {
-    setHasLoaded(false);
+    pauseCalendarSaving();
     try {
-      const restored = await restoreSnapshot(snapshotId, buildCurrentStatePayload());
+      const current = buildCurrentStatePayload();
+      if (!current) throw new Error("The current calendar cannot be saved.");
+      const saved = await saveState(current);
+      const restored = await restoreSnapshot(snapshotId, saved);
       const { state: normalized } = normalizeAppState(restored);
       hydrateStateSlices(normalized);
+      setSaveError(null);
     } finally {
-      // One idempotent echo-save of the restored state follows.
-      setHasLoaded(true);
+      resumeCalendarSaving();
     }
   };
 
   useEffect(() => {
-    if (!hasLoaded || loadedUserId !== currentUser.username) return;
+    if (!hasLoaded || loadedUserId !== currentUser.username || calendarTransitionRef.current || saveError) return;
     const normalized = buildCurrentStatePayload();
     if (!normalized) return;
     const handle = window.setTimeout(() => {
-      saveState(normalized).catch(() => {
-        /* Backend optional during local-only dev */
+      if (calendarTransitionRef.current) return;
+      saveState(normalized).catch((err) => {
+        setSaveError(err instanceof Error ? err.message : "Changes could not be saved.");
       });
     }, 500);
+    saveTimerRef.current = handle;
     return () => window.clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -2679,6 +2715,9 @@ export default function WeeklySchedulePage({
     weeklyTemplate,
     hasLoaded,
     currentUser.username,
+    loadedUserId,
+    calendarTransition,
+    saveError,
   ]);
 
   useEffect(() => {
@@ -2737,29 +2776,21 @@ export default function WeeklySchedulePage({
     });
   }, [weeklyTemplate, poolRows]);
 
-  const handleLogout = () => {
-    if (hasLoaded && loadedUserId === currentUser.username) {
-      const { state: normalized } = normalizeAppState({
-        locations,
-        locationsEnabled,
-        rows,
-        clinicians,
-        assignments: toAssignments(),
-        minSlotsByRowId,
-        slotOverridesByKey,
-        holidays,
-        holidayCountry,
-        holidayYear,
-        publishedWeekStartISOs,
-        solverSettings,
-        solverRules: solverRulesRef.current,
-        weeklyTemplate,
-      });
-      saveState(normalized).catch(() => {
-        /* Backend optional during local-only dev */
-      });
+  const handleLogout = async () => {
+    pauseCalendarSaving();
+    try {
+      if (hasLoaded && loadedUserId === currentUser.username) {
+        const current = buildCurrentStatePayload();
+        if (!current) throw new Error("The current calendar cannot be saved.");
+        await saveState(current);
+      }
+      await flushStateSaves();
+      onLogout();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Changes could not be saved before signing out.");
+    } finally {
+      resumeCalendarSaving();
     }
-    onLogout();
   };
 
   const handleToggleQualification = (clinicianId: string, classId: string) => {
@@ -3568,6 +3599,21 @@ export default function WeeklySchedulePage({
         }
       />
 
+      {calendarTransition && (
+        <div role="status" aria-live="polite" className="fixed inset-0 z-[2000] flex items-center justify-center bg-white/70 text-sm font-medium text-slate-700 dark:bg-slate-950/70 dark:text-slate-200">
+          Updating calendar…
+        </div>
+      )}
+      {saveError && (
+        <div role="alert" className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          <p>{saveError}</p>
+          <p>Your local changes remain on screen. Save a snapshot before reloading if you want to keep them.</p>
+          <div className="mt-2 flex gap-3">
+            {hasLoaded && <button type="button" className="underline" onClick={() => { retryStateSaves(); setSaveError(null); }}>Retry saving</button>}
+            <button type="button" className="underline" onClick={() => window.location.reload()}>Reload saved calendar</button>
+          </div>
+        </div>
+      )}
       {slotCollisions.length > 0 && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-3 dark:border-red-900 dark:bg-red-950">
           <div className="mx-auto max-w-7xl">

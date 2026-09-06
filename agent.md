@@ -813,6 +813,9 @@ else:
 ```
 
 ### Tests
+- Calendar safety: `backend/tests/test_agent_workflow_safety.py`,
+  `src/lib/stateSaveQueue.test.ts`, and `e2e/agent-apply.spec.ts` cover stale saves,
+  apply validation/confirmation/rollback, empty aborts, and premature day completion.
 `backend/tests/test_validation.py` — 41 cases, run with
 `pytest backend/tests/test_validation.py`. Tests use the conftest factories
 EXCEPT for multi-location scenarios, which build `AppState` manually (because
@@ -1096,6 +1099,27 @@ with a foreign objective scale, which shows up as a full-height "jump".
 ---
 
 ## 7) Backend State + Persistence
+State reads and saves return a content-based `revision`. `POST /v1/state` must echo
+the revision of the state being edited; stale or missing revisions fail with 409.
+The frontend serializes saves in `StateSaveQueue`, pauses editing/autosave during
+apply and restore, and displays persistent save failures. Do not retry conflicts
+by attaching a newly fetched revision to old local data.
+
+Agent runs capture an immutable input snapshot plus a fingerprint of all planning
+inputs, including roster, vacations, template, rules, holidays and boundary/history
+assignments. `run_apply.py` checks the draft against current inputs and commits
+backup, calendar and run status in one SQLite transaction. Unchanged manual
+violations are retained; new violations block apply even with `force=true`.
+Incomplete drafts need `allow_partial=true`; confirmations use `expected_revision`
+to detect further changes. Empty aborted runs are never applicable. Recovery of
+interrupted runs is registered in FastAPI's lifespan.
+
+The day loop verifies remaining legal placements before accepting an `end_turn`,
+allows two completion nudges, reports `daysIncomplete`, and reserves iteration
+budget for the final review. A progress guard nudges after six repeated plan
+states and ends the conversation after twelve; equal-quality best-plan changes
+are streamed too, so abort recovery keeps the latest best plan.
+
 Backend stores one JSON blob per user in SQLite:
 ```json
 {

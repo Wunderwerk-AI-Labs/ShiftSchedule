@@ -895,9 +895,11 @@ def test_duty_pre_pass_runs_before_day_planning():
     assert "duty pre-pass: 1 of 1" in day_digest
 
 
-def test_iteration_budget_scales_with_slot_count():
+def test_iteration_budget_scales_with_slot_count(monkeypatch):
     """Admin rule: the iteration budget is total slot instances x 10,
     superseding the configured flat cap — here: 2 slots -> 20 iterations."""
+    # Exercise the outer budget independently of the no-progress guard.
+    monkeypatch.setattr("backend.agent.progress.ProgressGuard.observe", lambda *_: "continue")
     state = _two_day_state()  # 2 slot instances -> budget 20
     endless = [{"tool_calls": [{"name": "get_plan_overview", "arguments": {}}]}] * 50
     result = agent_solve_range(
@@ -1050,7 +1052,7 @@ def test_unsolved_overview_counts_placements_outside_preferred_times():
 def test_day_by_day_runs_final_range_review():
     """After the last day the harness opens ONE more conversation over the
     whole range (admin request): it sees the remaining issues and may fix
-    them — here it places the slot the day conversation left open."""
+    them — here it joins two half-days into one continuous full day."""
     from .conftest import make_template_slot
 
     state = make_app_state(
@@ -1060,24 +1062,25 @@ def test_day_by_day_runs_final_range_review():
         ],
         slots=[
             make_template_slot(slot_id="slot-a__mon", col_band_id="col-mon-1",
-                               start_time="08:00", end_time="16:00"),
+                               start_time="08:00", end_time="12:00"),
             make_template_slot(slot_id="slot-b__mon", col_band_id="col-mon-1",
-                               start_time="16:00", end_time="18:00"),
+                               start_time="12:00", end_time="16:00"),
         ],
     )
     script = [
-        # Day conversation: places one slot, then (prematurely) closes the day.
+        # Day conversation covers both required slots.
         {"tool_calls": [{"name": "apply_moves", "arguments": {"moves": [
             {"action": "assign", "slot_key": f"slot-a__mon__{MON}",
              "clinicianId": "Alice"},
+            {"action": "assign", "slot_key": f"slot-b__mon__{MON}", "clinicianId": "Bob"},
         ]}}]},
         {"text": "Day done."},
-        # Range review: sees the open slot in the digest and fixes it.
+        # Range review keeps coverage and joins the adjacent half-days.
         {"tool_calls": [{"name": "apply_moves", "arguments": {"moves": [
-            {"action": "assign", "slot_key": f"slot-b__mon__{MON}",
-             "clinicianId": "Bob"},
+            {"action": "unassign", "slot_key": f"slot-b__mon__{MON}", "clinicianId": "Bob"},
+            {"action": "assign", "slot_key": f"slot-b__mon__{MON}", "clinicianId": "Alice"},
         ]}}]},
-        {"text": "Review done: filled the remaining open slot."},
+        {"text": "Review done: joined the half-days."},
     ]
     progress = ProgressRecorder()
     result = agent_solve_range(
@@ -1092,7 +1095,7 @@ def test_day_by_day_runs_final_range_review():
     assert result["debugInfo"]["solver_status"] == "AGENT_COMPLETE"
     assert len(result["assignments"]) == 2
     assert any(
-        n.startswith("Final range review: 1 additional change") for n in result["notes"]
+        n.startswith("Final range review: 2 additional change") for n in result["notes"]
     )
     assert any(n.startswith("No unresolved issues") for n in result["notes"])
 

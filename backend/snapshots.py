@@ -82,7 +82,7 @@ def _row_to_meta(row) -> SnapshotMeta:
 _META_COLUMNS = "id, name, kind, created_at, updated_at, LENGTH(data) AS size_bytes"
 
 
-def _write_auto_backup(conn, username: str, state: AppState) -> None:
+def _write_auto_backup(conn, username: str, state: AppState, *, name=AUTO_BACKUP_NAME) -> None:
     """Upsert the user's single auto-backup slot from the given state."""
     now = _utcnow_iso()
     normalized, _ = _normalize_state(state)
@@ -93,8 +93,8 @@ def _write_auto_backup(conn, username: str, state: AppState) -> None:
     ).fetchone()
     if existing:
         conn.execute(
-            "UPDATE calendar_snapshots SET data = ?, created_at = ?, updated_at = ? WHERE id = ?",
-            (blob, now, now, existing["id"]),
+            "UPDATE calendar_snapshots SET name = ?, data = ?, created_at = ?, updated_at = ? WHERE id = ?",
+            (name, blob, now, now, existing["id"]),
         )
     else:
         conn.execute(
@@ -102,7 +102,7 @@ def _write_auto_backup(conn, username: str, state: AppState) -> None:
             INSERT INTO calendar_snapshots (id, username, name, kind, data, created_at, updated_at)
             VALUES (?, ?, ?, 'auto_backup', ?, ?, ?)
             """,
-            (uuid4().hex, username, AUTO_BACKUP_NAME, blob, now, now),
+            (uuid4().hex, username, name, blob, now, now),
         )
 
 

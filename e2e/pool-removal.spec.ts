@@ -1,3 +1,4 @@
+import { saveTestState } from "./state-fixture";
 /**
  * E2E tests for pool removal verification.
  *
@@ -144,7 +145,7 @@ test.describe("Pool Removal - UI Verification", () => {
     const state = buildStateWithDeprecatedPools(dateISO);
 
     // Save state via API
-    const saveResponse = await request.post(`${API_BASE}/v1/state`, {
+    const saveResponse = await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: state,
     });
@@ -172,7 +173,7 @@ test.describe("Pool Removal - UI Verification", () => {
     const dateISO = toISODate(today);
     const state = buildStateWithDeprecatedPools(dateISO);
 
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: state,
     });
@@ -196,7 +197,7 @@ test.describe("Pool Removal - UI Verification", () => {
     const dateISO = toISODate(today);
     const state = buildStateWithDeprecatedPools(dateISO);
 
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: state,
     });

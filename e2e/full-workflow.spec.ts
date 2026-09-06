@@ -1,3 +1,4 @@
+import { saveTestState } from "./state-fixture";
 import { test, expect, Page, TestInfo } from "@playwright/test";
 
 /**
@@ -535,7 +536,7 @@ test.describe("Full Workflow - UI Only", () => {
     const { access_token: resetToken } = (await loginRes.json()) as {
       access_token: string;
     };
-    const resetRes = await request.post(`${SOLVER_API_BASE}/v1/state`, {
+    const resetRes = await saveTestState(request, `${SOLVER_API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${resetToken}` },
       data: {
         locations: [{ id: "loc-default", name: "Location 1" }],
@@ -725,7 +726,7 @@ test.describe("Full Workflow - UI Only", () => {
         },
       ],
     };
-    const seedRes = await request.post(`${SOLVER_API_BASE}/v1/state`, {
+    const seedRes = await saveTestState(request, `${SOLVER_API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${resetToken}` },
       data: seededState,
     });

@@ -23,6 +23,7 @@ from ..models import Assignment, SolveRangeRequest, AppState
 from ..scoring import build_scoring_context, open_slots, plan_stats
 from ..validation import validate_solver_rules
 from .config import AgentConfig
+from .progress import ProgressGuard
 from .prompts import (
     DAY_SYSTEM_PROMPT,
     DEFAULT_AGENT_INSTRUCTIONS,
@@ -332,6 +333,7 @@ def agent_solve_range(
         "stop_reason": "completed",
         "days_planned": [],  # ISO dates the day loop finished (or found full)
         "days_skipped": [],  # ISO dates that failed or were never reached
+        "days_incomplete": [],  # attempted, but completion was not verified
     }
     total_input_tokens = 0
     total_output_tokens = 0
@@ -634,6 +636,14 @@ def agent_solve_range(
     def finalize(status: str, extra_notes: List[str]) -> dict:
         if status == "ABORTED":
             run_meta["stop_reason"] = "aborted"
+            run_meta["days_skipped"].extend(
+                d for d in ctx.target_day_isos if d not in run_meta["days_planned"]
+                and d not in run_meta["days_incomplete"]
+            )
+        elif run_meta["stop_reason"] == "completed" and (
+            run_meta["days_skipped"] or run_meta["days_incomplete"]
+        ):
+            run_meta["stop_reason"] = "partial"
         if (
             strategy == "day_by_day"
             and executor.moves_accepted == 0
@@ -706,6 +716,7 @@ def agent_solve_range(
                     "stopReason": run_meta["stop_reason"],
                     "daysPlanned": len(run_meta["days_planned"]),
                     "daysSkipped": sorted(set(run_meta["days_skipped"])),
+                    "daysIncomplete": sorted(set(run_meta["days_incomplete"])),
                     "moves_accepted": executor.moves_accepted,
                     "moves_rejected": executor.moves_rejected,
                     "input_tokens": total_input_tokens,
@@ -843,6 +854,18 @@ def agent_solve_range(
             thought_log.append(f"[iteration {iterations_done}] {final_summary}")
             emit_agent("thought", {"text": _feed_text(final_summary)})
 
+    def stalled(messages, guard, notes):
+        action = guard.observe(tuple(sorted(executor.current)))
+        if action == "nudge":
+            messages.append(ChatMessage(role="user", content=(
+                "Several rounds made no new plan. Do not repeat rejected moves or stale inspections. "
+                "Use a different legal placement or a rescue/balance suggestion, or finish with a "
+                "specific explanation of what cannot be solved."
+            )))
+        if action == "stop":
+            notes.append("Agent stopped this conversation after repeated rounds without progress; best plan kept.")
+        return action == "stop"
+
     def day_by_day_loop() -> dict:
         """One fresh LLM conversation per day, mirroring the human procedure:
         scarcest slots first, each clinician placed with a contiguous block
@@ -859,6 +882,10 @@ def agent_solve_range(
         # skipped. A single failed day only bumps consecutive_failures.
         aborted = False
         consecutive_failures = 0
+        # Preserve a small share for range-wide fixes even when day planning
+        # consumes every round it is offered.
+        review_reserve = min(20, max(2, config.max_iterations // 10))
+        construction_limit = config.max_iterations - review_reserve
 
         # ---- Duty pre-pass ------------------------------------------------
         # On-call/duty slots are staffed FIRST across the WHOLE range: they
@@ -899,7 +926,7 @@ def agent_solve_range(
             remaining = deadline - time.time()
             duty_deadline = time.time() + remaining / (total_days + 1)
             duty_rounds = max(6, 3 * duty_positions)
-            rounds_end = min(iterations_done + duty_rounds, config.max_iterations)
+            rounds_end = min(iterations_done + duty_rounds, construction_limit)
             digest = (
                 build_duty_digest(
                     state,
@@ -916,6 +943,7 @@ def agent_solve_range(
                 + wishes_block
             )
             messages = [ChatMessage(role="user", content=digest)]
+            guard = ProgressGuard(tuple(sorted(executor.current)))
             truncation_nudges = 0
             on_progress(
                 "phase",
@@ -1003,6 +1031,8 @@ def agent_solve_range(
                     )
                     messages.append(assistant)
                     messages.append(ChatMessage(role="tool", tool_results=results))
+                    if stalled(messages, guard, extra_notes):
+                        break
                     if not open_duty_state()[0]:
                         break  # every duty staffed — nothing left to discuss
                     continue
@@ -1070,7 +1100,7 @@ def agent_solve_range(
                     "remaining day(s) were left unplanned."
                 )
                 break
-            if iterations_done >= config.max_iterations:
+            if iterations_done >= construction_limit:
                 run_meta["days_skipped"].extend(ctx.target_day_isos[day_index:])
                 run_meta["stop_reason"] = "budget_exhausted"
                 extra_notes.append(
@@ -1081,8 +1111,8 @@ def agent_solve_range(
             # Fair share of what is left; a day that finishes early donates
             # its surplus to the later days.
             day_deadline = time.time() + remaining / days_left
-            day_rounds = max(6, (config.max_iterations - iterations_done) // days_left)
-            rounds_end = min(iterations_done + day_rounds, config.max_iterations)
+            day_rounds = max(6, (construction_limit - iterations_done) // days_left)
+            rounds_end = min(iterations_done + day_rounds, construction_limit)
 
             def day_call_timeout() -> float:
                 # The 30s usefulness floor applies to the GLOBAL deadline
@@ -1168,6 +1198,9 @@ def agent_solve_range(
                 distribute_all=not ctx.only_fill_required,
             ) + admin_block + wishes_block
             messages: List[ChatMessage] = [ChatMessage(role="user", content=digest)]
+            guard = ProgressGuard(tuple(sorted(executor.current)))
+            completion_nudges = 0
+            day_completed = False
             truncation_nudges = 0
             on_progress(
                 "phase",
@@ -1252,6 +1285,8 @@ def agent_solve_range(
                     emit_agent("tool_use", {"tools": [c.name for c in response.tool_calls]})
                     messages.append(assistant)
                     messages.append(ChatMessage(role="tool", tool_results=results))
+                    if stalled(messages, guard, extra_notes):
+                        break
                     on_progress(
                         "phase",
                         {
@@ -1301,12 +1336,24 @@ def agent_solve_range(
                         "moved on to the next day."
                     )
                     break
-                break  # end_turn: the model declared the day done
+                pending = executor.next_fillable_slot(date_iso)
+                if pending and not pending.get("check_incomplete") and completion_nudges < 2:
+                    completion_nudges += 1
+                    messages.append(ChatMessage(role="assistant", content=response.replay_text or "(day ended)",
+                                                raw_content=response.raw_content))
+                    messages.append(ChatMessage(role="user", content=(
+                        f"The day is not complete: {pending['slot_key']} still has a legal candidate "
+                        f"({pending['clinicianId']}). Call suggest_day_blocks for that slot and continue planning."
+                    )))
+                    continue
+                day_completed = pending is None
+                if pending:
+                    extra_notes.append(f"Day {date_iso} ended without verified completion; review its open slots.")
+                break
 
             if out_of_time:
-                # The day was at least partially attempted — it counts as
-                # planned; everything after it was never reached.
-                run_meta["days_planned"].append(date_iso)
+                # Completion was not verified; later days were never reached.
+                run_meta["days_incomplete"].append(date_iso)
                 run_meta["days_skipped"].extend(
                     ctx.target_day_isos[day_index + 1:]
                 )
@@ -1329,7 +1376,7 @@ def agent_solve_range(
                 )
                 continue
             consecutive_failures = 0
-            run_meta["days_planned"].append(date_iso)
+            run_meta["days_planned" if day_completed else "days_incomplete"].append(date_iso)
             previous_day_lines.append(
                 f"- {date_iso}: {max(0, open_positions - still_open)} filled, "
                 f"{still_open} left open"
@@ -1360,6 +1407,7 @@ def agent_solve_range(
                 + wishes_block
             )
             messages = [ChatMessage(role="user", content=review_digest)]
+            guard = ProgressGuard(tuple(sorted(executor.current)))
             on_progress(
                 "phase",
                 {
@@ -1423,6 +1471,8 @@ def agent_solve_range(
                             ],
                         )
                     )
+                    if stalled(messages, guard, extra_notes):
+                        break
                     continue
                 break  # end_turn: review finished
             review_changes = executor.moves_accepted - moves_before_review
@@ -1471,6 +1521,7 @@ def agent_solve_range(
     digest += admin_block + wishes_block
     messages: List[ChatMessage] = [ChatMessage(role="user", content=digest)]
     extra_notes: List[str] = []
+    guard = ProgressGuard(tuple(sorted(executor.current)))
     truncation_nudges = 0
     emit_agent("stage", {"stage": "improve"})
 
@@ -1535,6 +1586,8 @@ def agent_solve_range(
             emit_agent("tool_use", {"tools": [c.name for c in response.tool_calls]})
             messages.append(assistant)
             messages.append(ChatMessage(role="tool", tool_results=results))
+            if stalled(messages, guard, extra_notes):
+                break
             on_progress(
                 "phase",
                 {

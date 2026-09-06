@@ -483,6 +483,7 @@ export default function SolverInfoModal({
             </div>
             <button
               type="button"
+              aria-label="Close"
               onClick={handleClose}
               className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             >
@@ -618,6 +619,14 @@ export default function SolverInfoModal({
                               No unresolved issues
                             </div>
                           )}
+                          {run.apply_blocked_reason && (
+                            <div className="text-xs font-medium text-amber-600 dark:text-amber-400">{run.apply_blocked_reason}</div>
+                          )}
+                          {!!run.incomplete_dates?.length && (
+                            <div className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                              Incomplete draft: {run.incomplete_dates.length} day(s) need review before applying.
+                            </div>
+                          )}
                         </button>
                         <div className="flex shrink-0 items-center gap-2">
                           {run.has_result && (
@@ -653,7 +662,7 @@ export default function SolverInfoModal({
                             <div className="flex shrink-0 items-center gap-2">
                               <button
                                 type="button"
-                                disabled={busyRunId === run.id}
+                                disabled={busyRunId === run.id || !!run.apply_blocked_reason}
                                 onClick={async () => {
                                   setBusyRunId(run.id);
                                   try {
@@ -662,7 +671,7 @@ export default function SolverInfoModal({
                                     setBusyRunId(null);
                                   }
                                 }}
-                                title="Write this plan into the calendar (manual entries always stay)."
+                                title={run.apply_blocked_reason ?? "Write this plan into the calendar (manual entries always stay)."}
                                 className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 transition-colors hover:border-indigo-300 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
                               >
                                 {busyRunId === run.id ? "Applying..." : "Apply"}
