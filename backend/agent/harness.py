@@ -1455,8 +1455,19 @@ def agent_solve_range(
                 + "\nCURRENT SEARCH MEMORY (reuse current results; older revisions are context only):\n"
                 + json.dumps(executor.workflow.summary(), ensure_ascii=False)
             )
+            review_idle_limit = min(12, max(4, len(ctx.target_day_isos) * 2))
+            review_digest += (
+                f"\nFinal review allows at most {review_idle_limit} consecutive tool rounds "
+                "without a new best plan. Prioritize a specific unresolved issue; "
+                "reuse established facts and batch independent read-only queries. "
+                "A fresh inspection alone does not improve the calendar."
+            )
             messages = [ChatMessage(role="user", content=review_digest)]
-            guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
+            # Fresh searches are useful during construction, but they must not
+            # indefinitely extend a final review that never improves the plan.
+            guard = ProgressGuard(tuple(sorted(best_state)),
+                                  nudge_after=review_idle_limit - 1,
+                                  stop_after=review_idle_limit)
             on_progress(
                 "phase",
                 {
@@ -1520,7 +1531,21 @@ def agent_solve_range(
                             ],
                         )
                     )
-                    if stalled(messages, guard, extra_notes):
+                    best_key = tuple(sorted((a.rowId, a.dateISO, a.clinicianId)
+                                            for a in executor.best_assignments))
+                    review_action = guard.observe(best_key)
+                    if review_action == "nudge":
+                        messages.append(ChatMessage(role="user", content=(
+                            "Final review has not produced a new best plan. You have one "
+                            "tool round left unless you improve the retained plan. Apply a "
+                            "checked improvement, test one concrete atomic proposal, or finish "
+                            "with the known limits. Do not repeat general inspections."
+                        )))
+                    if review_action == "stop":
+                        extra_notes.append(
+                            f"Final range review stopped after {review_idle_limit} tool rounds "
+                            "without a new best plan; unsearched improvements may remain."
+                        )
                         break
                     continue
                 break  # end_turn: review finished

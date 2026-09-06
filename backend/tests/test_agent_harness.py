@@ -1103,6 +1103,50 @@ def test_day_by_day_runs_final_range_review():
     assert any(n.startswith("No unresolved issues") for n in result["notes"])
 
 
+def test_final_review_bounds_fresh_searches_without_changing_the_retained_plan():
+    state = make_app_state()
+    script = [
+        {"tool_calls": [{"name": "apply_moves", "arguments": {"moves": [
+            {"action": "assign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "clin-1"},
+        ]}}]}, {"text": "Day complete."},
+    ] + [{"tool_calls": [{"name": name, "arguments": {"dateISO": MON}}]}
+         for name in ["analyze_bottlenecks", "explain_unfilled", "suggest_rescue_moves", "suggest_balance_moves"]] * 3
+    provider = MockProvider(script)
+    result = agent_solve_range(_payload(agent_strategy="day_by_day"), state,
+                              MockCancelEvent(), ProgressRecorder(), time.time(),
+                              provider=provider, config=_config(max_iterations=40))
+    assert provider.turn == 6  # two construction rounds and four review rounds
+    assert len(result["assignments"]) == 1
+    assert result["debugInfo"]["agent"]["daysIncomplete"] == []
+    assert any("unsearched improvements may remain" in n for n in result["notes"])
+
+
+def test_final_review_last_chance_can_apply_a_useful_joint_change():
+    from .conftest import make_template_slot
+    state = make_app_state(clinicians=[make_clinician("a", "Alice"), make_clinician("b", "Bob")], slots=[
+        make_template_slot("first", start_time="08:00", end_time="12:00"),
+        make_template_slot("second", start_time="12:00", end_time="16:00"),
+    ])
+    script = [
+        {"tool_calls": [{"name": "apply_moves", "arguments": {"moves": [
+            {"action": "assign", "slot_key": f"first__{MON}", "clinicianId": "Alice"},
+            {"action": "assign", "slot_key": f"second__{MON}", "clinicianId": "Bob"},
+        ]}}]}, {"text": "Day complete."},
+    ] + [{"tool_calls": [{"name": "get_plan_overview", "arguments": {}}]}] * 3 + [
+        {"tool_calls": [{"name": "apply_moves", "arguments": {"moves": [
+            {"action": "unassign", "slot_key": f"second__{MON}", "clinicianId": "Bob"},
+            {"action": "assign", "slot_key": f"second__{MON}", "clinicianId": "Alice"},
+        ]}}]}, {"text": "Joint change complete."},
+    ]
+    provider = MockProvider(script)
+    result = agent_solve_range(_payload(agent_strategy="day_by_day"), state,
+                              MockCancelEvent(), ProgressRecorder(), time.time(),
+                              provider=provider, config=_config(max_iterations=40))
+    assert provider.turn == 7
+    assert any(n.startswith("Final range review: 2 additional change") for n in result["notes"])
+    assert not any("unsearched improvements may remain" in n for n in result["notes"])
+
+
 class SlowGeneratingProvider(LLMProvider):
     """Each call takes measurable wall time and reports output tokens, so the
     harness can compute a non-zero generation speed."""

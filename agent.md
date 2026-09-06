@@ -1465,3 +1465,21 @@ Database Inspector
 - The arena can run checkout code from a temporary directory with read-only provider
   settings, allowing real-model experiments before deployment. A deterministic
   first-offer controller supplies a separate reference without any model calls.
+
+## v1.56 — complete repair searches and bounded final review
+
+- Rescue results carry revision/date-bound continuation cursors after 16 blocked
+  slots. Required day checks follow all pages; checked improvements on partial
+  pages remain actionable. Stale cursors restart the search.
+- Direct candidate checks share a bounded per-revision cache; any plan change
+  clears it. The atomic apply gate always revalidates the full calendar.
+- Pure date/time parsing is memoized with bounded caches. Holiday and personal
+  window lookups are shared only inside one validation call; changes to state
+  are read afresh for every validation. Rules and violation payloads are unchanged.
+- Final review permits 4–12 consecutive tool rounds without a new retained best
+  plan, scaling with range length. It warns before the last round and reports
+  the bounded stop. Useful custom changes, including equal-score wish changes,
+  reset progress; repeated inspections alone do not. Cross-day review remains.
+- Arena reporting separates model time and top-level tool time (nested calls
+  are not double-counted), records candidate cache hits/misses and fails on
+  new hard violations or changed fixed context.
