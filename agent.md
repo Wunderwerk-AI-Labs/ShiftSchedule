@@ -716,6 +716,14 @@ Solver overlay (SolverOverlay.tsx):
   - Live updates continue while dashboard is open.
   - "← Back" button to close and return to compact overlay.
 - Solver stats calculation: modular function in `src/lib/solverStats.ts` (`calculateSolverLiveStats`).
+
+Agent activity display (v1.57):
+- The current day/phase and running check stay above the scrollable history. Tool start/end receipts are emitted by `PlanToolExecutor.execute`, including nested proposal follow-ups and final checks, without extra validation or model calls.
+- Every agent event carries its stage and current planning context, so the bounded client buffer and reconnects cannot reset the stage. Stable sequence ids preserve feed row identity.
+- Search receipts distinguish partial/cached searches from checked results; zero options is never presented as proven infeasibility. Draft changes indicate when an earlier best snapshot is retained. Coverage is labelled as the best saved draft.
+- Model text is optional, with complete text in a keyboard-accessible dialog. The chronological history only scrolls on an explicit “Jump to latest” click.
+- EventSource reconnects after transient failures; the overlay marks the view as potentially stale while disconnected. The stream does not replay missed history.
+- Browser replays: `e2e/agent-activity.spec.ts` checks long streams, run isolation, reconnects, mobile layout and model text; no real model calls or calendar writes.
 - Stats include both solver-generated and existing manual assignments in the solve range for accurate filled slots display.
 - Accepts optional `solverSettings` parameter (passed from WeeklySchedulePage) for on-call rest violation tracking.
 - Stats tracked: filledSlots, totalRequiredSlots, openSlots, nonConsecutiveShifts, peopleWeeksWithinHours, totalPeopleWeeksWithTarget, locationChanges, totalAssignments, sectionPreferenceMatches, totalClassAssignments, timeWindowFits, totalAssignmentsWithTimeWindows, onCallRestViolations.

@@ -1093,17 +1093,30 @@ export type AgentMoveItem = {
 
 // Live activity from the agent solver (SSE event type "agent").
 export type AgentActivityData = {
-  kind: "stage" | "iteration" | "thought" | "tool_use" | "moves_applied" | "moves_rejected";
+  kind: "stage" | "phase" | "iteration" | "thought" | "tool_use" | "tool_start" | "tool_result" | "retry" | "moves_applied" | "moves_rejected";
   iteration: number;
   max_iterations: number | null;
   moves_accepted: number;
   time_ms: number;
   stage?: "seed" | "improve" | "finalize";
+  sequence?: number;
+  phase_label?: string;
+  planning_date?: string | null;
+  day_index?: number | null;
+  total_days?: number;
+  activity_id?: number;
+  tool?: string;
+  dateISO?: string;
+  duration_ms?: number;
+  summary?: string;
+  outcome?: "ok" | "warning" | "error";
+  attempt?: number;
   text?: string;
   /** True when the text is a reasoning model's chain of thought. */
   reasoning?: boolean;
   moves?: AgentMoveItem[];
   improved?: boolean;
+  retained_best?: boolean;
   score?: number;
   count?: number;
   reason?: string;
@@ -1138,14 +1151,8 @@ export function subscribeSolverProgress(
   };
 
   eventSource.onerror = (e) => {
-    // Close on terminal failures (e.g. 401 from a bad token) so the browser doesn't
-    // silently reconnect in a loop. For transient disconnects the caller can
-    // resubscribe.
-    if (eventSource.readyState === EventSource.CLOSED) {
-      onError?.(e);
-      return;
-    }
-    eventSource.close();
+    // Let EventSource reconnect after transient network failures. Terminal
+    // failures (e.g. 401) are CLOSED by the browser; cleanup closes on unmount.
     onError?.(e);
   };
 

@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentActivityData } from "../../api/client";
 import {
   deriveAgentStatus,
+  formatActivityTime,
   formatFeedDate,
   type AgentFeedEntry,
   type AgentStage,
 } from "../../lib/agentActivity";
+import { buttonSmall } from "../../lib/buttonStyles";
 
 // Live view of the agent solver: stage stepper, iteration progress, and a
 // feed of the concrete changes the agent makes. Rendered inside SolverOverlay
@@ -142,12 +144,25 @@ function ThoughtDialog({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") { event.stopPropagation(); onClose(); }
+      if (event.key === "Tab") {
+        const buttons = dialogRef.current?.querySelectorAll<HTMLButtonElement>("button");
+        const first = buttons?.[0];
+        const last = buttons?.[buttons.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus();
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); previousFocus?.focus(); };
   }, [onClose]);
   const copy = async () => {
     try {
@@ -174,7 +189,7 @@ function ThoughtDialog({
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-slate-900/50 backdrop-blur-[1px]"
       />
-      <div className="relative flex max-h-full w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={details.reasoning ? "Model reasoning (full text)" : "Model output (full text)"} tabIndex={-1} className="relative flex max-h-full w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
           <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
             {details.reasoning ? "Model reasoning (full text)" : "Model output (full text)"}
@@ -227,7 +242,7 @@ function FeedRow({
         >
           {assign ? "+" : "–"}
         </span>
-        <span className="min-w-0 truncate text-xs text-slate-600 dark:text-slate-300">
+        <span className="min-w-0 text-xs text-slate-600 dark:text-slate-300">
           <span className="font-semibold text-slate-700 dark:text-slate-100">
             {entry.move.clinician}
           </span>
@@ -238,6 +253,8 @@ function FeedRow({
             {formatFeedDate(entry.move.dateISO)}
             {entry.move.start && ` · ${entry.move.start}–${entry.move.end}`}
           </span>
+          {entry.retainedBest === false && <span className="ml-1 text-amber-700 dark:text-amber-300">· Working draft only; earlier best kept</span>}
+          {entry.improved && <span className="ml-1 text-emerald-700 dark:text-emerald-300">· Better plan saved</span>}
         </span>
         {entry.improved && (
           <SparkleIcon className="ml-auto h-3 w-3 shrink-0 text-violet-400" />
@@ -256,13 +273,18 @@ function FeedRow({
   }
   if (entry.type === "tools") {
     return (
-      <div className="solver-feed-enter flex items-center gap-2 px-2.5 py-1">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
-        <span className="min-w-0 truncate text-xs text-slate-400 dark:text-slate-500">
-          {entry.label}
-        </span>
+      <div className="solver-feed-enter flex items-start gap-2 px-2.5 py-1.5">
+        <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${entry.outcome === "error" || entry.outcome === "warning" ? "bg-amber-500" : "bg-sky-500"}`} />
+        <div className="min-w-0 text-xs text-slate-700 dark:text-slate-200">
+          <span className="font-medium">{entry.label}</span>
+          {typeof entry.durationMs === "number" && <span className="ml-2 whitespace-nowrap tabular-nums text-slate-400">{(entry.durationMs / 1000).toFixed(1)}s</span>}
+          {entry.summary && <p className={`mt-0.5 leading-relaxed ${entry.outcome === "warning" || entry.outcome === "error" ? "text-amber-700 dark:text-amber-300" : "text-slate-500 dark:text-slate-400"}`}>{entry.summary}</p>}
+        </div>
       </div>
     );
+  }
+  if (entry.type === "notice") {
+    return <p className={`px-2.5 py-1.5 text-xs font-medium ${entry.warning ? "text-amber-700 dark:text-amber-300" : "text-indigo-700 dark:text-indigo-300"}`}>{entry.label}</p>;
   }
   return (
     <div className="solver-feed-enter flex items-center gap-2 px-2.5 py-1">
@@ -274,71 +296,66 @@ function FeedRow({
   );
 }
 
-export default function AgentActivityPanel({ events }: { events: AgentActivityData[] }) {
+export default function AgentActivityPanel({ events, elapsedMs = 0, currentPhase, liveConnected = true }: {
+  events: AgentActivityData[];
+  elapsedMs?: number;
+  currentPhase?: string | null;
+  liveConnected?: boolean;
+}) {
   const status = useMemo(() => deriveAgentStatus(events), [events]);
   const [fullThought, setFullThought] = useState<ThoughtDetails | null>(null);
-  // The feed is chronological (newest at the BOTTOM) and NEVER scrolls
-  // programmatically: new rows simply grow the content below, so the reader
-  // can scroll through long reasoning texts without ever being yanked to
-  // the end (stick-to-bottom was tried and still felt jumpy while reading
-  // the latest entry).
-  // Seconds since the last live event: with adaptive thinking a single model
-  // step can take minutes on large plans, which used to look like a hang.
-  const lastEventAtRef = useRef(Date.now());
-  const [waitSeconds, setWaitSeconds] = useState(0);
-  useEffect(() => {
-    lastEventAtRef.current = Date.now();
-    setWaitSeconds(0);
-  }, [events.length]);
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setWaitSeconds(Math.floor((Date.now() - lastEventAtRef.current) / 1000));
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, []);
+  const closeThought = useCallback(() => setFullThought(null), []);
+  const [includeModelText, setIncludeModelText] = useState(false);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const waitSeconds = Math.max(0, Math.floor((elapsedMs - status.actionStartedMs) / 1000));
+  const visibleFeed = status.feed.filter((entry) => includeModelText || entry.type !== "thought");
+  const phase = status.stage === "finalize" ? "Finalize the best draft"
+    : status.phaseLabel ?? currentPhase ?? "Prepare the planning run";
   return (
-    <div className="w-full max-w-xl rounded-xl border border-indigo-100 bg-gradient-to-b from-indigo-50/60 to-white p-3 dark:border-indigo-900/50 dark:from-indigo-950/40 dark:to-slate-900">
+    <div className="w-full rounded-xl border border-indigo-100 bg-gradient-to-b from-indigo-50/60 to-white p-3 sm:p-4 dark:border-indigo-900/50 dark:from-indigo-950/40 dark:to-slate-900">
       <StageStepper stage={status.stage} />
-
-      {/* No progress BAR: the iteration budget scales with the problem
-          (slots x 10) and is a runaway backstop, not a plan — a bar against
-          it always looked nearly empty and read as "barely working". */}
-      {status.stage !== "seed" && status.iteration > 0 && (
-        <div className="mt-3 flex items-center justify-end">
-          <span className="shrink-0 text-[11px] font-medium tabular-nums text-slate-500 dark:text-slate-400">
-            Iteration {status.iteration} · {status.movesAccepted}{" "}
-            change{status.movesAccepted === 1 ? "" : "s"}
-          </span>
+      <div className="mt-4 rounded-lg border border-indigo-100 bg-white/80 p-3 dark:border-indigo-900 dark:bg-slate-900/70">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+          <span>{status.planningDate && status.dayIndex ? `Day ${status.dayIndex} of ${status.totalDays} · ${formatFeedDate(status.planningDate)}` : phase}</span>
+          <span className="tabular-nums">Step {status.iteration} · {status.movesAccepted} draft changes</span>
         </div>
-      )}
-
-      <div className="mt-3 flex max-h-40 flex-col gap-1 overflow-y-auto pr-1">
-        {status.feed.map((entry) => (
-          <FeedRow key={entry.key} entry={entry} onShowFullThought={setFullThought} />
-        ))}
-        {status.thinking && (
-          <div className="flex items-center gap-2 px-2.5 py-1">
-            <SparkleIcon className="solver-float h-3.5 w-3.5 text-violet-400" />
-            <span className="solver-shimmer-text text-xs font-medium">
-              {waitSeconds > 90
-                ? `Still working — large plans can take a few minutes per step… (${waitSeconds}s)`
-                : `Agent is thinking…${waitSeconds >= 10 ? ` (${waitSeconds}s)` : ""}`}
-            </span>
+        <div role="status" className="mt-2 flex items-start gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+          <SparkleIcon className={`mt-0.5 h-4 w-4 shrink-0 text-indigo-500 ${liveConnected ? "solver-float" : ""}`} />
+          <span>{liveConnected ? status.currentAction : "Live updates interrupted"}</span>
+        </div>
+        {!liveConnected ? (
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">The connection is being restored. The run continues on the server; this view may be out of date. If updates do not resume, reload the page.</p>
+        ) : (
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            <span className="tabular-nums">{formatActivityTime(waitSeconds * 1000)} in this step</span>
+            {status.thinking && waitSeconds >= 30 && <span> · Waiting for the model response; complex steps can take a few minutes.</span>}
           </div>
         )}
-        {status.feed.length === 0 && !status.thinking && (
-          <div className="flex items-center gap-2 px-2.5 py-1">
-            <SparkleIcon className="solver-float h-3.5 w-3.5 text-indigo-300 dark:text-indigo-500" />
-            <span className="solver-shimmer-text text-xs font-medium">
-              {status.stage === "seed"
-                ? "Drafting the initial plan…"
-                : "Reviewing the schedule…"}
-            </span>
-          </div>
-        )}
+        {status.lastResult && <p className="mt-2 border-t border-slate-100 pt-2 text-xs leading-relaxed text-slate-600 dark:border-slate-800 dark:text-slate-300"><span className="font-medium">Last result: </span>{status.lastResult}</p>}
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <input type="checkbox" checked={includeModelText} onChange={(e) => setIncludeModelText(e.target.checked)} className="accent-indigo-600" />
+          Include model text
+        </label>
+        <button type="button" className={buttonSmall.base} disabled={visibleFeed.length === 0} onClick={() => {
+          if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+        }}>Jump to latest ↓</button>
+      </div>
+      {/* Only an explicit click scrolls: readers keep their place as results arrive. */}
+      <div ref={feedRef} role="region" aria-label="Planning activity" tabIndex={0} className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto overscroll-contain pr-1 [overflow-anchor:none]">
+        {visibleFeed.map((entry) => (
+          <div key={entry.key} className="flex items-start gap-1 border-b border-slate-100 py-1 last:border-0 dark:border-slate-800">
+            <span className="w-9 shrink-0 pt-1.5 text-right text-[10px] tabular-nums text-slate-400">{formatActivityTime(entry.timeMs)}</span>
+            <div className="min-w-0 flex-1"><FeedRow entry={entry} onShowFullThought={setFullThought} /></div>
+          </div>
+        ))}
+        {visibleFeed.length === 0 && <p className="px-2 py-3 text-xs text-slate-500">Checks and draft changes will appear here as they happen.</p>}
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-slate-400">Recent activity · Changes below belong to the working draft. The best saved plan is shown in the coverage figures.</p>
       {fullThought && (
-        <ThoughtDialog details={fullThought} onClose={() => setFullThought(null)} />
+        <ThoughtDialog details={fullThought} onClose={closeThought} />
       )}
     </div>
   );

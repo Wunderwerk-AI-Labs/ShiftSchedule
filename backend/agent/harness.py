@@ -348,16 +348,30 @@ def agent_solve_range(
     # the endpoint's average output tokens/second.
     total_generation_seconds = 0.0
 
+    activity_context: Dict[str, Any] = {"stage": "seed"}
+    activity_sequence = 0
+
     def emit_agent(kind: str, payload: Optional[dict] = None) -> None:
         """Dedicated SSE event type for the live agent panel. Older frontends
         ignore unknown event types, so this is backward-safe."""
-        data = dict(payload or {})
+        nonlocal activity_sequence
+        activity_sequence += 1
+        if kind == "stage" and payload:
+            activity_context["stage"] = payload["stage"]
+        # Self-contained context survives a bounded client history or reconnect.
+        data = {**activity_context, **(payload or {}), "sequence": activity_sequence}
         data["kind"] = kind
         data.setdefault("iteration", iterations_done)
         data["max_iterations"] = config.max_iterations if config else None
         data["moves_accepted"] = executor.moves_accepted if executor is not None else 0
         data["time_ms"] = (time.time() - start_time) * 1000.0
         on_progress("agent", data)
+
+    def agent_phase(label: str, *, day_index=None, planning_date=None) -> None:
+        activity_context.update(phase_label=label, day_index=day_index,
+                                planning_date=planning_date, total_days=len(ctx.target_day_isos))
+        on_progress("phase", {"phase": "agent_loop", "label": label})
+        emit_agent("phase")
 
     def note_retry(attempt: int, response: ProviderResponse) -> None:
         """Bookkeeping callback for _complete_with_retry — counts the retry
@@ -976,16 +990,7 @@ def agent_solve_range(
             messages = [ChatMessage(role="user", content=digest)]
             guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
             truncation_nudges = 0
-            on_progress(
-                "phase",
-                {
-                    "phase": "agent_loop",
-                    "label": (
-                        f"Agent (2/3): duty pre-pass, {duty_positions} "
-                        "on-call position(s)..."
-                    ),
-                },
-            )
+            agent_phase(f"Plan on-call duties across the range ({duty_positions} open)")
 
             def duty_call_timeout() -> float:
                 return max(
@@ -1233,16 +1238,7 @@ def agent_solve_range(
             completion_nudges = 0
             day_completed = False
             truncation_nudges = 0
-            on_progress(
-                "phase",
-                {
-                    "phase": "agent_loop",
-                    "label": (
-                        f"Agent (2/3): day {day_index + 1}/{total_days} "
-                        f"({date_iso}), {open_positions} open positions..."
-                    ),
-                },
-            )
+            agent_phase("Build the daily plan", day_index=day_index + 1, planning_date=date_iso)
 
             out_of_time = False
             day_failed = False
@@ -1468,13 +1464,7 @@ def agent_solve_range(
             guard = ProgressGuard(tuple(sorted(best_state)),
                                   nudge_after=review_idle_limit - 1,
                                   stop_after=review_idle_limit)
-            on_progress(
-                "phase",
-                {
-                    "phase": "agent_loop",
-                    "label": "Agent (3/3): final review of the whole range...",
-                },
-            )
+            agent_phase("Review the whole planning range")
             rounds_end = min(iterations_done + review_rounds, config.max_iterations)
 
             def review_call_timeout() -> float:
@@ -1558,6 +1548,7 @@ def agent_solve_range(
         if executor.current != returned_state:
             executor.current = returned_state
             executor.workflow.changed()
+        agent_phase("Verify the final plan and remaining gaps")
         final_checks = {}
         for reviewed_day in list(run_meta["days_planned"]):
             if cancel_event.is_set():

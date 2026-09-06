@@ -379,8 +379,9 @@ def test_rejected_batch_emits_activity():
         {"moves": [{"action": "assign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "Dr. Alice"}]},
     )
     assert payload["applied"] is False
-    assert events and events[-1][0] == "moves_rejected"
-    assert events[-1][1]["count"] == 1
+    rejected = [data for kind, data in events if kind == "moves_rejected"]
+    assert rejected and rejected[-1]["count"] == 1
+    assert events[-1][0] == "tool_result"
 
 
 # ---------------------------------------------------------------------------

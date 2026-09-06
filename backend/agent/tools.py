@@ -36,6 +36,7 @@ from ..validation import (
 from .workflow import PlanningWorkflow, SEARCH_TOOLS, InspectionBudgetExhausted
 from .neighborhood import analyze_bottlenecks, explain_unfilled, repair_neighborhood
 from .quality import BALANCED_FIELDS, CLASSIC_FIELDS, extra_metrics
+from .activity import tool_receipt
 from ..planning_preferences import daily_min_minutes, daily_target_minutes
 
 AGENT_ASSIGNMENT_SOURCE = "solver"
@@ -454,6 +455,7 @@ class PlanToolExecutor:
         # Live-activity hook for the UI: called with (kind, payload) for
         # human-readable progress (applied/rejected move batches).
         self.on_activity = on_activity
+        self.activity_counter = 0
         self.clinicians_by_id: Dict[str, Clinician] = {c.id: c for c in state.clinicians}
         self.section_names: Dict[str, str] = {r.id: r.name for r in state.rows}
         # LLM-facing clinician identifiers: real (deduplicated) names.
@@ -754,16 +756,32 @@ class PlanToolExecutor:
             "apply_moves": self._tool_apply_moves,
         }
         handler = handlers.get(name)
-        if handler is None:
-            return ToolResult(tool_call_id, _dump({"error": f"Unknown tool: {name}"}), True)
+        self.activity_counter += 1
+        activity = {"activity_id": self.activity_counter, "tool": name}
+        # Keep only a validated date as context, never arbitrary tool arguments.
+        args = arguments or {}
+        date_iso = args.get("dateISO") if isinstance(args, dict) else None
+        if isinstance(date_iso, str) and date_iso in self.ctx.target_date_set:
+            activity["dateISO"] = date_iso
+        started = time.monotonic()
+        self._emit_activity("tool_start", activity)
+        failed = False
         try:
-            args = arguments or {}
-            result = self.workflow.search(name, args, handler) if name in SEARCH_TOOLS else handler(args)
-            return ToolResult(tool_call_id, _dump(result))
+            if handler is None:
+                result = {"error": f"Unknown tool: {name}"}
+                failed = True
+            else:
+                result = self.workflow.search(name, args, handler) if name in SEARCH_TOOLS else handler(args)
         except InspectionBudgetExhausted as exc:
-            return ToolResult(tool_call_id, _dump(exc.result))
+            result = exc.result
         except Exception as exc:  # tool bugs must not kill the solve
-            return ToolResult(tool_call_id, _dump({"error": str(exc)}), True)
+            result = {"error": str(exc)}
+            failed = True
+        self._emit_activity("tool_result", {
+            **activity, "duration_ms": round((time.monotonic() - started) * 1000),
+            **tool_receipt(name, result, failed=failed),
+        })
+        return ToolResult(tool_call_id, _dump(result), failed)
 
     # ------------------------------------------------------------------
     # individual tools
@@ -2514,6 +2532,7 @@ class PlanToolExecutor:
             {
                 "moves": described,
                 "improved": improved,
+                "retained_best": quality <= self.best_quality,
                 "score": self.encode_quality(quality),
             },
         )

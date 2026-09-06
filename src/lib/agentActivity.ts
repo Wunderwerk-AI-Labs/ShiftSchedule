@@ -6,10 +6,53 @@ import type { AgentActivityData, AgentMoveItem } from "../api/client";
 export type AgentStage = "seed" | "improve" | "finalize";
 
 export type AgentFeedEntry =
-  | { type: "move"; key: string; timeMs: number; move: AgentMoveItem; improved: boolean }
+  | { type: "move"; key: string; timeMs: number; move: AgentMoveItem; improved: boolean; retainedBest?: boolean }
   | { type: "thought"; key: string; timeMs: number; text: string; reasoning: boolean }
   | { type: "rejected"; key: string; timeMs: number; count: number; reason: string }
-  | { type: "tools"; key: string; timeMs: number; label: string };
+  | { type: "tools"; key: string; timeMs: number; label: string; summary?: string; outcome?: string; durationMs?: number }
+  | { type: "notice"; key: string; timeMs: number; label: string; warning?: boolean };
+
+const ACTIVE_TOOL_LABELS: Record<string, string> = {
+  get_plan_overview: "Reviewing coverage and plan quality",
+  get_violations: "Checking scheduling rules",
+  list_open_slots: "Finding open positions",
+  list_candidates_for_slot: "Comparing eligible clinicians",
+  get_clinician_summary: "Reviewing a clinician's week",
+  get_ytd_progress: "Checking fairness across the year",
+  list_short_days: "Finding short workdays",
+  get_hours_overview: "Comparing weekly working hours",
+  get_day_schedule: "Reading the day's schedule",
+  get_day_priorities: "Ranking the day's staffing needs",
+  suggest_day_blocks: "Comparing contiguous work blocks",
+  suggest_rescue_moves: "Searching for swaps to fill gaps",
+  suggest_balance_moves: "Looking for a better workload balance",
+  repair_neighborhood: "Testing changes across nearby days",
+  analyze_bottlenecks: "Investigating staffing bottlenecks",
+  explain_unfilled: "Checking why positions remain open",
+  get_search_history: "Reviewing earlier checks",
+  apply_moves: "Checking and applying draft changes",
+  apply_proposal: "Applying a checked proposal and finding the next options",
+};
+
+export function describeActiveTool(tool?: string): string {
+  return ACTIVE_TOOL_LABELS[tool ?? ""] ?? "Checking a planning option";
+}
+
+/** Preserve context and row identities when older events leave the buffer.
+ * Older servers only send stage once; new servers repeat context on each event. */
+export function appendAgentEvent(events: AgentActivityData[], event: AgentActivityData): AgentActivityData[] {
+  const previous = events[events.length - 1];
+  return [...events.slice(-239), {
+    ...event,
+    sequence: event.sequence ?? (previous?.sequence ?? 0) + 1,
+    stage: event.stage ?? (event.iteration > 0 && previous?.stage !== "finalize" ? "improve" : previous?.stage ?? "seed"),
+  }];
+}
+
+export function formatActivityTime(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 /** Human wording for inspection tool calls shown in the live feed. */
 const TOOL_LABELS: Record<string, string> = {
@@ -34,7 +77,7 @@ export function describeToolUse(tools: string[] | undefined): string {
   const labels = Array.from(
     new Set(
       (tools ?? [])
-        .filter((name) => name !== "apply_moves")
+        .filter((name) => name !== "apply_moves" && name !== "apply_proposal")
         .map((name) => TOOL_LABELS[name] ?? name.replaceAll("_", " ")),
     ),
   );
@@ -49,24 +92,41 @@ export type AgentStatus = {
   /** True while the LLM is working on its next step (last signal was an
    * iteration tick with nothing after it yet). Drives the thinking shimmer. */
   thinking: boolean;
+  phaseLabel: string | null;
+  dayIndex: number | null;
+  totalDays: number | null;
+  planningDate: string | null;
+  currentAction: string;
+  actionStartedMs: number;
+  lastResult: string | null;
+  retrying: boolean;
   /** Chronological (newest LAST), capped to the most recent entries — new
    * rows append at the bottom so a reader's scroll position never jumps. */
   feed: AgentFeedEntry[];
 };
 
-const FEED_CAP = 30;
+const FEED_CAP = 100;
 
 export function deriveAgentStatus(events: AgentActivityData[]): AgentStatus {
   let stage: AgentStage = "seed";
   let iteration = 0;
   let maxIterations: number | null = null;
   let movesAccepted = 0;
+  let context: AgentActivityData | undefined;
+  let lastResult: string | null = null;
+  const activeTools = new Map<number, AgentActivityData>();
+  const detailedIterations = new Set(events.filter((e) => e.kind === "tool_start" || e.kind === "tool_result").map((e) => e.iteration));
   const feed: AgentFeedEntry[] = [];
 
   for (const [index, event] of events.entries()) {
-    if (event.kind === "stage" && event.stage) {
+    if (event.kind === "iteration" || event.kind === "phase" || event.kind === "stage") activeTools.clear();
+    const key = String(event.sequence ?? `${event.time_ms}-${index}`);
+    if (event.stage) {
       stage = event.stage;
+    } else if (event.iteration > 0 && stage === "seed") {
+      stage = "improve";
     }
+    if (event.phase_label) context = event;
     iteration = Math.max(iteration, event.iteration ?? 0);
     if (typeof event.max_iterations === "number") {
       maxIterations = event.max_iterations;
@@ -77,16 +137,17 @@ export function deriveAgentStatus(events: AgentActivityData[]): AgentStatus {
       for (const [moveIndex, move] of event.moves.entries()) {
         feed.push({
           type: "move",
-          key: `${index}-${moveIndex}`,
+          key: `${key}-${moveIndex}`,
           timeMs: event.time_ms,
           move,
           improved: event.improved ?? false,
+          retainedBest: event.retained_best,
         });
       }
     } else if (event.kind === "thought" && event.text) {
       feed.push({
         type: "thought",
-        key: `${index}`,
+        key,
         timeMs: event.time_ms,
         text: event.text,
         reasoning: event.reasoning === true,
@@ -94,21 +155,43 @@ export function deriveAgentStatus(events: AgentActivityData[]): AgentStatus {
     } else if (event.kind === "moves_rejected") {
       feed.push({
         type: "rejected",
-        key: `${index}`,
+        key,
         timeMs: event.time_ms,
         count: event.count ?? 0,
         reason: event.reason ?? "constraint conflict",
       });
-    } else if (event.kind === "tool_use") {
+    } else if (event.kind === "tool_start") {
+      activeTools.set(event.activity_id ?? index, event);
+    } else if (event.kind === "tool_result") {
+      activeTools.delete(event.activity_id ?? index);
+      const label = describeActiveTool(event.tool) + (event.dateISO ? ` · ${formatFeedDate(event.dateISO)}` : "");
+      lastResult = event.summary ?? "Check completed.";
+      feed.push({ type: "tools", key, timeMs: event.time_ms, label,
+        summary: event.summary, outcome: event.outcome, durationMs: event.duration_ms });
+    } else if (event.kind === "phase" && event.phase_label) {
+      feed.push({ type: "notice", key, timeMs: event.time_ms,
+        label: event.planning_date ? `Day ${event.day_index} of ${event.total_days} · ${formatFeedDate(event.planning_date)}` : event.phase_label });
+    } else if (event.kind === "retry") {
+      feed.push({ type: "notice", key, timeMs: event.time_ms, warning: true,
+        label: `Model request interrupted. Retrying${event.attempt ? ` (attempt ${event.attempt})` : ""}; the best draft is kept.` });
+    } else if (event.kind === "tool_use" && !detailedIterations.has(event.iteration)) {
       const label = describeToolUse(event.tools);
       if (label) {
-        feed.push({ type: "tools", key: `${index}`, timeMs: event.time_ms, label });
+        feed.push({ type: "tools", key, timeMs: event.time_ms, label });
       }
     }
   }
 
   const last = events[events.length - 1];
   const thinking = stage === "improve" && last?.kind === "iteration";
+  const activeTool = [...activeTools.values()].pop();
+  const retrying = last?.kind === "retry";
+  const currentAction = stage === "finalize" ? "Preparing the best plan for review"
+    : activeTool ? describeActiveTool(activeTool.tool) + (activeTool.dateISO ? ` · ${formatFeedDate(activeTool.dateISO)}` : "")
+    : retrying ? "Retrying the model request"
+    : thinking ? "Waiting for the model's next step"
+    : stage === "seed" ? "Preparing the initial draft"
+    : "Checking the next planning step";
 
   return {
     stage,
@@ -116,6 +199,14 @@ export function deriveAgentStatus(events: AgentActivityData[]): AgentStatus {
     maxIterations,
     movesAccepted,
     thinking,
+    phaseLabel: context?.phase_label ?? null,
+    dayIndex: context?.day_index ?? null,
+    totalDays: context?.total_days ?? null,
+    planningDate: context?.planning_date ?? null,
+    currentAction,
+    actionStartedMs: activeTool?.time_ms ?? last?.time_ms ?? 0,
+    lastResult,
+    retrying,
     feed: feed.slice(-FEED_CAP),
   };
 }
