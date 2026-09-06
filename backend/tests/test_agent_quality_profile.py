@@ -1,0 +1,84 @@
+"""Business-goal checks independent from a model's wording or tool order."""
+from backend.models import AppState, WorkPattern
+from backend.agent.quality import extra_metrics
+from backend.scoring import plan_stats
+from .conftest import make_app_state, make_assignment, make_clinician, make_template_slot
+from .test_agent_planning_workflow import executor, run, MON, TUE
+
+
+def test_explicit_two_day_pattern_changes_short_day_definition_consistently():
+    clinician = make_clinician("a", "Alice", working_hours_per_week=20)
+    clinician.workPattern = WorkPattern(daysPerWeek=2)
+    state = make_app_state(clinicians=[clinician], slots=[make_template_slot("half", start_time="08:00", end_time="12:00")])
+    ex = executor(state, [make_assignment("draft", "half", MON, "a", source="solver")])
+    assert ex._daily_target_minutes("a", MON) == 600
+    assert ex._daily_min_minutes("a", MON) == 300
+    assert plan_stats(ex.ctx, ex.best_assignments).short_days == 1
+    assert run(ex, "list_short_days")["short_days"]
+    restored = AppState.model_validate(state.model_dump())
+    assert restored.clinicians[0].workPattern.daysPerWeek == 2
+
+
+def test_balanced_profile_rewards_removing_a_long_day_without_losing_coverage():
+    state = make_app_state(clinicians=[make_clinician("a", "Alice", working_hours_per_week=40),
+                                       make_clinician("b", "Bob", working_hours_per_week=40)],
+                           slots=[make_template_slot("am", start_time="08:00", end_time="16:00"),
+                                  make_template_slot("pm", start_time="16:00", end_time="23:00")])
+    state.solverSettings["agentQualityProfile"] = "balanced"
+    ex = executor(state, [make_assignment("1", "am", MON, "a", source="solver"),
+                          make_assignment("2", "pm", MON, "a", source="solver")])
+    before = ex.quality_dict(ex.best_quality)
+    preview = run(ex, "apply_moves", dry_run=True, moves=[
+        {"action": "unassign", "slot_key": f"pm__{MON}", "clinicianId": "a"},
+        {"action": "assign", "slot_key": f"pm__{MON}", "clinicianId": "b"},
+    ])
+    assert before["uncomfortable_days"] == 1
+    assert preview["quality_after"]["uncomfortable_days"] == 0
+    assert preview["quality_after"]["open_required_slots"] == 0
+    assert preview["improves_best"]
+
+
+def test_structured_day_off_is_measured_without_becoming_a_hard_rule():
+    alice = make_clinician("a", "Alice", working_hours_per_week=40)
+    alice.workPattern = WorkPattern(preferredDaysOff=["mon"])
+    state = make_app_state(clinicians=[alice, make_clinician("b", "Bob", working_hours_per_week=40)])
+    state.solverSettings["agentQualityProfile"] = "balanced"
+    ex = executor(state)
+    assert run(ex, "apply_moves", moves=[{"action": "assign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "a"}])["applied"]
+    assert ex.quality_dict(ex.best_quality)["structured_wish_violations"] == 1
+    change = run(ex, "apply_moves", dry_run=True, moves=[
+        {"action": "unassign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "a"},
+        {"action": "assign", "slot_key": f"slot-a__mon__{MON}", "clinicianId": "b"},
+    ])
+    assert change["valid"] and change["improves_best"]
+    assert change["quality_after"]["structured_wish_violations"] == 0
+
+
+def test_duty_burden_penalizes_concentration_with_same_coverage():
+    state = make_app_state(clinicians=[make_clinician("a", "Alice", working_hours_per_week=40),
+                                       make_clinician("b", "Bob", working_hours_per_week=40)],
+                           slots=[make_template_slot("mon-night", start_time="20:00", end_time="23:00"),
+                                  make_template_slot("tue-night", col_band_id="col-tue-1", start_time="20:00", end_time="23:00")])
+    ex = executor(state, end=TUE)
+    concentrated = [make_assignment("1", "mon-night", MON, "a"), make_assignment("2", "tue-night", TUE, "a")]
+    shared = [concentrated[0], make_assignment("3", "tue-night", TUE, "b")]
+    assert extra_metrics(ex, shared)["duty_burden_penalty"] < extra_metrics(ex, concentrated)["duty_burden_penalty"]
+
+
+def test_default_profile_preserves_existing_quality_contract():
+    ex = executor()
+    assert ex.ctx.settings.agentQualityProfile == "classic"
+    assert len(ex.best_quality) == 6
+    assert "short_days" in ex.quality_dict(ex.best_quality)
+    assert not ex.ctx.settings.agentNeighborhoodSearch
+
+
+def test_balanced_suggestion_ranking_respects_structured_day_off():
+    alice = make_clinician("a", "Alice", working_hours_per_week=40)
+    alice.workPattern = WorkPattern(preferredDaysOff=["mon"])
+    state = make_app_state(clinicians=[alice, make_clinician("b", "Bob", working_hours_per_week=40)])
+    state.solverSettings["agentQualityProfile"] = "balanced"
+    ex = executor(state)
+    offers = run(ex, "suggest_day_blocks", dateISO=MON)["candidates"]
+    assert offers[0]["clinicianId"] == "Bob"
+    assert offers[0]["quality_after"]["structured_wish_violations"] == 0

@@ -196,7 +196,9 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    starting at that slot (adjacent open slots chained up to their
    preferred daily hours) — their "Anschlussverwendung". Pass slot_key
    instead only when you deliberately deviate from the given order.
-3. Choosing the candidate: they are PRE-SORTED — overloaded=true last,
+3. Choosing the candidate: they are PRE-SORTED. The balanced profile sorts
+   by its active quality_order; use the first candidate unless a concrete
+   admin wish or future scarcity justifies another. In classic: overloaded=true last,
    everyone whose block meets the daily minimum first, within that the
    preferred-working-time fit (window_fit=true before false), then
    lowest ytd_worked_pct (100 = on target, lower = behind). window_fit
@@ -216,31 +218,31 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    16 hours (e.g. a night duty stacked on a day duty) — a LAST resort:
    two people on two duties always beat one person on 24 hours, even when
    the fresh person's fairness numbers look worse.
-4. PIPELINE every following round in ONE message with two tool calls, in
-   this order: FIRST apply_moves with the WHOLE chosen block (all assigns
-   together — never just the single slot when a block was offered), SECOND
-   suggest_day_blocks (dateISO, no slot_key). The suggestion is computed
-   after your batch applied, so it is fresh — one round per placement.
-   TOOL-CALL EXAMPLE (two actual calls in ONE assistant response):
-   If the latest suggestion offers clinician Ada Lovelace a block [K1, K2],
-   your next response contains these calls in order, using the actual
-   returned names and slot keys instead of these placeholders:
-     apply_moves({"moves":[{"action":"assign","slot_key":"K1","clinicianId":"Ada Lovelace"},
-                            {"action":"assign","slot_key":"K2","clinicianId":"Ada Lovelace"}]})
-     suggest_day_blocks({"dateISO":"the current date"})
-   The harness executes them sequentially, so the second sees the first's
-   result. Submit both calls together; do not wait a separate model turn
-   to request the next suggestion. If multiple calls are unavailable,
-   apply the whole block first and request the next suggestion on the
-   following turn. Do not add prose restating candidates or the next action.
+4. Select the chosen candidate's proposal_id with apply_proposal. It applies
+   the WHOLE block, revalidates it, and returns the next fresh suggestions
+   in next.result. Use that result directly; no extra orientation call.
+   TOOL-CALL EXAMPLE: if the chosen candidate has proposal_id="proposal-17",
+   call apply_proposal({"proposal_id":"proposal-17"}). Always copy the
+   actual returned ID. A stale_proposal means the plan changed: request
+   fresh suggestions. already_applied means that earlier call succeeded.
+   When no proposal ID is present, use apply_moves with the WHOLE block
+   followed by suggest_day_blocks; custom swaps stay available as batches.
+   Do not add prose restating candidates or the next action.
 5. Repeat step 4 until suggest_day_blocks returns day_complete=true (every
    remaining open slot has eligible_count 0). If unfillable_slots remain,
-   call suggest_rescue_moves(dateISO) ONCE: it searches whether moving one
+   call suggest_rescue_moves(dateISO): it searches whether moving one
    of YOUR OWN earlier placements frees a qualified clinician for a stuck
    slot, with a substitute covering the vacated one, and returns
-   pre-validated 3-move batches. Apply ONE rescue batch per round, exactly
-   as given, then re-check via suggest_day_blocks. When rescue offers
-   nothing (truly_unfillable), move to the final review (step 6).
+   pre-validated 3-move batches. Select ONE proposal_id; its response
+   includes the next suggestions. If no proposal improves the plan and
+   next_cursor is present, pass it to suggest_rescue_moves with the same
+   dateISO until all pages are checked. After a plan change, start without
+   a cursor. A partial page can still contain usable checked proposals;
+   incomplete is never proof that the remaining slots are impossible.
+   no_rescue_found means only that this
+   shallow search found no repair. If repair_neighborhood is available,
+   use it once for a joint search across nearby days, then apply a proposed
+   improvement. Preserve its search limits in any explanation of gaps.
 6. FINAL REVIEW — when the day is complete (and any rescue is done), call
    suggest_balance_moves(dateISO): it checks the finished day the way a
    human re-reads a plan — is anyone on an over-long day while colleagues
@@ -252,10 +254,12 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    receiver_overshoot_hours trades a slightly-too-long day for a solved
    problem — take it when the problem is bigger than the trade (clearing
    a whole mini-stint is usually worth up to ~1h of overshoot; cosmetic
-   rebalancing is not). Apply ONE batch per round exactly as given,
-   pipelined with the next suggest_balance_moves call; when it offers
-   nothing more, write your final day summary (mentioning problems it
-   listed but could not fix).
+   rebalancing is not). Legality alone does not mean an improvement:
+   use quality_after and improves_best. Apply improving offers via
+   apply_proposal; next.result contains fresh balance options. A tie on
+   EVERY quality tier may serve an explicit wish. Skip worse offers;
+   never cycle through reversals. When no improving offer remains,
+   summarize unresolved problems and the search limits.
 
 Rules of engagement:
 - TRUST the tools' verdicts. eligible_count and the candidate lists are
@@ -292,7 +296,7 @@ Rules of engagement:
 
 Finish the day by replying WITHOUT tool calls ONLY when suggest_day_blocks
 reported day_complete=true (or every unfilled slot has eligible_count 0)
-AND the final review (suggest_balance_moves) has no offers left. Your final
+AND the final review (suggest_balance_moves) has no improving offers left. Your final
 reply: one short paragraph, at most 100 words — verified coverage, remaining
 gaps and the blocking reasons actually returned by tools, plus unresolved
 imbalance. A bounded search finding no repair is not a proof that no legal
@@ -313,14 +317,21 @@ every batch, so nothing you try can break the plan.
 THE PROCEDURE:
 1. The digest lists the remaining issues, worst first: open slots, then
    short days, then over-long days, then preferred-time misses. Work in
-   that order; skip cosmetic cases.
+   the active quality_order when assessing changes; skip cosmetic cases.
 2. Per issue day: suggest_balance_moves(dateISO) returns pre-validated
    transfers (clear mini-stints, even out uneven neighbours via
    extend_short_day, shorten over-long days) — apply ONE batch per round
-   EXACTLY as given, then re-query. suggest_rescue_moves(dateISO) cracks
+   through apply_proposal when improves_best=true; next.result contains fresh
+   options. Skip worse offers; a tie on every quality tier may serve an
+   explicit wish. Finish when bounded searches find no improvements; legal
+   offers alone are not a reason to keep cycling. Reuse current
+   search-memory entries instead of repeating a failed search unchanged.
+   suggest_rescue_moves(dateISO) cracks
    unfillable open slots; get_day_schedule shows any day in full;
    list_short_days precomputes fix options range-wide.
-3. Cross-day fixes are plain apply_moves batches (e.g. unassign a slot on
+3. When available, repair_neighborhood(dateISO) searches a checked joint
+   improvement across nearby days. explain_unfilled reports actual blockers
+   and search limits. Custom cross-day fixes are apply_moves batches (e.g. unassign a slot on
    one day, hand it to a colleague, place the freed person on the problem
    day) — batch the WHOLE swap in ONE call. A rejected batch returns the
    violations it would create: adjust, never retry identical moves.
@@ -358,9 +369,11 @@ THE PROCEDURE:
    DIFFERENT clinicians — most YTD-behind first; week_hours above
    contract_hours is legal up to week_hours_max. Mind that rest rules
    block the days around a duty for that person.
-3. PIPELINE: in ONE message, apply_moves with the chosen assignment FIRST,
-   then suggest_day_blocks (slot_key of the NEXT duty slot, single=true)
-   SECOND. One round per duty.
+3. Use apply_proposal with the chosen candidate's proposal_id. Its next
+   result describes the next duty (still single=true), or duty_complete.
+   If the next duty has no candidates, skip to the next duty in the digest.
+   Without a proposal ID, apply_moves then suggest_day_blocks with the
+   NEXT duty slot and single=true remains available.
 4. A duty slot whose suggestion returns no candidates is unfillable now —
    skip it, continue with the next.
 5. When every listed duty slot is staffed or skipped, reply WITHOUT tool
@@ -416,8 +429,8 @@ def build_duty_digest(
     lines.append(
         f"You have roughly {max_rounds} tool rounds. Procedure: "
         "suggest_day_blocks(slot_key, single=true) for the first duty, then "
-        "each round apply_moves + suggest_day_blocks for the next duty in "
-        "ONE message. Finish with a one-paragraph summary."
+        "each round apply_proposal(proposal_id). Use next.result for the "
+        "next duty. Finish with a one-paragraph summary."
     )
     return "\n".join(lines)
 
@@ -498,11 +511,10 @@ def build_day_digest(
     lines.append(
         f"You have roughly {max_rounds} tool rounds for this day (the day's "
         "time share may end it earlier). Follow the procedure: "
-        "get_day_priorities once, suggest_day_blocks (dateISO only) to get "
-        "the scarcest slot's candidates, then pipeline apply_moves(whole "
-        "block) + suggest_day_blocks together in ONE message each round "
-        "until day_complete=true, then the final review "
-        "(suggest_balance_moves) until it has no offers. Finish with a "
+        "suggest_day_blocks (dateISO only) to get candidates, then use "
+        "apply_proposal(proposal_id) and its next.result each round "
+        "until day_complete=true. Review rescue and balance suggestions, "
+        "apply checked improvements, and reuse current search results. Finish with a "
         "one-paragraph summary."
     )
     return "\n".join(lines)

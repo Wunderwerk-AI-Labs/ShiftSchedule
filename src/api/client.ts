@@ -51,6 +51,12 @@ export type Holiday = {
   name: string;
 };
 
+export type WorkPattern = {
+  daysPerWeek?: number;
+  dailyHours?: number;
+  preferredDaysOff?: Array<keyof PreferredWorkingTimes>;
+};
+
 export type Clinician = {
   id: string;
   name: string;
@@ -62,6 +68,7 @@ export type Clinician = {
   workingHoursToleranceHours?: number;
   /** Free-text wishes the AI planner reads as soft preferences (max 500 chars). */
   planningWishes?: string;
+  workPattern?: WorkPattern;
 };
 
 export type AssignmentSource = "manual" | "solver";
@@ -156,6 +163,8 @@ export type SolverSettings = {
   weightMinimumDailyHours?: number; // Penalize daily assignments shorter than derived minimum (default: 5)
   weightYtdBalance?: number; // Bias toward clinicians behind on YTD hours (default: 5)
   agentModel?: string; // Anthropic model id for the AI agent solver (default: server AGENT_MODEL)
+  agentQualityProfile?: "classic" | "balanced";
+  agentNeighborhoodSearch?: boolean;
   agentInstructions?: string; // Free-text admin guidance for the AI agent (undefined = built-in default, "" = none)
 };
 

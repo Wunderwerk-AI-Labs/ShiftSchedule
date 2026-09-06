@@ -14,7 +14,7 @@ import type {
   WeeklyTemplateLocation,
   WorkplaceRow,
 } from "../api/client";
-import { normalizePreferredWorkingTimes } from "./clinicianPreferences";
+import { normalizePreferredWorkingTimes, normalizeWorkPattern } from "./clinicianPreferences";
 import { DAY_TYPES, getDayType } from "./dayTypes";
 
 export const SHIFT_ROW_SEPARATOR = "::";
@@ -805,7 +805,9 @@ export function normalizeAppState(state: AppState): { state: AppState; changed: 
     if (planningWishes !== clinician.planningWishes) {
       changed = true;
     }
-    return { ...clinician, preferredWorkingTimes, planningWishes };
+    const workPattern = normalizeWorkPattern(clinician.workPattern);
+    if (JSON.stringify(workPattern) !== JSON.stringify(clinician.workPattern)) changed = true;
+    return { ...clinician, preferredWorkingTimes, planningWishes, workPattern };
   });
 
   let classIndex = 0;

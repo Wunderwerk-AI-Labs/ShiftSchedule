@@ -4139,6 +4139,10 @@ export default function WeeklySchedulePage({
             ),
           );
         }}
+        onUpdateWorkPattern={(clinicianId, workPattern) => {
+          setClinicians(prev => prev.map(clinician => clinician.id === clinicianId
+            ? { ...clinician, workPattern } : clinician));
+        }}
         onUpdatePlanningWishes={(clinicianId, planningWishes) => {
           setClinicians((prev) =>
             prev.map((clinician) =>

@@ -15,6 +15,7 @@ the seed), with an explanatory note.
 from __future__ import annotations
 
 import time
+import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..heuristic.solver_v2 import heuristic_solve_range_v2
@@ -24,6 +25,7 @@ from ..scoring import build_scoring_context, open_slots, plan_stats
 from ..validation import validate_solver_rules
 from .config import AgentConfig
 from .progress import ProgressGuard
+from .quality import extra_metrics
 from .prompts import (
     DAY_SYSTEM_PROMPT,
     DEFAULT_AGENT_INSTRUCTIONS,
@@ -173,13 +175,16 @@ DAY_TOOL_SPECS = [
 ]
 
 
-def _quality_improvement_note(seed_q, best_q) -> str:
+def _quality_improvement_note(seed_q, best_q, fields=None) -> str:
     """Human-readable summary of which quality tiers the agent improved.
 
     Mirrors the lexicographic tuple in ``PlanToolExecutor._quality``; only
     components that actually changed are mentioned.
     """
     parts: List[str] = []
+    if len(seed_q) != 6 and fields:
+        return ", ".join(f"{field.replace('_', ' ')} {old} -> {new}"
+                         for field, old, new in zip(fields, seed_q, best_q) if old != new)
     for label, idx in (
         ("hard-rule violations", 0),
         ("open required slots", 1),
@@ -381,6 +386,7 @@ def agent_solve_range(
         seed_assignments,
         on_improvement=emit_solution,
         on_activity=emit_agent,
+        reference_assignments=replaced,
     )
     # The harness checks the wall clock only BETWEEN LLM rounds; expensive
     # tool loops (rescue/balance gate validations) check this themselves so
@@ -388,6 +394,10 @@ def agent_solve_range(
     # in production: a run overshot its 600s budget inside a tool until the
     # HTTP connection was cut and the result was lost).
     executor.wall_deadline = deadline
+    # The joint search remains an explicit experimental setting. The model
+    # cannot accidentally activate it by seeing an unused tool definition.
+    day_tools = [tool for tool in DAY_TOOL_SPECS
+                 if tool.name != "repair_neighborhood" or ctx.settings.agentNeighborhoodSearch]
     emit_solution(executor.seed_score, seed_assignments)
     # Computed before finalize() can run: the provider-init failure path
     # finalizes before the LLM phase would otherwise compute these.
@@ -574,6 +584,7 @@ def agent_solve_range(
             "short_days": short_days,
             "overlong_days": overlong_days,
             "outside_preferred_times": outside_preferred,
+            "quality_metrics": extra_metrics(executor, best),
         }
         if (
             not open_entries
@@ -583,7 +594,7 @@ def agent_solve_range(
         ):
             return (
                 [
-                    "No unresolved issues: every required slot is filled, "
+                    "No unresolved issues in measured coverage/day lengths: every required slot is filled, "
                     "no short days, no over-long days, all preferred "
                     "working times respected."
                 ],
@@ -675,7 +686,7 @@ def agent_solve_range(
         if executor.best_quality < executor.seed_quality:
             notes.append(
                 "Plan improved over the seed: "
-                + _quality_improvement_note(executor.seed_quality, executor.best_quality)
+                + _quality_improvement_note(executor.seed_quality, executor.best_quality, executor.quality_fields)
                 + "."
             )
         elif executor.moves_accepted:
@@ -697,6 +708,11 @@ def agent_solve_range(
         # and the run inbox show it without digging through thoughts.
         unsolved_notes, unsolved = _unsolved_overview(best)
         notes.extend(unsolved_notes)
+        metrics = unsolved["quality_metrics"]
+        if metrics["structured_wish_violations"]:
+            notes.append(f"Preferred days off not met: {metrics['structured_wish_violations']} clinician-day(s).")
+        if metrics["free_text_wishes_require_review"]:
+            notes.append("Free-text wishes were provided to the agent; their fulfillment is not automatically verified.")
         return {
             "startISO": ctx.start_iso,
             "endISO": ctx.end_iso,
@@ -741,6 +757,11 @@ def agent_solve_range(
                     "moves": executor.accepted_move_log[:200],
                     # Structured closing report of what stays unsolved.
                     "unsolved": unsolved,
+                    "final_day_checks": run_meta.get("final_day_checks", {}),
+                    "quality_profile": ctx.settings.agentQualityProfile,
+                    "quality_order": list(executor.quality_fields),
+                    "search_history": executor.workflow.summary(),
+                    "search_history_matches_returned_plan": set(executor.current) == {(a.rowId, a.dateISO, a.clinicianId) for a in best},
                     # Diagnostics for the copyable run log (real names).
                     **_log_extras(best),
                 },
@@ -823,6 +844,15 @@ def agent_solve_range(
         if wishes_lines
         else ""
     )
+    pattern_lines = [f"- {executor._alias(c.id)}: {c.workPattern.model_dump(exclude_none=True)}"
+                     for c in state.clinicians if c.workPattern]
+    wishes_block += "\n\nACTIVE QUALITY PROFILE: " + ctx.settings.agentQualityProfile
+    wishes_block += ". Use the tool's quality_order for comparisons; earlier fields dominate later fields."
+    if ctx.settings.agentQualityProfile == "balanced":
+        wishes_block += " Ordered fields (all minimized): " + ", ".join(executor.quality_fields) + "."
+    if pattern_lines:
+        wishes_block += "\nEXPLICIT SOFT WORK PATTERNS (daysPerWeek is an average workload pattern, not a hard quota):\n" + "\n".join(pattern_lines)
+    wishes_block += "\nFree-text wishes still require interpretation; do not claim they were mechanically verified."
 
     def absorb_response(response) -> None:
         """Token accounting + thought/summary feed emission — identical for
@@ -855,7 +885,7 @@ def agent_solve_range(
             emit_agent("thought", {"text": _feed_text(final_summary)})
 
     def stalled(messages, guard, notes):
-        action = guard.observe(tuple(sorted(executor.current)))
+        action = guard.observe((tuple(sorted(executor.current)), executor.workflow.search_counter))
         if action == "nudge":
             messages.append(ChatMessage(role="user", content=(
                 "Several rounds made no new plan. Do not repeat rejected moves or stale inspections. "
@@ -884,7 +914,8 @@ def agent_solve_range(
         consecutive_failures = 0
         # Preserve a small share for range-wide fixes even when day planning
         # consumes every round it is offered.
-        review_reserve = min(20, max(2, config.max_iterations // 10))
+        review_cap = min(60, max(20, total_days*4))
+        review_reserve = min(review_cap, max(2, config.max_iterations // 10))
         construction_limit = config.max_iterations - review_reserve
 
         # ---- Duty pre-pass ------------------------------------------------
@@ -943,7 +974,7 @@ def agent_solve_range(
                 + wishes_block
             )
             messages = [ChatMessage(role="user", content=digest)]
-            guard = ProgressGuard(tuple(sorted(executor.current)))
+            guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
             truncation_nudges = 0
             on_progress(
                 "phase",
@@ -985,7 +1016,7 @@ def agent_solve_range(
                     provider,
                     system=DUTY_SYSTEM_PROMPT,
                     messages=messages,
-                    tools=DAY_TOOL_SPECS,
+                    tools=day_tools,
                     compute_timeout=duty_call_timeout,
                     deadline=deadline,
                     cancel_event=cancel_event,
@@ -1198,7 +1229,7 @@ def agent_solve_range(
                 distribute_all=not ctx.only_fill_required,
             ) + admin_block + wishes_block
             messages: List[ChatMessage] = [ChatMessage(role="user", content=digest)]
-            guard = ProgressGuard(tuple(sorted(executor.current)))
+            guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
             completion_nudges = 0
             day_completed = False
             truncation_nudges = 0
@@ -1235,7 +1266,7 @@ def agent_solve_range(
                     provider,
                     system=DAY_SYSTEM_PROMPT,
                     messages=messages,
-                    tools=DAY_TOOL_SPECS,
+                    tools=day_tools,
                     compute_timeout=day_call_timeout,
                     deadline=deadline,
                     cancel_event=cancel_event,
@@ -1346,7 +1377,18 @@ def agent_solve_range(
                         f"({pending['clinicianId']}). Call suggest_day_blocks for that slot and continue planning."
                     )))
                     continue
-                day_completed = pending is None
+                review = executor.workflow.review_day(date_iso) if pending is None else None
+                if review and review["proposals"] and completion_nudges < 2:
+                    completion_nudges += 1
+                    messages.append(ChatMessage(role="assistant", content=response.replay_text or "(day ended)", raw_content=response.raw_content))
+                    messages.append(ChatMessage(role="user", content=(
+                        "The required day review found a checked improvement. Use apply_proposal with one of these IDs: "
+                        + ", ".join(review["proposals"]) + ". Use the returned next suggestions."
+                    )))
+                    continue
+                day_completed = pending is None and bool(review and review["complete"])
+                if review and not review["complete"]:
+                    extra_notes.append(f"Day {date_iso} review incomplete: {review['reason']}.")
                 if pending:
                     extra_notes.append(f"Day {date_iso} ended without verified completion; review its open slots.")
                 break
@@ -1388,7 +1430,7 @@ def agent_solve_range(
         # day's slots (or only visible in the week's total) survived every
         # per-day pass.
         # --------------------------------------------------------------
-        review_rounds = min(20, config.max_iterations - iterations_done)
+        review_rounds = min(review_cap, config.max_iterations - iterations_done)
         review_time_left = deadline - time.time()
         if (
             not aborted
@@ -1398,6 +1440,11 @@ def agent_solve_range(
             and review_time_left > max(DEADLINE_HEADROOM_SECONDS, 30.0)
         ):
             moves_before_review = executor.moves_accepted
+            best_state = {(a.rowId, a.dateISO, a.clinicianId): a for a in executor.best_assignments}
+            if executor.current != best_state:
+                executor.current = best_state
+                executor.workflow.changed()
+                extra_notes.append("Final review starts from the best verified snapshot.")
             unsolved_lines, _ = _unsolved_overview(executor.best_assignments)
             review_digest = (
                 build_review_digest(
@@ -1405,9 +1452,22 @@ def agent_solve_range(
                 )
                 + admin_block
                 + wishes_block
+                + "\nCURRENT SEARCH MEMORY (reuse current results; older revisions are context only):\n"
+                + json.dumps(executor.workflow.summary(), ensure_ascii=False)
+            )
+            review_idle_limit = min(12, max(4, len(ctx.target_day_isos) * 2))
+            review_digest += (
+                f"\nFinal review allows at most {review_idle_limit} consecutive tool rounds "
+                "without a new best plan. Prioritize a specific unresolved issue; "
+                "reuse established facts and batch independent read-only queries. "
+                "A fresh inspection alone does not improve the calendar."
             )
             messages = [ChatMessage(role="user", content=review_digest)]
-            guard = ProgressGuard(tuple(sorted(executor.current)))
+            # Fresh searches are useful during construction, but they must not
+            # indefinitely extend a final review that never improves the plan.
+            guard = ProgressGuard(tuple(sorted(best_state)),
+                                  nudge_after=review_idle_limit - 1,
+                                  stop_after=review_idle_limit)
             on_progress(
                 "phase",
                 {
@@ -1439,7 +1499,7 @@ def agent_solve_range(
                     provider,
                     system=REVIEW_SYSTEM_PROMPT,
                     messages=messages,
-                    tools=DAY_TOOL_SPECS,
+                    tools=day_tools,
                     compute_timeout=review_call_timeout,
                     deadline=deadline,
                     cancel_event=cancel_event,
@@ -1471,7 +1531,21 @@ def agent_solve_range(
                             ],
                         )
                     )
-                    if stalled(messages, guard, extra_notes):
+                    best_key = tuple(sorted((a.rowId, a.dateISO, a.clinicianId)
+                                            for a in executor.best_assignments))
+                    review_action = guard.observe(best_key)
+                    if review_action == "nudge":
+                        messages.append(ChatMessage(role="user", content=(
+                            "Final review has not produced a new best plan. You have one "
+                            "tool round left unless you improve the retained plan. Apply a "
+                            "checked improvement, test one concrete atomic proposal, or finish "
+                            "with the known limits. Do not repeat general inspections."
+                        )))
+                    if review_action == "stop":
+                        extra_notes.append(
+                            f"Final range review stopped after {review_idle_limit} tool rounds "
+                            "without a new best plan; unsearched improvements may remain."
+                        )
                         break
                     continue
                 break  # end_turn: review finished
@@ -1479,6 +1553,25 @@ def agent_solve_range(
             extra_notes.append(
                 f"Final range review: {review_changes} additional change(s)."
             )
+
+        returned_state = {(a.rowId, a.dateISO, a.clinicianId): a for a in executor.best_assignments}
+        if executor.current != returned_state:
+            executor.current = returned_state
+            executor.workflow.changed()
+        final_checks = {}
+        for reviewed_day in list(run_meta["days_planned"]):
+            if cancel_event.is_set():
+                final_checks[reviewed_day] = {"complete": False, "reason": "Cancelled before final verification"}
+            elif executor.next_fillable_slot(reviewed_day) is not None:
+                final_checks[reviewed_day] = {"complete": False, "reason": "Direct placements remain or inspection budget exhausted"}
+            else:
+                final_checks[reviewed_day] = executor.workflow.review_day(reviewed_day)
+            if not final_checks[reviewed_day]["complete"]:
+                run_meta["days_planned"].remove(reviewed_day)
+                run_meta["days_incomplete"].append(reviewed_day)
+        if any(not check["complete"] for check in final_checks.values()):
+            extra_notes.append("Some earlier day reviews no longer confirm completion of the returned plan; see incomplete days.")
+        run_meta["final_day_checks"] = final_checks
 
         if (
             iterations_done >= config.max_iterations
@@ -1521,7 +1614,7 @@ def agent_solve_range(
     digest += admin_block + wishes_block
     messages: List[ChatMessage] = [ChatMessage(role="user", content=digest)]
     extra_notes: List[str] = []
-    guard = ProgressGuard(tuple(sorted(executor.current)))
+    guard = ProgressGuard((tuple(sorted(executor.current)), executor.workflow.search_counter))
     truncation_nudges = 0
     emit_agent("stage", {"stage": "improve"})
 

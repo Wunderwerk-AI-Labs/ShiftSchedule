@@ -999,6 +999,32 @@ export default function SettingsView({
                 <div className="text-xs text-rose-600 dark:text-rose-400">{agentSettingsError}</div>
               ) : null}
             </div>
+            <div className="space-y-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
+              <label className="flex flex-wrap items-center gap-3 text-sm font-semibold">
+                Planning quality profile
+                <select value={solverSettings.agentQualityProfile ?? "classic"}
+                  onChange={event => onChangeSolverSettings({ ...solverSettings,
+                    agentQualityProfile: event.target.value as "classic" | "balanced" })}
+                  className="rounded-lg border border-slate-200 bg-transparent px-3 py-2 dark:border-slate-700">
+                  <option value="classic">Classic</option>
+                  <option value="balanced">Balanced (preview)</option>
+                </select>
+              </label>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Both prioritize safe coverage. Balanced also scores section priority, short and long days,
+                preferred days off, recent duty distribution and changes to existing assignments.
+                The same safety rules apply to both profiles.
+              </p>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={solverSettings.agentNeighborhoodSearch ?? false}
+                  onChange={event => onChangeSolverSettings({ ...solverSettings,
+                    agentNeighborhoodSearch: event.target.checked })} />
+                Try extended swaps across nearby days (experimental)
+              </label>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Searches up to three days together to repair gaps. May use more planning time.
+              </p>
+            </div>
             <div className="flex flex-col gap-2 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>

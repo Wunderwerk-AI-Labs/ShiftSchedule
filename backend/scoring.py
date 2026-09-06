@@ -52,6 +52,7 @@ from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from .models import AppState, Assignment, SolverSettings
+from .planning_preferences import daily_min_minutes
 from .solver import (
     EXTRA_ASSIGNMENTS_PER_SLOT_DISTRIBUTE_ALL,
     _build_slot_contexts_and_intervals,
@@ -153,6 +154,7 @@ class ScoringContext:
             raise ValueError("Invalid endISO")
 
         self.state = state
+        self.clinicians_by_id = {c.id: c for c in state.clinicians}
         self.start_iso = range_start.isoformat()
         self.end_iso = range_end.isoformat()
         self.only_fill_required = only_fill_required
@@ -584,11 +586,9 @@ def plan_stats(ctx: ScoringContext, new_assignments: List[Assignment]) -> PlanSt
         if total_minutes <= 0:
             continue
         window = ctx.window_by_clinician_date.get((cid, date_iso))
-        if window is not None:
-            min_minutes = max(1, (window[2] - window[1]) // 2)
-        elif cid in ctx.contract_hours:
-            min_minutes = max(1, int(round(ctx.contract_hours[cid] * 60 / 5)) // 2)
-        else:
+        clinician = ctx.clinicians_by_id.get(cid)
+        min_minutes = daily_min_minutes(clinician, window) if clinician else None
+        if min_minutes is None:
             continue
         if total_minutes < min_minutes:
             short_days += 1
