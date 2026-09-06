@@ -548,3 +548,11 @@ assignment gate rejected the same move. The v1.54 correction uses the same
 gate for both and includes a regression test. The six model comparisons use
 the unchanged deployed tools; the correction is verified separately against
 the captured fixture cases and the backend test suite.
+
+v1.54 also adopts the concrete two-call pipeline example, skips the duplicate
+priority lookup, and asks for short, evidence-based closing summaries. The final
+cross-day review remains intact. The historical variant is preserved at
+`3d9fa0c`; on v1.54, `focused` adds only the remaining experimental quality
+guidance to the current production prompt. Source hashes distinguish these
+experiments. The final release combination has not been timed in a new model
+comparison; the historical speed measurements are not a release guarantee.

@@ -60,14 +60,19 @@ Do not add prose restating candidate lists or narrating the next action.
 def prompt_variant(name):
     day, review = harness.DAY_SYSTEM_PROMPT, harness.REVIEW_SYSTEM_PROMPT
     if name == "focused":
-        begin = day.index("1. get_day_priorities ONCE")
-        end = day.index("2. suggest_day_blocks", begin)
-        day = day[:begin] + (
-            "1. The initial digest already lists this day's priorities. Start\n"
-            "   directly with step 2; do not spend an extra orientation round\n"
-            "   re-reading those same priorities.\n"
-        ) + day[end:]
-        day += "\n" + PIPELINE_GUIDANCE + QUALITY_GUIDANCE
+        # v1.54 promotes the pipeline example and skips duplicate orientation.
+        # Keep this evaluator usable with both old and updated deployments.
+        if "1. get_day_priorities ONCE" in day:
+            begin = day.index("1. get_day_priorities ONCE")
+            end = day.index("2. suggest_day_blocks", begin)
+            day = day[:begin] + (
+                "1. The initial digest already lists this day's priorities. Start\n"
+                "   directly with step 2; do not spend an extra orientation round\n"
+                "   re-reading those same priorities.\n"
+            ) + day[end:]
+        if "TOOL-CALL EXAMPLE" not in day:
+            day += "\n" + PIPELINE_GUIDANCE
+        day += "\n" + QUALITY_GUIDANCE
         review += "\n" + QUALITY_GUIDANCE
     return day, review
 

@@ -49,6 +49,10 @@ Die Kennzahlen sind nicht durchgehend besser. Beispielsweise sinkt im ersten Nor
 
 Die Versuche decken einzelne normale und stark belastete Tage ab. Sie belegen weder die optimale Besetzung der Engpassvorlage noch eine Verbesserung bei kompletten Wochen, Bereitschaftsketten oder monatsweiter Fairness. Für eine generelle Umstellung sollte nach der Werkzeugkorrektur ein Vergleich über mehrere Tage folgen.
 
-**Vorbereitete Änderungen**
+**Auswahl für v1.54**
 
-Die isolierte Testmöglichkeit, die genaue Prompt-Variante und die kleine Kandidatenkorrektur liegen auf [codex/qwen-prompt-evaluation](https://github.com/Wunderwerk-Official/ShiftSchedule/tree/codex/qwen-prompt-evaluation). Die Korrektur ist als eigener Commit `9d511d5` getrennt vom Testaufbau vorbereitet. Für ihre spätere Auslieferung ist v1.54 vorgesehen. `main` und die gespeicherten Produktivprompts wurden durch diese Tests nicht verändert.
+Aus den Ergebnissen werden drei begrenzte Änderungen übernommen: die einheitliche Kandidatenprüfung, das konkrete Zwei-Werkzeug-Beispiel ohne doppelte Prioritätenabfrage und kurze, belegbare Schlussberichte. Die Prüfung über Tagesgrenzen hinweg bleibt erhalten. Eine strukturierte Übergabe früherer Reparaturversuche und zusätzliche verpflichtende Vorabprüfungen werden vorerst nicht übernommen; deren Nutzen ist noch nicht gemessen. Die endgültige Kombination wurde nicht erneut mit dem Modell verglichen, deshalb sind die oben gemessenen Zeiten keine zugesicherte Beschleunigung von v1.54.
+
+Die historische Testvariante ist im [Versuchsstand 3d9fa0c](https://github.com/Wunderwerk-Official/ShiftSchedule/blob/3d9fa0c/backend/arena/prompt_eval.py) festgehalten. Die Kandidatenkorrektur ist als eigener Commit `9d511d5` getrennt vom Testaufbau vorbereitet. Der Evaluator bleibt auch mit dem neuen Produktivprompt verwendbar: Ab v1.54 vergleicht `focused` die zusätzlichen Qualitätsanweisungen mit dem dann aktuellen Standard; er fügt das bereits übernommene Werkzeugbeispiel nicht doppelt hinzu. Die Quelltext-Prüfsummen in den Protokollen kennzeichnen diesen Unterschied.
+
+Die sechs Modelltests selbst haben weder `main` noch gespeicherte Produktivprompts oder Kalender verändert. Die ausgewählten Änderungen werden anschließend als v1.54 ausgeliefert. Nach den abschließenden Prompt-Änderungen bestehen alle 121 gezielt geprüften Tests für Werkzeuge, Planungssteuerung, sichere Übernahme und den Evaluator.
