@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentActivityData } from "../api/client";
-import { deriveAgentStatus, describeToolUse, formatFeedDate } from "./agentActivity";
+import { appendAgentEvent, deriveAgentStatus, describeToolUse, formatFeedDate } from "./agentActivity";
 
 const base = { max_iterations: 20, moves_accepted: 0, time_ms: 0 };
 
@@ -82,14 +82,59 @@ describe("deriveAgentStatus", () => {
   });
 
   it("caps the feed length to the most recent entries", () => {
-    const events = Array.from({ length: 60 }, (_, i) =>
+    const events = Array.from({ length: 130 }, (_, i) =>
       event({ kind: "thought", text: `t${i}`, time_ms: i }),
     );
     const status = deriveAgentStatus(events);
-    expect(status.feed).toHaveLength(30);
+    expect(status.feed).toHaveLength(100);
     // Newest at the bottom, oldest surviving entry first
     expect(status.feed[0]).toMatchObject({ text: "t30" });
-    expect(status.feed[29]).toMatchObject({ text: "t59" });
+    expect(status.feed[99]).toMatchObject({ text: "t129" });
+  });
+
+  it("keeps stage and row identities after hundreds of events from an older server", () => {
+    let events = appendAgentEvent([], event({ kind: "stage", stage: "improve" }));
+    for (let i = 0; i < 500; i++) events = appendAgentEvent(events, event({ kind: "thought", text: `t${i}`, iteration: i }));
+    const before = deriveAgentStatus(events);
+    events = appendAgentEvent(events, event({ kind: "iteration", iteration: 501, time_ms: 120000 }));
+    const after = deriveAgentStatus(events);
+    expect(events).toHaveLength(240);
+    expect(after.stage).toBe("improve");
+    expect(after.thinking).toBe(true);
+    expect(after.actionStartedMs).toBe(120000);
+    expect(after.feed.at(-1)?.key).toBe(before.feed.at(-1)?.key);
+  });
+
+  it("shows a nested search while it runs, then returns to its parent operation", () => {
+    const events = [
+      event({ kind: "tool_start", tool: "apply_proposal", activity_id: 1, iteration: 3, time_ms: 1000 }),
+      event({ kind: "tool_start", tool: "suggest_day_blocks", activity_id: 2, time_ms: 2000 }),
+    ];
+    expect(deriveAgentStatus(events).currentAction).toMatch(/Comparing contiguous/);
+    events.push(event({ kind: "tool_result", tool: "suggest_day_blocks", activity_id: 2, summary: "More options remain unchecked", outcome: "warning" }));
+    expect(deriveAgentStatus(events).currentAction).toMatch(/Applying a checked proposal/);
+    events.push(event({ kind: "tool_result", tool: "apply_proposal", activity_id: 1 }));
+    expect(deriveAgentStatus(events).currentAction).toBe("Checking the next planning step");
+    expect(deriveAgentStatus(events).feed[0]).toMatchObject({ outcome: "warning", summary: "More options remain unchecked" });
+  });
+
+  it("restores planning context from a single event after reconnect and shows retries", () => {
+    const status = deriveAgentStatus([event({ kind: "retry", stage: "improve", attempt: 2,
+      phase_label: "Build the daily plan", planning_date: "2026-01-06", day_index: 2, total_days: 5 })]);
+    expect(status.currentAction).toBe("Retrying the model request");
+    expect(status.dayIndex).toBe(2);
+    expect(status.planningDate).toBe("2026-01-06");
+    expect(status.feed[0]).toMatchObject({ type: "notice", warning: true });
+  });
+
+  it("shows final review tool receipts without duplicate legacy batch rows", () => {
+    const status = deriveAgentStatus([
+      event({ kind: "tool_start", tool: "suggest_balance_moves", activity_id: 1, iteration: 4 }),
+      event({ kind: "tool_result", tool: "suggest_balance_moves", activity_id: 1, iteration: 4, summary: "No option found in this search." }),
+      event({ kind: "tool_use", tools: ["suggest_balance_moves"], iteration: 4 }),
+    ]);
+    expect(status.feed).toHaveLength(1);
+    expect(status.lastResult).toBe("No option found in this search.");
   });
 });
 

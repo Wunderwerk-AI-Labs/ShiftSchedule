@@ -328,6 +328,9 @@ def test_agent_activity_events_flow_through_progress():
     assert ("stage", "improve") in [(e["kind"], e.get("stage")) for e in agent_events]
     assert "iteration" in kinds
     assert "thought" in kinds
+    assert kinds.index("tool_start") < kinds.index("moves_applied") < kinds.index("tool_result")
+    assert [e["sequence"] for e in agent_events] == list(range(1, len(agent_events) + 1))
+    assert all(e["stage"] == "improve" for e in agent_events if e["kind"] == "tool_start")
     applied = [e for e in agent_events if e["kind"] == "moves_applied"]
     assert applied and applied[0]["moves"][0]["action"] == "assign"
     # The move description carries the real clinician name for the UI
@@ -670,13 +673,18 @@ def test_day_by_day_runs_one_conversation_per_day():
     provider = CapturingProvider(script)
     payload = _payload(endISO=TUE)
     payload.agent_strategy = "day_by_day"
+    progress = ProgressRecorder()
     result = agent_solve_range(
-        payload, state, MockCancelEvent(), ProgressRecorder(), time.time(),
+        payload, state, MockCancelEvent(), progress, time.time(),
         provider=provider, config=_config(),
     )
     agent = result["debugInfo"]["agent"]
     assert agent["strategy"] == "day_by_day"
     assert agent["moves_accepted"] == 2
+    live = [data for kind, data in progress.events if kind == "agent"]
+    second_day = next(e for e in live if e["kind"] == "iteration" and e.get("planning_date") == TUE)
+    assert second_day["day_index"] == 2 and second_day["total_days"] == 2
+    assert any(e.get("phase_label") == "Verify the final plan and remaining gaps" for e in live)
     assert {(a["rowId"], a["clinicianId"]) for a in result["assignments"]} == {
         ("slot-a__mon", "clin-1"),
         ("slot-b__tue", "clin-2"),

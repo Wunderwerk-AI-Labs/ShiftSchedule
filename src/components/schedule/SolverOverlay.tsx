@@ -39,6 +39,7 @@ type SolverOverlayProps = {
   solverSettings?: SolverSettings; // Solver settings for on-call rest tracking
   solverMode?: SolverMode; // Which solver runs (drives the agent activity panel)
   agentEvents?: AgentActivityData[]; // Live agent activity (solver_mode "agent")
+  liveConnected?: boolean;
 };
 
 const formatDuration = (valueMs: number) => {
@@ -701,6 +702,7 @@ export default function SolverOverlay({
   solverSettings,
   solverMode,
   agentEvents = [],
+  liveConnected = true,
 }: SolverOverlayProps) {
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [calendarContainer, setCalendarContainer] = useState<HTMLElement | null>(null);
@@ -829,13 +831,13 @@ export default function SolverOverlay({
       {/* Content panel. max-w-3xl on wide viewports (so the live chart can
           use ~700px and the modal stops looking stranded), mx-4 so on narrow
           viewports the modal still keeps a 1rem side-gutter. */}
-      <div className="relative z-10 mx-4 flex max-h-[90%] w-auto max-w-3xl flex-col items-center gap-4 overflow-y-auto rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+      <div className="relative z-10 mx-3 flex max-h-[90%] w-full max-w-3xl flex-col items-center gap-3 overflow-y-auto rounded-2xl border border-slate-200 bg-white px-3 py-4 shadow-2xl sm:mx-4 sm:px-6 sm:py-5 dark:border-slate-700 dark:bg-slate-900">
         {/* Header: title with elapsed/total time inline, then date range + subtitle */}
         <div
           className="flex flex-col items-center gap-1"
           role="progressbar"
           aria-valuenow={
-            totalAllowedMs
+            totalAllowedMs && solverMode !== "agent"
               ? Math.round(Math.min(1, elapsedMs / totalAllowedMs) * 100)
               : undefined
           }
@@ -863,15 +865,14 @@ export default function SolverOverlay({
             </p>
           )}
           <p className="text-center text-xs text-slate-500 dark:text-slate-400">
-            The run works on the server and keeps improving the longer you
-            wait — you can send it to the background and keep using the
-            calendar.
+            Planning continues on the server. The best draft is kept for review;
+            your calendar changes only when you apply it.
           </p>
         </div>
 
         {/* Action buttons — placed above the phase/chart so they stay visible
             without scrolling as the chart fills with live solutions. */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           {/* Details button - only shown when solutions exist */}
           {liveSolutions.some((solution) => (solution.assignments?.length ?? 0) > 0) && (
             <button
@@ -930,14 +931,17 @@ export default function SolverOverlay({
         )}
 
         {/* Agent live activity: stage stepper, iteration progress, move feed */}
-        {solverMode === "agent" && <AgentActivityPanel events={agentEvents} />}
+        {solverMode === "agent" && <AgentActivityPanel events={agentEvents} elapsedMs={elapsedMs} currentPhase={currentPhase} liveConnected={liveConnected} />}
 
         {/* Live constraint fulfilment for the current best solution */}
         {liveStats && (
-          <ConstraintPulse
-            stats={liveStats}
-            onCallRestEnabled={solverSettings?.onCallRestEnabled ?? false}
-          />
+          <div className="w-full max-w-xl">
+            {solverMode === "agent" && <p className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">Best saved draft</p>}
+            <ConstraintPulse
+              stats={liveStats}
+              onCallRestEnabled={solverSettings?.onCallRestEnabled ?? false}
+            />
+          </div>
         )}
 
         {/* Live solutions chart. Agent runs work on a strict priority ladder,

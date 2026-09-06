@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { appendAgentEvent } from "../lib/agentActivity";
 import ClinicianEditModal from "../components/schedule/ClinicianEditModal";
 import AutomatedPlanningPanel from "../components/schedule/AutomatedPlanningPanel";
 import SolverOverlay, { type LiveSolution, type StatsHistoryEntry } from "../components/schedule/SolverOverlay";
@@ -444,6 +445,7 @@ export default function WeeklySchedulePage({
   const liveSolutionsRef = useRef<LiveSolution[]>([]);
   const [solverPhase, setSolverPhase] = useState<string | null>(null);
   const [agentEvents, setAgentEvents] = useState<AgentActivityData[]>([]);
+  const [solverLiveConnected, setSolverLiveConnected] = useState(true);
   // Unclamped copy for the run-history log: when the user aborts (or applies
   // the best plan mid-run) the backend's rich response is lost with the
   // fetch, so the history entry is reconstructed from these live events.
@@ -546,6 +548,7 @@ export default function WeeklySchedulePage({
     liveSolutionsRef.current = [];
     setSolverPhase(null);
     setAgentEvents([]);
+    setSolverLiveConnected(true);
     agentEventsRef.current = [];
 
     const unsubscribe = subscribeSolverProgress(
@@ -557,18 +560,18 @@ export default function WeeklySchedulePage({
           const ownToken = autoPlanRunTokenRef.current;
           if (eventToken && ownToken && eventToken !== ownToken) return;
         }
+        setSolverLiveConnected(true);
         if (event.event === "phase") {
           // Store the human-readable label from the backend
           setSolverPhase(event.data.label);
         } else if (event.event === "agent") {
           // Live agent activity feed (bounded so long runs stay cheap)
-          setAgentEvents((prev) => [...prev.slice(-119), event.data]);
+          setAgentEvents((prev) => appendAgentEvent(prev, event.data));
           if (agentEventsRef.current.length < 600) {
             agentEventsRef.current.push(event.data);
           }
         } else if (event.event === "solution") {
-          // Once we get solutions, clear the phase (we're in solve mode)
-          setSolverPhase(null);
+          // Agent phases remain relevant after a better draft arrives.
           const newSolution = {
             solution_num: event.data.solution_num,
             time_ms: event.data.time_ms,
@@ -580,7 +583,7 @@ export default function WeeklySchedulePage({
         }
       },
       () => {
-        // SSE error - ignore, the overlay will still work without live updates
+        setSolverLiveConnected(false);
       },
     );
 
@@ -4276,6 +4279,7 @@ export default function WeeklySchedulePage({
         solverSettings={solverSettings}
         solverMode={autoPlanRunConfig?.solverMode}
         agentEvents={agentEvents}
+        liveConnected={solverLiveConnected}
       />
 
       {autoPlanRunning && autoPlanMinimized ? (
