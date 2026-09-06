@@ -128,6 +128,8 @@ def main():
     started = time.monotonic()
     tool_counts = Counter()
     timings = Counter()
+    top_level_tool_seconds = 0.0
+    tool_depth = 0
     calls = []
     executors = []
     regressions = []
@@ -137,13 +139,20 @@ def main():
     class TracedExecutor(PlanToolExecutor):
         def __init__(self, *a, **kw):
             super().__init__(*a, **kw)
+            self.fixed_before = [a.model_dump() for a in self.fixed_assignments]
             executors.append(self)
 
         def execute(self, name, arguments, call_id):
-            nonlocal inspection_streak, longest_inspection_streak
+            nonlocal inspection_streak, longest_inspection_streak, top_level_tool_seconds, tool_depth
             before = time.monotonic()
-            result = super().execute(name, arguments, call_id)
-            elapsed = time.monotonic() - before
+            tool_depth += 1
+            try:
+                result = super().execute(name, arguments, call_id)
+            finally:
+                elapsed = time.monotonic() - before
+                tool_depth -= 1
+                if tool_depth == 0:
+                    top_level_tool_seconds += elapsed
             tool_counts[name] += 1
             timings[name] += elapsed
             payload = json.loads(result.content)
@@ -204,6 +213,9 @@ def main():
               "calls_by_phase": dict(Counter(c["phase"] for c in calls)),
               "quality_regression_iterations": regressions, "longest_inspection_streak": longest_inspection_streak,
               "notes": result.get("notes"), "hashes": hashes}
+    report["top_level_tool_seconds"] = round(top_level_tool_seconds, 3)
+    report["model_seconds"] = round(sum(c["seconds"] for c in calls), 3)
+    report["fixed_unchanged"] = [a.model_dump() for a in executor.fixed_assignments] == executor.fixed_before if executor else None
     if executor and hasattr(getattr(executor, "workflow", None), "direct_checks"):
         report["candidate_validation_cache"] = {
             "hits": executor.workflow.direct_check_hits,
@@ -213,6 +225,8 @@ def main():
     emit("PLAN", {"assignments": result.get("assignments"), "start": args.start, "end": end})
     if not agent or any(c["stop_reason"] == "error" for c in calls):
         raise SystemExit("Model errors/fallback detected; do not count this as a successful prompt comparison")
+    if report["new_hard_violations"] or not report["fixed_unchanged"]:
+        raise SystemExit("Guardrail regression detected: new hard violations or modified fixed context")
 
 
 if __name__ == "__main__":

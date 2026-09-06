@@ -44,6 +44,17 @@ def test_direct_checks_invalidate_when_other_day_consumes_weekly_hours():
     assert "WEEKLY_HOURS" in ex._direct_addition_codes("mon", MON, "a")
 
 
+def test_cached_inspection_can_never_authorize_an_illegal_assignment():
+    state = make_app_state(slots=[make_template_slot("first"), make_template_slot("overlap")])
+    ex = executor(state, [make_assignment("draft", "first", MON, "clin-1", source="solver")])
+    # Even a deliberately corrupted inspection entry must not bypass acceptance.
+    ex.workflow.direct_checks[("overlap", MON, "clin-1")] = ()
+    assert ex._direct_addition_codes("overlap", MON, "clin-1") == []
+    result = run(ex, "apply_moves", moves=[{"action": "assign", "slot_key": f"overlap__{MON}", "clinicianId": "clin-1"}])
+    assert not result["applied"] and result["new_hard_violations"]
+    assert len(ex.current) == 1 and len(ex.best_assignments) == 1
+
+
 def paginated_rescue_fixture(*, repair_at_tail=True):
     # Sixteen impossible positions sort before a seventeenth repairable one.
     sections = [f"impossible-{i:02}" for i in range(16)] + ["A", "B"]
