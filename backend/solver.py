@@ -361,6 +361,7 @@ def _solver_subprocess_worker(
     cancel_event: multiprocessing.Event,
     heartbeat_value: multiprocessing.Value,
     start_time: float,
+    state_snapshot: Optional[dict] = None,
 ):
     """
     Worker function that runs in a subprocess.
@@ -409,6 +410,8 @@ def _solver_subprocess_worker(
     try:
         # Reconstruct payload from dict
         payload = SolveRangeRequest(**payload_dict)
+        from .models import AppState
+        state = AppState.model_validate(state_snapshot) if state_snapshot is not None else _load_state(username)
 
         # Create a mock user for state loading
         class MockUser:
@@ -431,8 +434,6 @@ def _solver_subprocess_worker(
             from .agent.config import AgentConfig
             from .agent.harness import agent_solve_range
             from .agent_budget import resolve_agent_runtime_config
-            from .state import _load_state
-            state = _load_state(mock_user.username)
             # Env config overlaid with the admin's stored provider settings
             # (endpoint URL, API keys). Resolved HERE, in-process, so secrets
             # never travel through the payload or its debug dumps.
@@ -444,12 +445,10 @@ def _solver_subprocess_worker(
         elif mode == "heuristic":
             print(f"[SOLVER] Using HEURISTIC solver v2 for {payload.startISO} to {payload.endISO}")
             from .heuristic.solver_v2 import heuristic_solve_range_v2
-            from .state import _load_state
-            state = _load_state(mock_user.username)
             result = heuristic_solve_range_v2(payload, state, cancel_event, on_progress, start_time)
         else:
             print(f"[SOLVER] Using CP-SAT solver for {payload.startISO} to {payload.endISO}")
-            result = _solve_range_impl_subprocess(payload, mock_user, cancel_event, on_progress, start_time)
+            result = _solve_range_impl_subprocess(payload, mock_user, cancel_event, on_progress, start_time, state_override=state)
 
         # Send result
         progress_queue.put({"type": "result", "data": result})
@@ -1666,6 +1665,9 @@ def _start_solver_job(
     request_start_time = time.time()
     mode = payload.resolved_mode()
     exclusive = mode != "agent"
+    from .run_apply import planning_fingerprint
+    state = _load_state(username)
+    fingerprint = planning_fingerprint(state)
 
     # Cross-user run_token collision guard (DB read BEFORE taking the lock
     # and before any process is spawned): run ids are stored with INSERT OR
@@ -1711,6 +1713,7 @@ def _start_solver_job(
                 cancel_event,
                 heartbeat_value,
                 request_start_time,
+                state.model_dump(),
             ),
         )
         handle = _RunHandle(
@@ -1727,9 +1730,6 @@ def _start_solver_job(
         _active_runs[username] = handle
         owned_process.start()
 
-    fingerprint = _range_fingerprint(
-        username, payload.startISO, payload.endISO or payload.startISO
-    )
     if attempt == 1:
         solver_runs.create_run(
             run_id,
@@ -1970,42 +1970,16 @@ def get_solver_run(run_id: str, current_user: UserPublic = Depends(_get_current_
 def apply_solver_run(
     run_id: str,
     force: bool = Query(False, description="Apply even though the calendar changed since the run started"),
+    allow_partial: bool = Query(False, description="Explicitly accept replacement by an incomplete draft"),
+    expected_revision: Optional[str] = Query(None),
     current_user: UserPublic = Depends(_get_current_user),
 ):
-    """Write a stored run result into the schedule, atomically and with the
-    SAME semantics the frontend used client-side: in-range solver
-    assignments are replaced (manual entries and vacationing clinicians'
-    rows are kept), the run's in-range assignments are merged in.
+    from .run_apply import apply_stored_run
 
-    If the calendar changed inside the run's range since the run started
-    (compared to the stored input fingerprint), the apply is refused with
-    a 'calendar_changed' conflict unless force=true - the admin gets a
-    warning and decides."""
-    run = solver_runs.get_run(run_id, current_user.username)
-    if run is None:
-        raise HTTPException(status_code=404, detail="No such run.")
-    if run["status"] not in solver_runs.APPLICABLE_STATUSES or not run.get("result"):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Run is {run['status']} and has no applicable result.",
-        )
-    stored_fp = run.get("input_fingerprint")
-    if stored_fp and not force:
-        current_fp = _range_fingerprint(
-            current_user.username, run["start_iso"], run["end_iso"]
-        )
-        if current_fp != stored_fp:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "calendar_changed",
-                    "message": "The calendar was changed inside this run's "
-                    "range after the run started. Applying will overwrite "
-                    "those changes - confirm with force=true.",
-                },
-            )
-    added, replaced = _apply_run_result(current_user.username, run)
-    solver_runs.mark_run(run_id, "applied", note=f"Applied {added} assignments.")
+    run, added, replaced = apply_stored_run(
+        current_user.username, run_id, force=force, allow_partial=allow_partial,
+        expected_revision=expected_revision,
+    )
     try:
         schedule_changes.record_run_applied(
             current_user.username,
@@ -2090,67 +2064,9 @@ def admin_get_solver_run(run_id: str, _: UserPublic = Depends(_require_admin)):
 
 
 def _range_fingerprint(username: str, start_iso: str, end_iso: str) -> str:
-    """Stable hash of everything assigned in the run's range (incl. pool
-    rows - vacations influence planning). Compared at apply time so a
-    calendar edited AFTER the run started triggers a warning instead of
-    being silently overwritten."""
-    import hashlib
+    from .run_apply import planning_fingerprint
 
-    from .state import _load_state
-
-    state = _load_state(username)
-    items = sorted(
-        (a.rowId, a.dateISO, a.clinicianId, a.source or "")
-        for a in state.assignments
-        if start_iso <= a.dateISO <= end_iso
-    )
-    return hashlib.sha256(json.dumps(items).encode("utf-8")).hexdigest()
-
-
-def _apply_run_result(username: str, run: dict) -> tuple:
-    """Returns (added, replaced): assignments merged in from the run and
-    prior assignments dropped by the replace step."""
-    from .models import Assignment
-    from .state import _load_state, _save_state
-
-    state = _load_state(username)
-    start_iso, end_iso = run["start_iso"], run["end_iso"]
-    result = run["result"]
-
-    vacations = {
-        c.id: [(v.startISO, v.endISO) for v in (c.vacations or [])]
-        for c in state.clinicians
-    }
-
-    def _on_vacation(cid: str, date_iso: str) -> bool:
-        return any(s <= date_iso <= e for s, e in vacations.get(cid, []))
-
-    kept = [
-        a
-        for a in state.assignments
-        if a.rowId.startswith("pool-")
-        or a.dateISO < start_iso
-        or a.dateISO > end_iso
-        or a.source != "solver"
-        or _on_vacation(a.clinicianId, a.dateISO)
-    ]
-    replaced = len(state.assignments) - len(kept)
-    seen = {(a.rowId, a.dateISO, a.clinicianId) for a in kept}
-    added = 0
-    for raw in result.get("assignments", []):
-        date_iso = raw.get("dateISO", "")
-        if not (start_iso <= date_iso <= end_iso):
-            continue
-        assignment = Assignment(**raw)
-        key = (assignment.rowId, assignment.dateISO, assignment.clinicianId)
-        if key in seen:
-            continue
-        seen.add(key)
-        kept.append(assignment)
-        added += 1
-    state.assignments = kept
-    _save_state(state, username)
-    return added, replaced
+    return planning_fingerprint(_load_state(username))
 
 
 def recover_interrupted_runs() -> None:
@@ -2198,6 +2114,7 @@ def _solve_range_impl_subprocess(
     cancel_event,
     on_progress,
     start_time: float = None,
+    state_override=None,
 ) -> dict:
     """
     Subprocess-compatible implementation of solve_range.
@@ -2211,6 +2128,7 @@ def _solve_range_impl_subprocess(
         cancel_event=cancel_event,
         on_progress=on_progress,
         start_time=start_time,
+        state_override=state_override,
     )
     # Convert to dict for serialization
     return result.model_dump()
@@ -2222,6 +2140,7 @@ def _solve_range_impl(
     cancel_event=None,
     on_progress=None,
     start_time: float = None,
+    state_override=None,
 ):
     """
     Core solver implementation that builds and solves the constraint satisfaction problem.
@@ -2263,7 +2182,7 @@ def _solve_range_impl(
 
     # Broadcast phase progress for UI feedback
     on_progress("phase", {"phase": "load_state", "label": "Preparation (1/10): Loading schedule data..."})
-    state = _load_state(current_user.username)
+    state = state_override if state_override is not None else _load_state(current_user.username)
     timer.checkpoint("load_state")
     diagnostics: List[str] = []  # Track potential issues for debugging
     # Size the context window from the rest settings: a fixed +/-1 day silently
@@ -2733,6 +2652,7 @@ def _solve_range_impl(
                         cancel_event=cancel_event,
                         on_progress=on_progress,
                         start_time=time.time(),
+                        state_override=state,
                     )
                     if any("No solution" in note for note in week_result.notes):
                         week_notes.append(f"Week {week_num} ({week_cursor} to {week_end}): No solution found.")

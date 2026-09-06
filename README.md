@@ -8,7 +8,9 @@ ShiftSchedule is a weekly clinician scheduling app with a React + Vite frontend 
 - Per-class minimum slots (weekday vs weekend) and per-day overrides
 - Clinician qualifications and preferences
 - Vacation tracking
-- Auto-allocate day/week with a solver — Optimizer (CP-SAT/heuristic) or AI Agent (Claude), selectable in the planning panel
+- AI planning drafts with explicit review and apply; CP-SAT and heuristic solvers also remain available through the API
+- Rule checks and an automatic backup before applying; incomplete drafts need confirmation
+- Revision-checked saving prevents older browser edits from overwriting newer calendar changes
 - PDF export (A4 landscape) and public iCal subscription feeds (published weeks only)
 
 ## Tech Stack
@@ -82,3 +84,10 @@ reference, and operations/troubleshooting.
 
 ## Repository Notes
 - `node_modules/`, `dist/`, and local databases are ignored via `.gitignore`.
+- State API clients must read `GET /v1/state` and echo its `revision` in `POST /v1/state`.
+  Use the revision returned by each successful save for the next write. A stale or missing
+  revision returns `409 state_changed`; reload and reconcile edits before retrying.
+- Draft application can return `409 calendar_changed` or `409 partial_result` with a review
+  message and `revision`. After user confirmation, retry with `force=true` and/or
+  `allow_partial=true`, plus `expected_revision` from that response. Rule violations and
+  empty aborted drafts cannot be overridden. Successful application saves a restorable backup.

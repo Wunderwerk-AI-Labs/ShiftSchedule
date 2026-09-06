@@ -175,6 +175,7 @@ def test_manual_edit_is_logged_and_coalesced(client):
     assert rows[0]["after_run_id"] is None
 
     # A second save inside the coalesce window merges into the same row.
+    state.revision = client.get("/v1/state").json()["revision"]
     state.clinicians[0].vacations = [
         VacationRange(id="v1", startISO="2026-02-02", endISO="2026-02-06")
     ]
@@ -192,6 +193,7 @@ def test_undoing_everything_deletes_the_coalesced_row(client):
     state.assignments = [make_assignment("a1", ROW, MON, "clin-1", source="manual")]
     assert client.post("/v1/state", json=state.model_dump()).status_code == 200
     assert len(_list_rows()) == 1
+    original["revision"] = client.get("/v1/state").json()["revision"]
     assert client.post("/v1/state", json=original).status_code == 200
     assert _list_rows() == []
 
@@ -203,8 +205,9 @@ def test_noop_save_logs_nothing(client):
 
 
 def test_apply_run_logs_run_applied_and_links_later_edits(client):
-    _seed_state()
-    solver_runs.create_run("run-x", USER, MON, MON, params={})
+    from backend.run_apply import planning_fingerprint
+    state = _seed_state()
+    solver_runs.create_run("run-x", USER, MON, MON, params={}, input_fingerprint=planning_fingerprint(state))
     solver_runs.finish_run(
         "run-x",
         "finished",

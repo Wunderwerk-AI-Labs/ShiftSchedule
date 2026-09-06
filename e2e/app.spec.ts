@@ -1,3 +1,4 @@
+import { saveTestState } from "./state-fixture";
 import { Buffer } from "node:buffer";
 import { expect, test } from "./fixtures";
 import { attachStepScreenshot } from "./utils/screenshots";
@@ -274,7 +275,7 @@ test.describe.serial("app flows", () => {
 
   test.afterAll(async ({ request }) => {
     if (!token || !originalState) return;
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: originalState,
     });
@@ -282,7 +283,7 @@ test.describe.serial("app flows", () => {
 
   test.beforeEach(async ({ page, request }) => {
     await seedAuthToken(page, token);
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTestState({ dateISO: testDateISO }),
     });
@@ -351,7 +352,7 @@ test.describe.serial("app flows", () => {
       ],
       columnCounts: { mon: 1 },
     });
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: state,
     });
@@ -419,7 +420,7 @@ test.describe.serial("app flows", () => {
     const dayType = getDayTypeForISO(testDateISO);
     const colBandId1 = `${locationId}-col-${dayType}-1`;
     const colBandId2 = `${locationId}-col-${dayType}-2`;
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTemplateState({
         dateISO: testDateISO,
@@ -484,7 +485,7 @@ test.describe.serial("app flows", () => {
     const colBandId = `${locationId}-col-${dayType}-1`;
     const rowBand1 = `${locationId}-row-1`;
     const rowBand2 = `${locationId}-row-2`;
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTemplateState({
         dateISO: testDateISO,
@@ -537,7 +538,7 @@ test.describe.serial("app flows", () => {
     page,
     request,
   }, testInfo) => {
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTestState({
         dateISO: testDateISO,
@@ -571,7 +572,7 @@ test.describe.serial("app flows", () => {
     page,
     request,
   }, testInfo) => {
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTestState({
         dateISO: testDateISO,
@@ -633,14 +634,14 @@ test.describe.serial("ui login flows", () => {
 
   test.afterAll(async ({ request }) => {
     if (!token || !originalState) return;
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: originalState,
     });
   });
 
   test.beforeEach(async ({ request }) => {
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTestState({ dateISO: testDateISO }),
     });
@@ -730,7 +731,7 @@ test.describe.serial("ui login flows", () => {
       endTime: "16:00",
       endDayOffset: 0,
     }));
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTemplateState({
         dateISO: testDateISO,
@@ -785,7 +786,7 @@ test.describe.serial("ui login flows", () => {
       endTime: "16:00",
       endDayOffset: 0,
     }));
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTemplateState({
         dateISO: testDateISO,
@@ -855,7 +856,7 @@ test.describe.serial("ui login flows", () => {
       endTime: "16:00",
       endDayOffset: 0,
     }));
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: buildTemplateState({
         dateISO: testDateISO,

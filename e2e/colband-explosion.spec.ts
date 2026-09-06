@@ -1,3 +1,4 @@
+import { saveTestState } from "./state-fixture";
 import { expect, test } from "./fixtures";
 import { attachStepScreenshot } from "./utils/screenshots";
 import { fetchAuthToken, seedAuthToken } from "./utils/auth";
@@ -82,7 +83,7 @@ async function resetToCleanState(request: any, token: string) {
     },
   };
 
-  await request.post(`${API_BASE}/v1/state`, {
+  await saveTestState(request, `${API_BASE}/v1/state`, {
     headers: { Authorization: `Bearer ${token}` },
     data: cleanState,
   });
@@ -574,7 +575,7 @@ test.describe("Solver Integration with Template", () => {
     };
 
     // Save test state
-    await request.post(`${API_BASE}/v1/state`, {
+    await saveTestState(request, `${API_BASE}/v1/state`, {
       headers: { Authorization: `Bearer ${token}` },
       data: testState,
     });

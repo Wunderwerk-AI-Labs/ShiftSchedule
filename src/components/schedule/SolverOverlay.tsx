@@ -873,7 +873,7 @@ export default function SolverOverlay({
             without scrolling as the chart fills with live solutions. */}
         <div className="flex items-center gap-3">
           {/* Details button - only shown when solutions exist */}
-          {liveSolutions.length > 0 && (
+          {liveSolutions.some((solution) => (solution.assignments?.length ?? 0) > 0) && (
             <button
               type="button"
               onClick={() => setDashboardOpen(true)}

@@ -1,5 +1,7 @@
 import json
+import hashlib
 import re
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -1188,8 +1190,19 @@ def _default_state() -> AppState:
     )
 
 
-def _load_state(user_id: str) -> AppState:
-    conn = _get_connection()
+def _state_revision(state: AppState) -> str:
+    payload = state.model_dump(exclude={"revision"})
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _load_state(user_id: str, *, connection=None) -> AppState:
+    if connection is None:
+        with closing(_get_connection()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            state = _load_state(user_id, connection=conn)
+            conn.commit()
+            return state
+    conn = connection
     row = conn.execute(
         "SELECT data FROM app_state WHERE id = ?", (user_id,)
     ).fetchone()
@@ -1201,32 +1214,51 @@ def _load_state(user_id: str) -> AppState:
             data = json.loads(legacy[0])
             state = AppState.model_validate(data)
             state, _ = _normalize_state(state)
-            _save_state(state, user_id)
-            conn.close()
+            _save_state(state, user_id, connection=conn)
             return state
-    conn.close()
     if not row:
         state = _default_state()
-        _save_state(state, user_id)
+        _save_state(state, user_id, connection=conn)
         return state
     data = json.loads(row[0])
     state = AppState.model_validate(data)
     state, changed = _normalize_state(state)
     if changed:
-        _save_state(state, user_id)
+        _save_state(state, user_id, connection=conn)
+    state.revision = _state_revision(state)
     return state
 
 
-def _save_state(state: AppState, user_id: str) -> None:
-    conn = _get_connection()
-    payload = state.model_dump()
+def _save_state(
+    state: AppState, user_id: str, *, connection=None,
+    check_revision: bool = False, expected_revision: Optional[str] = None,
+) -> None:
+    if connection is None:
+        with closing(_get_connection()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _save_state(state, user_id, connection=conn,
+                        check_revision=check_revision, expected_revision=expected_revision)
+            conn.commit()
+        return
+    conn = connection
+    if check_revision:
+        row = conn.execute("SELECT data FROM app_state WHERE id = ?", (user_id,)).fetchone()
+        current = _state_revision(AppState.model_validate(json.loads(row[0]))) if row else None
+        if current != expected_revision:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=409, detail={
+                "code": "state_changed",
+                "message": "The calendar changed in another tab or operation. "
+                           "Your changes were not saved. Reload the current calendar before editing again.",
+            })
+    payload = state.model_dump(exclude={"revision"})
     now = _utcnow_iso()
     conn.execute(
         "INSERT OR REPLACE INTO app_state (id, data, updated_at) VALUES (?, ?, ?)",
         (user_id, json.dumps(payload), now),
     )
-    conn.commit()
-    conn.close()
+    state.revision = _state_revision(state)
 
 
 def _load_raw_state_blob(username: str) -> Optional[Dict[str, Any]]:

@@ -248,6 +248,12 @@ def _row_to_dict(row, include_result: bool = True) -> Dict[str, Any]:
         except (ValueError, TypeError):
             d["has_result"] = False
         if parsed is not None:
+            from .run_apply import result_safety
+            empty_abort, incomplete_dates = result_safety({**d, "result": parsed})
+            d["apply_blocked_reason"] = (
+                "Stopped before a plan was produced; the calendar will be kept." if empty_abort else None
+            )
+            d["incomplete_dates"] = incomplete_dates
             if include_result:
                 d["result"] = parsed
             agent = (parsed.get("debugInfo") or {}).get("agent")

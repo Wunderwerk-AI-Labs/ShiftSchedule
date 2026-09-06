@@ -68,6 +68,9 @@ async def lifespan(_app: FastAPI):
     conn.close()
     _ensure_admin_user()
     _ensure_test_user()
+    from .solver import recover_interrupted_runs
+
+    recover_interrupted_runs()
     yield
 
 
@@ -137,13 +140,3 @@ app.include_router(ical_router)
 app.include_router(solver_router)
 app.include_router(agent_budget_router)
 app.include_router(schedule_changes_router)
-
-
-@app.on_event("startup")
-def _recover_solver_runs() -> None:
-    # A backend restart (deploy, crash) kills any in-flight solve; its run
-    # row is still 'running'. Restart it once, mark the rest crashed —
-    # results are never auto-applied, so replanning is safe.
-    from .solver import recover_interrupted_runs
-
-    recover_interrupted_runs()

@@ -161,6 +161,9 @@ class WeeklyCalendarTemplate(BaseModel):
 
 
 class AppState(BaseModel):
+    # Content revision returned by the server, required when replacing an
+    # existing calendar. It is metadata, never part of the stored state hash.
+    revision: Optional[str] = None
     locations: List[Location] = Field(default_factory=list)
     locationsEnabled: bool = True
     rows: List[WorkplaceRow]

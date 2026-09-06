@@ -1427,6 +1427,29 @@ class PlanToolExecutor:
             out["more_open_slots"] = len(entries) - len(shown)
         return out
 
+    def next_fillable_slot(self, date_iso: str):
+        """Cheap bounded completion check: stop at the first legal placement.
+
+        None proves no directly fillable required position remains. A timed
+        out check is explicitly inconclusive, never evidence of completion.
+        """
+        counts = self._counts_by_instance(self._working_list())
+        for inst in self.ctx.instances.values():
+            if inst.date_iso != date_iso or counts.get(inst.slot_key, 0) >= inst.target:
+                continue
+            for clinician in self.state.clinicians:
+                if self._tool_seconds_left() <= 5:
+                    return {"check_incomplete": True}
+                if inst.section_id not in clinician.qualifiedClassIds:
+                    continue
+                key = (inst.slot_id, date_iso, clinician.id)
+                if key in self.current or key in self.fixed_identity:
+                    continue
+                if not self._fix_option_blocked_by(clinician.id, inst.slot_id, date_iso, None):
+                    return {"slot_key": self._alias_slot_key(inst.slot_key),
+                            "clinicianId": self._alias(clinician.id)}
+        return None
+
     def _tool_suggest_day_blocks(self, args: dict) -> dict:
         """For one open slot: eligible clinicians with their best contiguous
         work block starting there — the 'Anschlussverwendung' step of the
@@ -2320,6 +2343,7 @@ class PlanToolExecutor:
                 "hint": "The batch was rolled back. Adjust the moves to avoid these violations.",
             }
 
+        changed = trial != self.current
         self.current = trial
         self.moves_accepted += len(moves)
         quality = self._quality(trial_list, hard_violations=trial_hard)
@@ -2330,7 +2354,7 @@ class PlanToolExecutor:
             self.best_quality = quality
             self.best_score = self.encode_quality(quality)
             self.best_assignments = list(trial_list)
-            if improved and self.on_improvement is not None:
+            if changed and self.on_improvement is not None:
                 self.on_improvement(self.best_score, list(trial_list))
         described = [self._describe_move(m) for m in moves]
         self.accepted_move_log.extend(described)

@@ -53,7 +53,8 @@ def set_state(payload: AppState, current_user: UserPublic = Depends(_get_current
         old_blob = _load_raw_state_blob(current_user.username)
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[schedule-changes] pre-save load failed: {exc}", file=sys.stderr)
-    _save_state(normalized, current_user.username)
+    _save_state(normalized, current_user.username,
+                check_revision=True, expected_revision=payload.revision)
     if old_blob is not None:
         try:
             schedule_changes.record_manual_edit(
