@@ -161,6 +161,18 @@ def test_disabled_experiment_cannot_be_invoked_by_guessing_the_tool_name():
     assert not ex.current
 
 
+def test_expired_inspection_never_claims_day_is_complete_or_candidates_impossible():
+    ex = executor()
+    ex.wall_deadline = 1
+    result = run(ex, "suggest_day_blocks", dateISO=MON)
+    assert result["search_status"] == "incomplete"
+    assert not result.get("day_complete")
+    assert "unfillable_slots" not in result
+    ex.wall_deadline = None
+    result = run(ex, "suggest_day_blocks", dateISO=MON)
+    assert not result["cached"] and result["candidates"]
+
+
 def test_evicted_proposal_is_regenerated_on_cached_search():
     ex = executor()
     old = run(ex, "suggest_day_blocks", dateISO=MON)

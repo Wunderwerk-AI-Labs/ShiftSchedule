@@ -41,7 +41,7 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
     def apply(offer):
         if offer.get("proposal_id"):
             return call("apply_proposal", proposal_id=offer["proposal_id"]).get("next", {}).get("result")
-        moves = offer.get("moves") or [{"action": "assign", "slot_key": key, "clinicianId": offer["clinicianId"]}
+        moves = offer.get("moves") or offer.get("batch") or [{"action": "assign", "slot_key": key, "clinicianId": offer["clinicianId"]}
                                       for key in offer["block"]]
         result = call("apply_moves", moves=moves)
         if not result.get("applied"):
@@ -76,7 +76,8 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
                 continue
             chosen = None
             checks = [("suggest_rescue_moves", "rescues"), ("suggest_balance_moves", "offers")]
-            if neighborhood:
+            counts = ex._counts_by_instance(ex._working_list())
+            if neighborhood and any(i.date_iso == day and counts.get(i.slot_key, 0) < i.target for i in ctx.instances.values()):
                 checks.insert(1, ("repair_neighborhood", "proposals"))
             for name, field in checks:
                 checked = call(name, dateISO=day)
@@ -85,7 +86,7 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
                 for offer in checked.get(field, []):
                     better = offer.get("improves_best")
                     if better is None:
-                        better = call("apply_moves", moves=offer["moves"], dry_run=True).get("improves_best")
+                        better = call("apply_moves", moves=offer.get("moves") or offer["batch"], dry_run=True).get("improves_best")
                     if better:
                         chosen = offer
                         break

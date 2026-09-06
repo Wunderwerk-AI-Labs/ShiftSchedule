@@ -196,7 +196,9 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    starting at that slot (adjacent open slots chained up to their
    preferred daily hours) — their "Anschlussverwendung". Pass slot_key
    instead only when you deliberately deviate from the given order.
-3. Choosing the candidate: they are PRE-SORTED — overloaded=true last,
+3. Choosing the candidate: they are PRE-SORTED. The balanced profile sorts
+   by its active quality_order; use the first candidate unless a concrete
+   admin wish or future scarcity justifies another. In classic: overloaded=true last,
    everyone whose block meets the daily minimum first, within that the
    preferred-working-time fit (window_fit=true before false), then
    lowest ytd_worked_pct (100 = on target, lower = behind). window_fit
@@ -247,10 +249,12 @@ THE PROCEDURE (follow it exactly — it is how a human fills a day):
    receiver_overshoot_hours trades a slightly-too-long day for a solved
    problem — take it when the problem is bigger than the trade (clearing
    a whole mini-stint is usually worth up to ~1h of overshoot; cosmetic
-   rebalancing is not). Apply ONE batch per round exactly as given,
-   pipelined with the next suggest_balance_moves call; when it offers
-   nothing more, write your final day summary (mentioning problems it
-   listed but could not fix).
+   rebalancing is not). Legality alone does not mean an improvement:
+   use quality_after and improves_best. Apply improving offers via
+   apply_proposal; next.result contains fresh balance options. A tie on
+   EVERY quality tier may serve an explicit wish. Skip worse offers;
+   never cycle through reversals. When no improving offer remains,
+   summarize unresolved problems and the search limits.
 
 Rules of engagement:
 - TRUST the tools' verdicts. eligible_count and the candidate lists are
@@ -287,7 +291,7 @@ Rules of engagement:
 
 Finish the day by replying WITHOUT tool calls ONLY when suggest_day_blocks
 reported day_complete=true (or every unfilled slot has eligible_count 0)
-AND the final review (suggest_balance_moves) has no offers left. Your final
+AND the final review (suggest_balance_moves) has no improving offers left. Your final
 reply: one short paragraph, at most 100 words — verified coverage, remaining
 gaps and the blocking reasons actually returned by tools, plus unresolved
 imbalance. A bounded search finding no repair is not a proof that no legal
@@ -308,11 +312,14 @@ every batch, so nothing you try can break the plan.
 THE PROCEDURE:
 1. The digest lists the remaining issues, worst first: open slots, then
    short days, then over-long days, then preferred-time misses. Work in
-   that order; skip cosmetic cases.
+   the active quality_order when assessing changes; skip cosmetic cases.
 2. Per issue day: suggest_balance_moves(dateISO) returns pre-validated
    transfers (clear mini-stints, even out uneven neighbours via
    extend_short_day, shorten over-long days) — apply ONE batch per round
-   through apply_proposal; next.result contains fresh options. Reuse current
+   through apply_proposal when improves_best=true; next.result contains fresh
+   options. Skip worse offers; a tie on every quality tier may serve an
+   explicit wish. Finish when bounded searches find no improvements; legal
+   offers alone are not a reason to keep cycling. Reuse current
    search-memory entries instead of repeating a failed search unchanged.
    suggest_rescue_moves(dateISO) cracks
    unfillable open slots; get_day_schedule shows any day in full;

@@ -14,6 +14,12 @@ SEARCH_TOOLS = {
 }
 
 
+class InspectionBudgetExhausted(Exception):
+    def __init__(self, day):
+        self.result = {"search_status": "incomplete", "not_searched": [day],
+                       "note": "Inspection time budget exhausted. Candidate counts and completion were not established."}
+
+
 class PlanningWorkflow:
     def __init__(self, executor):
         self.executor = executor
@@ -49,7 +55,15 @@ class PlanningWorkflow:
             # Bounded proposal storage may evict an old offer before its
             # cached search. Regenerate it instead of returning unusable IDs.
             del self.cache[key]
-        result = handler(arguments)
+        try:
+            result = handler(arguments)
+        except InspectionBudgetExhausted as exc:
+            result = dict(exc.result)
+            field = {"suggest_day_blocks": "candidates", "suggest_rescue_moves": "rescues",
+                     "suggest_balance_moves": "offers", "repair_neighborhood": "proposals",
+                     "analyze_bottlenecks": "bottlenecks", "explain_unfilled": "explanations"}.get(name)
+            if field:
+                result[field] = []
         if "error" in result:
             return result
         self.search_counter += 1

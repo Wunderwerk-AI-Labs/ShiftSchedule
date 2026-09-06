@@ -33,7 +33,7 @@ from ..validation import (
     validate_assignments,
     validate_solver_rules,
 )
-from .workflow import PlanningWorkflow, SEARCH_TOOLS
+from .workflow import PlanningWorkflow, SEARCH_TOOLS, InspectionBudgetExhausted
 from .neighborhood import analyze_bottlenecks, explain_unfilled, repair_neighborhood
 from .quality import BALANCED_FIELDS, CLASSIC_FIELDS, extra_metrics
 from ..planning_preferences import daily_min_minutes, daily_target_minutes
@@ -758,6 +758,8 @@ class PlanToolExecutor:
             args = arguments or {}
             result = self.workflow.search(name, args, handler) if name in SEARCH_TOOLS else handler(args)
             return ToolResult(tool_call_id, _dump(result))
+        except InspectionBudgetExhausted as exc:
+            return ToolResult(tool_call_id, _dump(exc.result))
         except Exception as exc:  # tool bugs must not kill the solve
             return ToolResult(tool_call_id, _dump({"error": str(exc)}), True)
 
@@ -880,6 +882,8 @@ class PlanToolExecutor:
 
         candidates = []
         for clinician in self.state.clinicians:
+            if self._tool_seconds_left() <= 5:
+                raise InspectionBudgetExhausted(inst.date_iso)
             already = (inst.slot_id, inst.date_iso, clinician.id) in self.current or (
                 inst.slot_id,
                 inst.date_iso,
@@ -1408,6 +1412,8 @@ class PlanToolExecutor:
             # validation — they could only ever be blocked.
             eligible = []
             for clinician in self.state.clinicians:
+                if self._tool_seconds_left() <= 5:
+                    raise InspectionBudgetExhausted(date_iso)
                 if inst.section_id not in (clinician.qualifiedClassIds or []):
                     continue
                 identity = (inst.slot_id, date_iso, clinician.id)
@@ -1466,7 +1472,7 @@ class PlanToolExecutor:
             "more important), scarcest first within a tier. eligible_count=0 "
             "means nobody can take it in the current state - staff the rest "
             "of the day first, then re-check; if it stays 0, report it as "
-            "unfillable. Counts change after apply_moves.",
+            "not directly fillable. Counts change after every plan change.",
             "slots": shown,
         }
         if len(entries) > len(shown):
@@ -1540,8 +1546,8 @@ class PlanToolExecutor:
                         if unfillable
                         else "The day is fully staffed. Run the final "
                         "review now: call suggest_balance_moves(dateISO) "
-                        "and apply what it offers (one batch per round); "
-                        "when it has no more offers, reply WITHOUT tool "
+                        "and apply improving proposal IDs; "
+                        "when no improving offer remains, reply WITHOUT tool "
                         "calls with your one-paragraph day summary."
                     ),
                 }
@@ -2202,9 +2208,10 @@ class PlanToolExecutor:
             )
         elif offers:
             out["note"] = (
-                "Apply ONE offered batch EXACTLY as given (one apply_moves "
-                "call), then call suggest_balance_moves again — the other "
-                "offers go stale. Offers are pre-validated against every "
+                "Apply an improving offer using apply_proposal(proposal_id); "
+                "next.result returns fresh balance options. Compare quality_after "
+                "and improves_best: legal offers may worsen the saved plan. Skip "
+                "worse offers and stop when none improve it. Offers are checked against every "
                 "hard rule; extend_short_day evens out a clearly shorter "
                 "day next to a clearly longer one via their shared edge "
                 "slot; receiver_overshoot_hours marks the soft trade-off "
