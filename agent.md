@@ -1531,3 +1531,19 @@ Database Inspector
 - Arena scenario `fixed-patterns` keeps saved duties, marks them as locked solver
   entries and adds synthetic personal work patterns to the isolated test fixture.
   It never changes user calendars or saved preferences.
+
+## v1.59 — complete model text
+
+- The live feed and saved run log retain every received model response in full.
+  Removed the 24,000-character truncation and the first-80-text log limit.
+  The recent browser event buffer remains bounded; an open text dialog retains
+  its selected response as newer events arrive. The unused duplicate event
+  archive in the calendar page is removed.
+- Short previews explicitly show the received character count and open the full
+  response in a scrollable, copyable dialog. Long lines, mobile controls and
+  reaching the final character are covered by browser tests.
+- Provider output limits are independent metadata, including OpenAI-compatible
+  responses that contain tool calls. The feed, full-text dialog and saved log
+  identify an incomplete generation without shortening the received text or
+  changing tool execution. Existing already-truncated historical logs cannot
+  recover text that was never stored.

@@ -254,4 +254,5 @@ class OpenAICompatibleProvider(LLMProvider):
             reasoning=reasoning,
             replay_text=replay_text,
             raw_content=None,  # no replay requirement on this API
+            output_truncated=finish == "length",
         )

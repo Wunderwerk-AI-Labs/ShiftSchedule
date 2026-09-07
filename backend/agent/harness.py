@@ -96,17 +96,6 @@ MAX_CONSECUTIVE_FAILED_DAYS = 2
 # run's own wall-clock deadline still bounds the total via min() (and UI
 # runs carry no wall-clock deadline at all).
 MAX_PER_CALL_TIMEOUT_SECONDS = 1200.0
-# Per-event cap for thought/reasoning text in the live feed. Generous — the
-# admin wants to read chains of thought in FULL (the UI opens them in a
-# dedicated dialog) — but bounded so a runaway model cannot bloat the SSE
-# stream. Texts that do exceed it get an explicit truncation marker.
-MAX_FEED_TEXT_CHARS = 24000
-
-
-def _feed_text(text: str) -> str:
-    if len(text) <= MAX_FEED_TEXT_CHARS:
-        return text
-    return text[:MAX_FEED_TEXT_CHARS] + "\n… [truncated]"
 
 
 def _complete_with_retry(
@@ -515,9 +504,9 @@ def agent_solve_range(
             "seed_plan": seed_plan_lines[:300],
             "final_plan": plan_lines[:300],
             "violations_final": violation_lines[:90],
-            # Full reasoning chains belong in the copyable log — cap only as
-            # a guard against a runaway model, not as a display truncation.
-            "thoughts": [_feed_text(t) for t in thought_log[:80]],
+            # Preserve every received response. The live UI bounds its recent
+            # event buffer; shortening stored text makes "full text" unrecoverable.
+            "thoughts": list(thought_log),
         }
 
     def _unsolved_overview(best: List[Assignment]) -> Tuple[List[str], dict]:
@@ -944,24 +933,30 @@ def agent_solve_range(
         total_cache_read_tokens += response.usage.get("cache_read_input_tokens", 0)
         total_cache_creation_tokens += response.usage.get("cache_creation_input_tokens", 0)
         total_generation_seconds += getattr(response, "generation_seconds", 0.0) or 0.0
+        output_truncated = response.output_truncated or response.stop_reason == "max_tokens"
+        if output_truncated:
+            thought_log.append(
+                f"[iteration {iterations_done}] Model reached its response limit; "
+                "all received text follows, but the response may be incomplete."
+            )
         if response.reasoning:
             # Chain of thought of reasoning models — shown expandable in the
             # live feed and kept in the run log. Aliases restored like text.
-            reasoning_full = executor.unscrub_text(response.reasoning.strip())
+            reasoning_full = executor.unscrub_text(response.reasoning)
             if reasoning_full:
                 thought_log.append(
                     f"[iteration {iterations_done}] (reasoning) {reasoning_full}"
                 )
                 emit_agent(
                     "thought",
-                    {"text": _feed_text(reasoning_full), "reasoning": True},
+                    {"text": reasoning_full, "reasoning": True, "output_truncated": output_truncated},
                 )
         if response.text:
             # The model writes aliases; restore real names for the
             # user-facing feed and remember the latest text as the run summary.
-            final_summary = executor.unscrub_text(response.text.strip())
+            final_summary = executor.unscrub_text(response.text)
             thought_log.append(f"[iteration {iterations_done}] {final_summary}")
-            emit_agent("thought", {"text": _feed_text(final_summary)})
+            emit_agent("thought", {"text": final_summary, "output_truncated": output_truncated})
 
     def stalled(messages, guard, notes):
         action = guard.observe((tuple(sorted(executor.current)), executor.workflow.search_counter))

@@ -119,3 +119,42 @@ test("mobile planning actions and full model text remain accessible", async ({ p
   await action.click();
   await expect(page.getByRole("button", { name: "Solver running..." })).toBeVisible();
 });
+
+for (const width of [390, 1440]) {
+  test(`full model response can be read and copied through its final character (${width}px)`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 700 });
+    await start(page);
+    const text = "START Äé🩺\n" + "Long model response with multiple lines.\n".repeat(900)
+      + "UNBROKEN_" + "x".repeat(6000) + "\nEND OF COMPLETE RESPONSE";
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+        writeText: async (value: string) => { Object.assign(window, { copiedModelText: value }); },
+      } });
+    });
+    await send(page, { kind: "thought", reasoning: true, text, output_truncated: true });
+    await page.getByRole("checkbox", { name: "Include model text" }).check();
+    await page.getByRole("button", { name: "Show full text" }).click();
+    const dialog = page.getByRole("dialog", { name: "Model reasoning (full text)" });
+    await expect(dialog.getByText(/All received text is shown/)).toBeVisible();
+    expect(await dialog.locator("pre").textContent()).toBe(text);
+    const body = dialog.locator("pre").locator("..");
+    const size = await body.evaluate((el) => ({ width: el.clientWidth, full: el.scrollWidth }));
+    expect(size.full).toBeLessThanOrEqual(size.width + 1);
+    await body.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    const endVisible = await dialog.locator("pre").evaluate((el) => {
+      const textNode = el.firstChild!;
+      const range = document.createRange();
+      range.setStart(textNode, textNode.textContent!.length - 24);
+      range.setEnd(textNode, textNode.textContent!.length);
+      const rect = range.getBoundingClientRect();
+      const body = el.parentElement!.getBoundingClientRect();
+      return rect.top >= body.top && rect.bottom <= body.bottom + 1 && rect.right <= body.right;
+    });
+    expect(endVisible).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`full-model-text-${width}.png`), animations: "disabled" });
+    await dialog.getByRole("button", { name: "Copy", exact: true }).click();
+    expect(await page.evaluate(() => (window as unknown as { copiedModelText: string }).copiedModelText)).toBe(text);
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(dialog).toBeHidden();
+  });
+}

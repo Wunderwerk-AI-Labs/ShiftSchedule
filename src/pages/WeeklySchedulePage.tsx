@@ -450,7 +450,6 @@ export default function WeeklySchedulePage({
   // Unclamped copy for the run-history log: when the user aborts (or applies
   // the best plan mid-run) the backend's rich response is lost with the
   // fetch, so the history entry is reconstructed from these live events.
-  const agentEventsRef = useRef<AgentActivityData[]>([]);
   // Mode + timeout of the CURRENT run (agent runs raise the timeout, so the
   // overlay's time budget must reflect the run, not the settings value).
   const [autoPlanRunConfig, setAutoPlanRunConfig] = useState<{
@@ -550,7 +549,6 @@ export default function WeeklySchedulePage({
     setSolverPhase(null);
     setAgentEvents([]);
     setSolverLiveConnected(true);
-    agentEventsRef.current = [];
 
     const unsubscribe = subscribeSolverProgress(
       (event) => {
@@ -568,9 +566,6 @@ export default function WeeklySchedulePage({
         } else if (event.event === "agent") {
           // Live agent activity feed (bounded so long runs stay cheap)
           setAgentEvents((prev) => appendAgentEvent(prev, event.data));
-          if (agentEventsRef.current.length < 600) {
-            agentEventsRef.current.push(event.data);
-          }
         } else if (event.event === "solution") {
           // Agent phases remain relevant after a better draft arrives.
           const newSolution = {

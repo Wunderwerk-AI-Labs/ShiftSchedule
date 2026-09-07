@@ -1131,6 +1131,8 @@ export type AgentActivityData = {
   text?: string;
   /** True when the text is a reasoning model's chain of thought. */
   reasoning?: boolean;
+  /** Provider stopped at its response limit; the received text is preserved. */
+  output_truncated?: boolean;
   moves?: AgentMoveItem[];
   improved?: boolean;
   retained_best?: boolean;

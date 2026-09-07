@@ -13,6 +13,14 @@ from backend.models import SolveRangeRequest
 
 from .conftest import make_app_state, make_clinician
 
+
+class ResponseProvider(LLMProvider):
+    def __init__(self, responses):
+        self.responses = iter(responses)
+
+    def complete(self, **kwargs):
+        return next(self.responses, ProviderResponse(text=None, tool_calls=[], stop_reason="end_turn"))
+
 MON = "2026-01-05"
 
 
@@ -63,6 +71,52 @@ def _two_clinician_state():
             make_clinician("clin-2", "Bob"),
         ]
     )
+
+
+def test_long_model_text_is_complete_in_live_events_and_saved_log():
+    answer = "\nANSWER START Äé🩺\n" + "complete answer\n" * 3000 + "ANSWER END\n"
+    reasoning = "REASONING START\n" + "complete reasoning\n" * 3000 + "REASONING END"
+    progress = ProgressRecorder()
+    result = agent_solve_range(_payload(), _two_clinician_state(), MockCancelEvent(), progress,
+                              time.time(), config=_config(), provider=ResponseProvider([
+                                  ProviderResponse(text=answer, reasoning=reasoning, tool_calls=[], stop_reason="end_turn")]))
+    thoughts = [data for kind, data in progress.events if kind == "agent" and data["kind"] == "thought"]
+    assert [row["text"] for row in thoughts] == [reasoning, answer]
+    assert not any(row["output_truncated"] for row in thoughts)
+    assert result["debugInfo"]["agent"]["thoughts"] == [
+        f"[iteration 1] (reasoning) {reasoning}", f"[iteration 1] {answer}"]
+
+
+def test_saved_log_keeps_model_responses_after_the_eightieth_entry(monkeypatch):
+    # Keep this transport/log test running past the old cap independently of
+    # the idle-search guard (which is covered by its own scheduling tests).
+    monkeypatch.setattr("backend.agent.harness.ProgressGuard.observe", lambda *_: "continue")
+    responses = [ProviderResponse(text=f"Answer {i}", reasoning=f"Reasoning {i}",
+                                  tool_calls=[ToolCall(str(i), "get_plan_overview", {})], stop_reason="tool_use")
+                 for i in range(1, 42)]
+    # Five weekly instances give the harness a budget beyond 41 responses.
+    result = agent_solve_range(_payload(endISO="2026-02-02"), _two_clinician_state(), MockCancelEvent(), ProgressRecorder(),
+                              time.time(), config=_config(max_iterations=42), provider=ResponseProvider(responses))
+    thoughts = result["debugInfo"]["agent"]["thoughts"]
+    assert len(thoughts) == 82
+    assert thoughts[0] == "[iteration 1] (reasoning) Reasoning 1"
+    assert thoughts[-1] == "[iteration 41] Answer 41"
+
+
+def test_provider_response_limit_is_explicit_in_live_events_and_saved_log():
+    text = "All received text, including an unfinished sen"
+    for stop, tool_calls in [("max_tokens", []), ("tool_use", [ToolCall("c", "get_plan_overview", {})])]:
+        progress = ProgressRecorder()
+        result = agent_solve_range(_payload(), _two_clinician_state(), MockCancelEvent(), progress,
+                                  time.time(), config=_config(), provider=ResponseProvider([
+                                      ProviderResponse(text=text, tool_calls=tool_calls, stop_reason=stop,
+                                                       output_truncated=stop == "tool_use")]))
+        thought = next(d for kind, d in progress.events if kind == "agent" and d["kind"] == "thought")
+        assert thought["text"] == text
+        assert thought["output_truncated"] is True
+        log = result["debugInfo"]["agent"]["thoughts"]
+        assert "Model reached its response limit" in log[0]
+        assert log[1] == f"[iteration 1] {text}"
 
 
 def test_inspection_only_script_keeps_seed_and_reports_iterations():
