@@ -241,12 +241,15 @@ class PlanningWorkflow:
                 "tasks": [dict(row, plan_revision=self.revision) for row in rows],
                 "note": "Fixed load stays in the plan. Review tasks are soft wishes, not permission to move fixed duties. A complete bounded check does not prove optimality."}
 
-    def final_audit(self, days, cancel_event, *, max_repairs=4, max_seconds=60):
+    def final_audit(self, days, cancel_event, *, max_repairs=None, max_seconds=60):
         """Audit the returned best; repair only fresh, strictly better checked offers.
 
         Any mutation restarts the full audit. Both repairs and elapsed time are
         bounded, including runs with no user time limit. Never repair after abort.
         """
+        days = list(days)
+        if max_repairs is None:
+            max_repairs = min(24, max(4, 2 * len(days)))
         ex = self.executor
         old_deadline = ex.wall_deadline
         ex.wall_deadline = min(old_deadline or float("inf"), time.time() + max_seconds)
@@ -255,7 +258,11 @@ class PlanningWorkflow:
             while True:
                 changed = False
                 checks = {}
-                for day in days:
+                counts = ex._counts_by_instance(ex._working_list())
+                gap_days = {inst.date_iso for inst in ex.ctx.instances.values()
+                            if counts.get(inst.slot_key, 0) < inst.target}
+                # Cover missing positions before polishing already staffed days.
+                for day in sorted(days, key=lambda d: (d not in gap_days, d)):
                     if cancel_event.is_set() or ex._tool_seconds_left() <= 5:
                         result = {"complete": False, "reason": "Cancelled or final check budget exhausted", "proposals": []}
                     else:

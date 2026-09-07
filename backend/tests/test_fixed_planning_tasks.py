@@ -248,3 +248,33 @@ def test_final_audit_gets_reserved_time_without_extending_caller_limit(monkeypat
     assert observed_model == [started + 540]
     assert observed_audit == [started + 600]
     assert result['debugInfo']['agent']['completion']['required_checks_complete']
+
+
+def test_week_audit_does_not_stop_after_four_verified_coverage_repairs():
+    state = week_state(5)
+    state.clinicians[0].workingHoursPerWeek = 56
+    ex = executor(state, assignments([0]), end='2026-01-11')
+    audit = ex.workflow.final_audit(ex.ctx.target_day_isos, Event())
+    assert audit['repair_limit'] == 14
+    assert audit['repairs'] == 6
+    assert ex.best_quality[1] == 0
+    assert all(check['complete'] for check in audit['checks'].values())
+    assert ex.workflow.tasks()['coverage_complete']
+
+
+def test_final_repair_budget_prioritizes_missing_coverage_before_an_earlier_long_day():
+    state = make_app_state(clinicians=[make_clinician('a', 'Alice', working_hours_per_week=40),
+                                      make_clinician('b', 'Bob', working_hours_per_week=40)], slots=[
+        make_template_slot('early'),
+        make_template_slot('late', start_time='16:00', end_time='00:00', end_day_offset=1),
+        make_template_slot('tue', col_band_id='col-tue-1'),
+    ])
+    state.solverSettings['agentQualityProfile'] = 'balanced'
+    ex = executor(state, [make_assignment('early', 'early', MON, 'a', 'solver'),
+                          make_assignment('late', 'late', MON, 'a', 'solver')], end='2026-01-06')
+    # A checked soft improvement exists on Monday, but Tuesday is unstaffed.
+    assert ex.workflow.review_day(MON)['proposals']
+    audit = ex.workflow.final_audit([MON, '2026-01-06'], Event(), max_repairs=1)
+    assert audit['repairs'] == 1
+    assert ex.best_quality[1] == 0
+    assert any(a.dateISO == '2026-01-06' for a in ex.best_assignments)

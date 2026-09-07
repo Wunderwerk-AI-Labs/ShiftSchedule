@@ -1516,8 +1516,11 @@ Database Inspector
 - `get_plan_tasks` reports current coverage, day shape, weekly patterns and required
   checks. All checks expire after every plan change; old proposals cannot authorize
   an edit. Live progress counts checks for the current revision only.
-- Final verification starts from the retained best and may apply at most four
-  freshly revalidated strict improvements within 60 seconds and the run deadline.
+- Final verification starts from the retained best and may apply freshly revalidated strict improvements within 60 seconds and the run
+  deadline. The repair limit scales with the range: two per day, at least four,
+  at most 24; a fixed four-repair cap left verified coverage fixes unused in a
+  real Qwen week. Days with required coverage gaps are inspected before
+  polishing already staffed days.
   Ten percent of an explicit time budget (at most 60 seconds) is reserved
   for the final audit. Every repair restarts the complete audit. Abort disables repair. Remaining
   opportunities/budget limits stay explicit. Failed model days are retained as
