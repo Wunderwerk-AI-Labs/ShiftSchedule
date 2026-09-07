@@ -752,6 +752,16 @@ def agent_solve_range(
         notes.extend(unsolved_notes)
         metrics = unsolved["quality_metrics"]
         tasks = executor.workflow.tasks()
+        # Every exit reports the returned snapshot, including abort/provider
+        # failure paths that cannot afford another audit.
+        verified_days = {t["dateISO"] for t in tasks["tasks"]
+                         if t["kind"] == "required_check" and t["status"] == "complete"}
+        run_meta["days_planned"] = [d for d in ctx.target_day_isos if d in verified_days]
+        run_meta["days_skipped"] = [d for d in run_meta["days_skipped"] if d not in verified_days]
+        run_meta["days_incomplete"] = [d for d in ctx.target_day_isos
+                                       if d not in verified_days and d not in run_meta["days_skipped"]]
+        if run_meta["stop_reason"] == "completed" and not tasks["required_checks_complete"]:
+            run_meta["stop_reason"] = "partial"
         measured_wishes_unmet = bool(metrics["structured_wish_violations"] or metrics["workday_deviation_days"]
                                     or metrics["uncomfortable_days"] or unsolved["outside_preferred_times"])
         wishes_unknown = bool(metrics["free_text_wishes_require_review"] or any(

@@ -198,3 +198,14 @@ def test_classic_solver_includes_fixed_entries_in_constraint_context():
         {'slot-a__mon': (480, 960, 'loc-default')}, lambda *_: False)
     assert selected == context == {('clin-1', MON): ['slot-a__mon']}
     assert skipped == []
+
+
+def test_apply_safety_uses_pending_revision_tasks_even_with_old_completion_labels():
+    from backend.run_apply import result_safety
+    run_record = {'status': 'aborted', 'start_iso': MON, 'end_iso': MON,
+                  'result': {'assignments': [make_assignment().model_dump()], 'debugInfo': {'agent': {
+                      'daysPlanned': 1, 'daysIncomplete': [], 'daysSkipped': [],
+                      'tasks': {'plan_revision': 5, 'tasks': [{'kind': 'required_check', 'status': 'pending', 'dateISO': MON}]},
+                  }}}}
+    empty, incomplete = result_safety(run_record)
+    assert not empty and incomplete == [MON]
