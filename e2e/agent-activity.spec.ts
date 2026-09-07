@@ -37,7 +37,7 @@ async function start(page: Page) {
 async function send(page: Page, data: Partial<AgentActivityData>, token = run.id) {
   await progress(page, { event: "agent", data: { kind: "iteration", iteration: 17, max_iterations: 2000,
     moves_accepted: 23, time_ms: 100000, stage: "improve", phase_label: "Build the daily plan",
-    day_index: 2, total_days: 5, planning_date: "2026-01-06", ...data, run_token: token } });
+    day_index: 2, total_days: 5, planning_date: "2026-01-06", checks_progress: { revision: 23, total: 5, complete: 1 }, ...data, run_token: token } });
 }
 
 async function progress(page: Page, event: SolverProgressEvent) {

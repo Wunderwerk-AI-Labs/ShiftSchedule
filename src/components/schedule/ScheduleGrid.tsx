@@ -1,3 +1,4 @@
+import type { AssignmentIdentity } from "../../lib/assignmentPolicy";
 import type { DayType } from "../../api/client";
 import type { RenderedAssignment, TimeRange } from "../../lib/schedule";
 import { cx } from "../../lib/classNames";
@@ -78,6 +79,7 @@ type ScheduleGridProps = {
   getHasTimeConflict?: (clinicianId: string, dateISO: string, rowId: string) => boolean;
   enforceSameLocationPerDay?: boolean;
   onAddAssignment?: (args: { rowId: string; dateISO: string; clinicianId: string }) => void;
+  onToggleAssignmentLock?: (assignment: AssignmentIdentity) => void;
   onRemoveAssignment?: (args: { rowId: string; dateISO: string; assignmentId: string; clinicianId: string }) => void;
 };
 
@@ -114,6 +116,7 @@ export default function ScheduleGrid({
   enforceSameLocationPerDay = true,
   onAddAssignment,
   onRemoveAssignment,
+  onToggleAssignmentLock,
 }: ScheduleGridProps) {
   type DayColumn = NonNullable<ScheduleGridProps["dayColumns"]>[number];
   const columns: DayColumn[] =
@@ -559,6 +562,7 @@ export default function ScheduleGrid({
                         enableSlotOverrides={enableSlotOverrides}
                         onMoveWithinDay={onMoveWithinDay}
                         onRemoveAssignment={onRemoveAssignment}
+                        onToggleAssignmentLock={onToggleAssignmentLock}
                         dragState={dragState}
                         setDragState={setDragState}
                         hoveredClassCell={hoveredClassCell}
@@ -625,6 +629,7 @@ function RowSection({
   enableSlotOverrides,
   onMoveWithinDay,
   onRemoveAssignment,
+  onToggleAssignmentLock,
   dragState,
   setDragState,
   hoveredClassCell,
@@ -673,6 +678,7 @@ function RowSection({
     assignmentId: string;
     clinicianId: string;
   }) => void;
+  onToggleAssignmentLock?: (assignment: AssignmentIdentity) => void;
   onRemoveAssignment?: (args: {
     rowId: string;
     dateISO: string;
@@ -1000,6 +1006,9 @@ function RowSection({
                               !getHasEligibleClasses(assignment.clinicianId)
                             }
                             isManual={row.kind === "class" && assignment.source !== "solver"}
+                            isLocked={assignment.locked}
+                            onToggleLock={!readOnly && row.kind === "class" && assignment.source === "solver" && onToggleAssignmentLock
+                              ? () => onToggleAssignmentLock(assignment) : undefined}
                             isViolation={violatingAssignmentKeys?.has(violationKey)}
                             isDragging={isDraggingAssignment}
                             isDragFocus={isDragFocus || isDraggingAssignment}
@@ -1367,6 +1376,9 @@ function RowSection({
                               !getIsQualified(assignment.clinicianId, activeRow.id)
                             }
                             isManual={row.kind === "class" && assignment.source !== "solver"}
+                            isLocked={assignment.locked}
+                            onToggleLock={!readOnly && row.kind === "class" && assignment.source === "solver" && onToggleAssignmentLock
+                              ? () => onToggleAssignmentLock(assignment) : undefined}
                             isHighlighted={highlightedSplitShiftKeys?.has(violationKey)}
                             isViolation={highlightedAssignmentKeys?.has(violationKey)}
                             isDragging={isDraggingAssignment}

@@ -54,6 +54,7 @@ export type Holiday = {
 export type WorkPattern = {
   daysPerWeek?: number;
   dailyHours?: number;
+  dailyHoursTolerance?: number;
   preferredDaysOff?: Array<keyof PreferredWorkingTimes>;
 };
 
@@ -78,6 +79,7 @@ export type Assignment = {
   rowId: string;
   dateISO: string;
   clinicianId: string;
+  locked?: boolean;
   source?: AssignmentSource; // "manual" (default) or "solver" - tracks how assignment was created
 };
 
@@ -775,7 +777,21 @@ export type SolverAgentDebug = {
   daysPlanned?: number;
   /** ISO dates the agent could not plan (failed or never reached). */
   daysSkipped?: string[];
+  modelDaysSkipped?: string[];
   daysIncomplete?: string[];
+  quality_version?: number;
+  completion?: {
+    plan_revision: number;
+    workflow_finished: boolean;
+    required_checks_complete: boolean;
+    coverage_complete: boolean;
+    soft_wishes_fulfilled: boolean | null;
+    free_text_wishes_verified: boolean;
+  };
+  tasks?: { plan_revision: number; tasks: Array<{
+    id: string; kind: string; status: string; dateISO?: string; weekStartISO?: string; reason?: string;
+  }> };
+
   moves_accepted?: number;
   moves_rejected?: number;
   input_tokens?: number;
@@ -1100,6 +1116,7 @@ export type AgentActivityData = {
   time_ms: number;
   stage?: "seed" | "improve" | "finalize";
   sequence?: number;
+  checks_progress?: { revision: number; total: number; complete: number };
   phase_label?: string;
   planning_date?: string | null;
   day_index?: number | null;

@@ -416,6 +416,7 @@ def build_duty_digest(
             f"|{_section_list(c.preferredClassIds)}"
             f"|{c.workingHoursPerWeek if c.workingHoursPerWeek is not None else '-'}"
             f"|{worked_pct if worked_pct is not None else '-'}"
+            + (f"|soft work pattern: {c.workPattern.model_dump(exclude_none=True)}" if c.workPattern else "")
         )
     lines.append("")
     lines.append(
@@ -475,6 +476,7 @@ def build_day_digest(
             f"|{_section_list(c.preferredClassIds)}"
             f"|{c.workingHoursPerWeek if c.workingHoursPerWeek is not None else '-'}"
             f"|{worked_pct if worked_pct is not None else '-'}"
+            + (f"|soft work pattern: {c.workPattern.model_dump(exclude_none=True)}" if c.workPattern else "")
         )
     lines.append("")
     lines.append(
@@ -641,3 +643,18 @@ def build_review_digest(
         "summary."
     )
     return "\n".join(lines)
+
+
+_WORKFLOW_POLICY = """
+FIXED INPUT AND COMPLETION: Fixed assignments include manual entries and explicitly locked planner entries.
+Treat preassigned on-call/night duties as anchors: account for their hours and rest; never redistribute them.
+Use get_plan_tasks to see current required checks, coverage and soft work-pattern issues. Checks belong to
+one plan revision and expire after any change. Do not equate finished workflow, checked plan, full coverage
+and fulfilled wishes. Fixed excess is a reported limitation, not an instruction to change fixed duties.
+Workdays count assignment start dates (a night duty is one workday). Fractional targets are averaged over
+complete weeks; partial weeks cannot establish an underwork deficit. Prefer a checked proposal and apply
+it atomically. The harness may perform a bounded final repair and reports checks it could not finish.
+"""
+DAY_SYSTEM_PROMPT += _WORKFLOW_POLICY
+REVIEW_SYSTEM_PROMPT += _WORKFLOW_POLICY
+DUTY_SYSTEM_PROMPT += _WORKFLOW_POLICY

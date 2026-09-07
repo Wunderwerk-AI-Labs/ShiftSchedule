@@ -85,7 +85,7 @@ describe("ClinicSheetGrid", () => {
   it("renders assignments as plain surname text, not pills", () => {
     setup();
     const name = screen.getAllByText("Bergmann")[0];
-    expect(name.getAttribute("data-sheet-name")).toBe("true");
+    expect(name.closest("[data-sheet-name]")?.getAttribute("data-sheet-name")).toBe("true");
     expect(name.closest('[data-assignment-pill="true"]')).toBeNull();
   });
 

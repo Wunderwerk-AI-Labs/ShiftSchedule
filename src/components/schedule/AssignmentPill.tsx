@@ -1,3 +1,4 @@
+import AssignmentLockButton from "./AssignmentLockButton";
 import { cx } from "../../lib/classNames";
 import { memo, useMemo, useRef, useState, useLayoutEffect } from "react";
 import type { DragEventHandler, MouseEventHandler } from "react";
@@ -115,6 +116,8 @@ type AssignmentPillProps = {
   /** Manually placed (source !== "solver"): shows a small lock — automated
    * planning treats these as fixed and never moves them. */
   isManual?: boolean;
+  isLocked?: boolean;
+  onToggleLock?: () => void;
   isDragging?: boolean;
   isDragFocus?: boolean;
   className?: string;
@@ -134,6 +137,8 @@ function AssignmentPillImpl({
   isHighlighted = false,
   isViolation = false,
   isManual = false,
+  isLocked = false,
+  onToggleLock,
   isDragging = false,
   isDragFocus = false,
   className,
@@ -235,6 +240,7 @@ function AssignmentPillImpl({
             : showDragFocus
               ? "hover:border-slate-900 hover:bg-sky-200"
               : "hover:border-sky-300 hover:bg-sky-100 dark:hover:border-sky-400/60 dark:hover:bg-sky-900/60"),
+        onToggleLock && "min-h-7 pr-6",
         className,
       )}
     >
@@ -267,7 +273,12 @@ function AssignmentPillImpl({
           </div>
         </div>
       </div>
-      {isManual ? (
+      {onToggleLock ? (
+        <span className="absolute right-0 top-0 z-[150]">
+          <AssignmentLockButton name={name} locked={isLocked} onToggle={onToggleLock} />
+        </span>
+      ) : null}
+      {isManual || (isLocked && !onToggleLock) ? (
         // Lock badge: manual assignment, the planner never moves it. Same
         // circular badge language as the warning dot below, but in a neutral
         // tone (no signal color). Kept fully inside the pill so it can't be
@@ -369,6 +380,8 @@ function arePillPropsEqual(
     prev.isHighlighted === next.isHighlighted &&
     prev.isViolation === next.isViolation &&
     prev.isManual === next.isManual &&
+    prev.isLocked === next.isLocked &&
+    Boolean(prev.onToggleLock) === Boolean(next.onToggleLock) &&
     prev.isDragging === next.isDragging &&
     prev.isDragFocus === next.isDragFocus &&
     prev.draggable === next.draggable &&

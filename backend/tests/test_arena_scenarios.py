@@ -117,3 +117,12 @@ def test_daynight_scenario_splits_weekend_oncall():
         assert (s.endTime, s.endDayOffset) == ("20:00", 0)
         assert s.requiredSlots == 1
     assert "night slots added" in desc
+
+
+def test_fixed_pattern_scenario_keeps_actual_duties_and_changes_only_test_preferences():
+    state = load_state()
+    identities = [(a.id, a.rowId, a.dateISO, a.clinicianId) for a in state.assignments]
+    apply_scenario(state, 'fixed-patterns', '2026-02-02', '2026-02-08')
+    assert [(a.id, a.rowId, a.dateISO, a.clinicianId) for a in state.assignments] == identities
+    assert any(a.source == 'solver' and a.locked for a in state.assignments)
+    assert any(c.workPattern and c.workPattern.daysPerWeek == 2.5 for c in state.clinicians)

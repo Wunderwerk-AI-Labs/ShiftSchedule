@@ -353,7 +353,7 @@ export default function AutomatedPlanningPanel({
                     </span>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
                       Removes only assignments created by the automated planner.
-                      Your manually placed assignments will be kept.
+                      Manual and fixed assignments will be kept.
                     </span>
                   </button>
                   <button
@@ -362,11 +362,11 @@ export default function AutomatedPlanningPanel({
                     className="flex flex-col gap-1 rounded-lg border border-slate-200 p-3 text-left transition-colors hover:border-rose-300 hover:bg-rose-50 dark:border-slate-700 dark:hover:border-rose-600 dark:hover:bg-rose-900/30"
                   >
                     <span className="text-sm font-medium text-slate-800 dark:text-slate-100">
-                      Reset All
+                      Reset Unfixed
                     </span>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
-                      Removes all assignments in the selected timeframe,
-                      including manual, solver-generated, and pool assignments (Rest Day, Vacation).
+                      Removes unfixed assignments in the selected timeframe, including manual entries.
+                      Explicitly fixed assignments and vacations are kept.
                     </span>
                   </button>
                 </div>

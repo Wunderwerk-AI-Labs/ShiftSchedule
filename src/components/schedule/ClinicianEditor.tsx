@@ -574,7 +574,7 @@ export default function ClinicianEditor({
             </div>
           </div>
         </div>
-        <WorkPatternEditor value={clinician.workPattern}
+        <WorkPatternEditor value={clinician.workPattern} contractHours={clinician.workingHoursPerWeek}
           onChange={value => onUpdateWorkPattern?.(clinician.id, value)} />
         <div className="mt-4 space-y-2">
           {preferredWorkingDays.map((day) => {

@@ -331,6 +331,10 @@ export default function AgentActivityPanel({ events, elapsedMs = 0, currentPhase
             {status.thinking && waitSeconds >= 30 && <span> · Waiting for the model response; complex steps can take a few minutes.</span>}
           </div>
         )}
+        {status.checksProgress && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          Current plan: {status.checksProgress.complete}/{status.checksProgress.total} day checks complete.
+          Checks restart when assignments change.
+        </p>}
         {status.lastResult && <p className="mt-2 border-t border-slate-100 pt-2 text-xs leading-relaxed text-slate-600 dark:border-slate-800 dark:text-slate-300"><span className="font-medium">Last result: </span>{status.lastResult}</p>}
       </div>
 

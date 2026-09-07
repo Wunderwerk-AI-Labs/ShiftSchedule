@@ -21,6 +21,7 @@ import random
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from ..assignment_policy import is_protected_assignment
 from ..models import (
     AppState,
     Assignment,
@@ -638,7 +639,7 @@ def _mark_manual_assignments(
 
             # Determine source (manual vs solver)
             source = getattr(assignment, "source", "manual")
-            if source != "solver":
+            if is_protected_assignment(assignment):
                 source = "manual"
 
             # Add to assigned slots

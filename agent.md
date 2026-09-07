@@ -1491,3 +1491,43 @@ Database Inspector
 - Arena reporting separates model time and top-level tool time (nested calls
   are not double-counted), records candidate cache hits/misses and fails on
   new hard violations or changed fixed context.
+
+## v1.58 — fixed inputs and verified planning tasks
+
+- Assignment `locked` is independent of provenance. Legacy/manual entries remain
+  protected during replanning; explicitly fixed solver entries also survive draft
+  replacement, reset, save/import and forced stored-run apply. Changing fixation
+  invalidates the input fingerprint. Classic and monthly calendars expose an
+  accessible fix/unfix control on solver assignments. Reset Unfixed explicitly
+  clears manual entries too; direct user edits remain possible.
+- Balanced quality version 2 also scores actual workdays. Full ISO weeks use
+  integer target bounds; multiple full weeks additionally check fractional
+  averages. Partial weeks count known excess including all fixed week context,
+  but do not invent deficits for dates outside the planning range. Overnight
+  duties count on their starting date. Vacation/holiday target scaling is a soft
+  convention over Mon–Fri (all seven days when the target exceeds five), with
+  overlapping absences counted once. This is not a legal workday definition.
+- Optional `dailyHoursTolerance` expresses a soft ± range, including zero.
+  Leaving it blank preserves existing daily thresholds. A soft clock-time window
+  does not shorten an explicitly configured workday; mandatory windows still
+  cap it. Fixed duty burden is
+  reported separately from incremental burden; no fixed service is redistributed.
+  Classic remains the default; explicit work-pattern preferences are opt-in.
+- `get_plan_tasks` reports current coverage, day shape, weekly patterns and required
+  checks. All checks expire after every plan change; old proposals cannot authorize
+  an edit. Live progress counts checks for the current revision only.
+- Final verification starts from the retained best and may apply freshly revalidated strict improvements within 60 seconds and the run
+  deadline. The repair limit scales with the range: two per day, at least four,
+  at most 24; a fixed four-repair cap left verified coverage fixes unused in a
+  real Qwen week. Days with required coverage gaps are inspected before
+  polishing already staffed days.
+  Ten percent of an explicit time budget (at most 60 seconds) is reserved
+  for the final audit. Every repair restarts the complete audit. Abort disables repair. Remaining
+  opportunities/budget limits stay explicit. Failed model days are retained as
+  `modelDaysSkipped`, even if deterministic final repair recovers them.
+- Completion separates finished execution, completed bounded checks, required
+  coverage and measured wishes. Free-text wishes and partial-week deficits remain
+  unverified. Durable restart checkpoints and SSE event replay remain future work.
+- Arena scenario `fixed-patterns` keeps saved duties, marks them as locked solver
+  entries and adds synthetic personal work patterns to the isolated test fixture.
+  It never changes user calendars or saved preferences.

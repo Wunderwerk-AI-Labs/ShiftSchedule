@@ -19,13 +19,14 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..heuristic.solver_v2 import heuristic_solve_range_v2
+from ..assignment_policy import is_protected_assignment
 from ..constants import PLANNING_WISHES_MAX_CHARS
 from ..models import Assignment, SolveRangeRequest, AppState
 from ..scoring import build_scoring_context, open_slots, plan_stats
 from ..validation import validate_solver_rules
 from .config import AgentConfig
 from .progress import ProgressGuard
-from .quality import extra_metrics
+from .quality import QUALITY_VERSION, extra_metrics
 from .prompts import (
     DAY_SYSTEM_PROMPT,
     DEFAULT_AGENT_INSTRUCTIONS,
@@ -216,11 +217,16 @@ def agent_solve_range(
     # math (day shares, per-call timeouts, tool guards) is inf-safe; the
     # per-LLM-call cap keeps single hung requests bounded either way.
     timeout = payload.timeout_seconds
-    deadline = start_time + timeout if timeout else float("inf")
+    run_deadline = start_time + timeout if timeout else float("inf")
+    # Required verification needs usable search time after model planning.
+    # Reserve 10% (at most a minute); the original caller limit still bounds
+    # everything, and unlimited interactive runs remain unlimited.
+    audit_reserve = min(60.0, timeout * 0.1) if timeout else 0.0
+    deadline = run_deadline - audit_reserve
 
     # Replan semantics: assignments a previous SOLVER run left inside the
-    # solve range are replaceable, not fixed — only manual ones are
-    # untouchable (the UI deletes in-range solver assignments when applying
+    # solve range are replaceable unless explicitly locked; manual ones
+    # are also protected (the UI deletes in-range solver assignments when applying
     # a new plan anyway). Leaving them in `state` made the seed heuristic
     # double-book fully pre-planned days (observed on real practice data:
     # 29 duplicate drafts, 30 hard violations on a single day) and welded
@@ -238,7 +244,7 @@ def agent_solve_range(
         a
         for a in state.assignments
         if a.dateISO in target_days
-        and getattr(a, "source", "manual") == "solver"
+        and not is_protected_assignment(a)
         and not a.rowId.startswith("pool-")
     ]
     if replaced:
@@ -365,6 +371,11 @@ def agent_solve_range(
         data["max_iterations"] = config.max_iterations if config else None
         data["moves_accepted"] = executor.moves_accepted if executor is not None else 0
         data["time_ms"] = (time.time() - start_time) * 1000.0
+        if executor is not None:
+            workflow = executor.workflow
+            data["checks_progress"] = {"revision": workflow.revision, "total": len(ctx.target_day_isos),
+                "complete": sum(check.get("complete", False) and check.get("plan_revision") == workflow.revision
+                                for check in workflow.day_checks.values())}
         on_progress("agent", data)
 
     def agent_phase(label: str, *, day_index=None, planning_date=None) -> None:
@@ -556,7 +567,7 @@ def agent_solve_range(
                         "min_hours": round(daily_min / 60.0, 1),
                     }
                 )
-            comfort = executor._daily_target_minutes(cid, date_iso) + 60
+            comfort = executor._daily_comfort_minutes(cid, date_iso)
             if mins > comfort:
                 overlong_days.append(
                     {
@@ -658,7 +669,30 @@ def agent_solve_range(
             )
         return lines, unsolved
 
+    def run_final_checks():
+        if strategy == "day_by_day" and executor.moves_accepted == 0:
+            return  # preserve the explicit heuristic fallback for failed starts
+        returned = {(a.rowId, a.dateISO, a.clinicianId): a for a in executor.best_assignments}
+        if executor.current != returned:
+            executor.current = returned
+            executor.workflow.changed()
+        agent_phase("Verify the final plan and remaining gaps")
+        run_meta["model_days_skipped"] = sorted(set(run_meta["days_skipped"]))
+        executor.wall_deadline = run_deadline
+        audit = executor.workflow.final_audit(ctx.target_day_isos, cancel_event)
+        run_meta["final_audit"] = audit
+        run_meta["final_day_checks"] = audit["checks"]
+        run_meta["days_planned"] = [d for d, check in audit["checks"].items() if check["complete"]]
+        run_meta["days_incomplete"] = [d for d, check in audit["checks"].items() if not check["complete"]]
+        run_meta["days_skipped"] = [d for d in run_meta["days_skipped"] if d not in run_meta["days_planned"]]
+
     def finalize(status: str, extra_notes: List[str]) -> dict:
+        if status == "AGENT_COMPLETE" and "final_audit" not in run_meta:
+            run_final_checks()
+        returned = {(a.rowId, a.dateISO, a.clinicianId): a for a in executor.best_assignments}
+        if executor.current != returned:
+            executor.current = returned
+            executor.workflow.changed()
         if status == "ABORTED":
             run_meta["stop_reason"] = "aborted"
             run_meta["days_skipped"].extend(
@@ -666,7 +700,7 @@ def agent_solve_range(
                 and d not in run_meta["days_incomplete"]
             )
         elif run_meta["stop_reason"] == "completed" and (
-            run_meta["days_skipped"] or run_meta["days_incomplete"]
+            run_meta["days_skipped"] or run_meta["days_incomplete"] or run_meta.get("model_days_skipped")
         ):
             run_meta["stop_reason"] = "partial"
         if (
@@ -723,6 +757,32 @@ def agent_solve_range(
         unsolved_notes, unsolved = _unsolved_overview(best)
         notes.extend(unsolved_notes)
         metrics = unsolved["quality_metrics"]
+        tasks = executor.workflow.tasks()
+        # Every exit reports the returned snapshot, including abort/provider
+        # failure paths that cannot afford another audit.
+        verified_days = {t["dateISO"] for t in tasks["tasks"]
+                         if t["kind"] == "required_check" and t["status"] == "complete"}
+        run_meta["days_planned"] = [d for d in ctx.target_day_isos if d in verified_days]
+        run_meta["days_skipped"] = [d for d in run_meta["days_skipped"] if d not in verified_days]
+        run_meta["days_incomplete"] = [d for d in ctx.target_day_isos
+                                       if d not in verified_days and d not in run_meta["days_skipped"]]
+        if run_meta["stop_reason"] == "completed" and not tasks["required_checks_complete"]:
+            run_meta["stop_reason"] = "partial"
+        measured_wishes_unmet = bool(metrics["structured_wish_violations"] or metrics["workday_deviation_days"]
+                                    or metrics["uncomfortable_days"] or unsolved["outside_preferred_times"])
+        wishes_unknown = bool(metrics["free_text_wishes_require_review"] or any(
+            p["assessment"] != "complete_week" for p in metrics["workday_patterns"]))
+        completion = {"plan_revision": executor.workflow.revision,
+                      "workflow_finished": True, "required_checks_complete": tasks["required_checks_complete"],
+                      "coverage_complete": tasks["coverage_complete"],
+                      "soft_wishes_fulfilled": False if measured_wishes_unmet else (None if wishes_unknown else True),
+                      "free_text_wishes_verified": not bool(metrics["free_text_wishes_require_review"])}
+        if not tasks["required_checks_complete"]:
+            notes.append("Required checks remain open for the returned plan; completion is not verified.")
+        if metrics["workday_deviation_days"]:
+            notes.append(f"Workday targets: {metrics['workday_deviation_days']} day(s) deviation; {metrics['workday_fixed_excess_days']} excess day(s) already fixed.")
+        if run_meta.get("final_audit", {}).get("repairs"):
+            notes.append(f"Final verification applied {run_meta['final_audit']['repairs']} checked improvement(s), then repeated the required checks.")
         if metrics["structured_wish_violations"]:
             notes.append(f"Preferred days off not met: {metrics['structured_wish_violations']} clinician-day(s).")
         if metrics["free_text_wishes_require_review"]:
@@ -746,6 +806,7 @@ def agent_solve_range(
                     "stopReason": run_meta["stop_reason"],
                     "daysPlanned": len(run_meta["days_planned"]),
                     "daysSkipped": sorted(set(run_meta["days_skipped"])),
+                    "modelDaysSkipped": run_meta.get("model_days_skipped", sorted(set(run_meta["days_skipped"]))),
                     "daysIncomplete": sorted(set(run_meta["days_incomplete"])),
                     "moves_accepted": executor.moves_accepted,
                     "moves_rejected": executor.moves_rejected,
@@ -771,6 +832,10 @@ def agent_solve_range(
                     "moves": executor.accepted_move_log[:200],
                     # Structured closing report of what stays unsolved.
                     "unsolved": unsolved,
+                    "completion": completion,
+                    "tasks": tasks,
+                    "final_audit": run_meta.get("final_audit"),
+                    "quality_version": QUALITY_VERSION,
                     "final_day_checks": run_meta.get("final_day_checks", {}),
                     "quality_profile": ctx.settings.agentQualityProfile,
                     "quality_order": list(executor.quality_fields),
@@ -1544,25 +1609,7 @@ def agent_solve_range(
                 f"Final range review: {review_changes} additional change(s)."
             )
 
-        returned_state = {(a.rowId, a.dateISO, a.clinicianId): a for a in executor.best_assignments}
-        if executor.current != returned_state:
-            executor.current = returned_state
-            executor.workflow.changed()
-        agent_phase("Verify the final plan and remaining gaps")
-        final_checks = {}
-        for reviewed_day in list(run_meta["days_planned"]):
-            if cancel_event.is_set():
-                final_checks[reviewed_day] = {"complete": False, "reason": "Cancelled before final verification"}
-            elif executor.next_fillable_slot(reviewed_day) is not None:
-                final_checks[reviewed_day] = {"complete": False, "reason": "Direct placements remain or inspection budget exhausted"}
-            else:
-                final_checks[reviewed_day] = executor.workflow.review_day(reviewed_day)
-            if not final_checks[reviewed_day]["complete"]:
-                run_meta["days_planned"].remove(reviewed_day)
-                run_meta["days_incomplete"].append(reviewed_day)
-        if any(not check["complete"] for check in final_checks.values()):
-            extra_notes.append("Some earlier day reviews no longer confirm completion of the returned plan; see incomplete days.")
-        run_meta["final_day_checks"] = final_checks
+        run_final_checks()
 
         if (
             iterations_done >= config.max_iterations

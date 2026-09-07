@@ -918,7 +918,7 @@ export default function SolverInfoModal({
                       label: "Days",
                       value: `${agent.daysPlanned ?? 0} planned · ${
                         agent.daysSkipped.length
-                      } skipped`,
+                      } skipped · ${agent.daysIncomplete?.length ?? 0} checks open`,
                     });
                   }
                   return (
@@ -938,6 +938,27 @@ export default function SolverInfoModal({
                           </div>
                         ))}
                       </div>
+                      {agent.completion && (
+                        <div className="mt-3 rounded-lg bg-white/70 p-3 text-xs dark:bg-slate-900/50">
+                          <div className="font-medium">Verified result · plan {agent.completion.plan_revision}</div>
+                          <ul className="mt-2 space-y-1">
+                            <li>Run: {agent.completion.workflow_finished ? "finished" : "in progress"}</li>
+                            <li>Required checks: {agent.completion.required_checks_complete ? "complete" : "still open"}</li>
+                            <li>Required positions: {agent.completion.coverage_complete ? "all filled" : "gaps remain"}</li>
+                            <li>Work preferences: {agent.completion.soft_wishes_fulfilled === true ? "measured wishes met" : agent.completion.soft_wishes_fulfilled === false ? "deviations remain" : "not fully assessable"}</li>
+                          </ul>
+                          {!!agent.modelDaysSkipped?.length && <p className="mt-2">The model skipped {agent.modelDaysSkipped.length} day(s); the final checks above describe the returned plan after bounded repair.</p>}
+                          {!agent.completion.free_text_wishes_verified && <p className="mt-2">Free-text wishes need human review.</p>}
+                          <p className="mt-2 text-slate-500">Checks use a bounded search; they do not prove that the plan is optimal.</p>
+                          {agent.tasks?.tasks.some(task => task.kind === "required_check" && task.status !== "complete") && (
+                            <details className="mt-2"><summary className="cursor-pointer">Open checks</summary>
+                              <ul className="mt-1 space-y-1">{agent.tasks.tasks.filter(task => task.kind === "required_check" && task.status !== "complete").map(task => (
+                                <li key={task.id}>{task.dateISO}: {task.reason}</li>
+                              ))}</ul>
+                            </details>
+                          )}
+                        </div>
+                      )}
                       {agent.summary && (
                         <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs italic leading-relaxed text-slate-600 dark:bg-slate-900/50 dark:text-slate-300">
                           &ldquo;{agent.summary}&rdquo;

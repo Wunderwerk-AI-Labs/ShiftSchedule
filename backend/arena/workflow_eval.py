@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import json
 import time
 
+from backend.assignment_policy import is_protected_assignment
 from backend.agent.tools import PlanToolExecutor
 from backend.arena.run import load_state, apply_scenario
 from backend.scoring import build_scoring_context, plan_stats
@@ -20,7 +21,7 @@ def evaluate(start, days, scenario="base", profile="classic", neighborhood=False
     apply_scenario(state, scenario, start, end)
     state.solverSettings.update(agentQualityProfile=profile, agentNeighborhoodSearch=neighborhood)
     reference = [a for a in state.assignments if start <= a.dateISO <= end
-                 and a.source == "solver" and not a.rowId.startswith("pool-")]
+                 and not is_protected_assignment(a) and not a.rowId.startswith("pool-")]
     state.assignments = [a for a in state.assignments if a not in reference]
     ctx = build_scoring_context(state, start, end, only_fill_required=True)
     begun = time.monotonic()

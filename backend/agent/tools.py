@@ -35,9 +35,9 @@ from ..validation import (
 )
 from .workflow import PlanningWorkflow, SEARCH_TOOLS, InspectionBudgetExhausted
 from .neighborhood import analyze_bottlenecks, explain_unfilled, repair_neighborhood
-from .quality import BALANCED_FIELDS, CLASSIC_FIELDS, extra_metrics
+from .quality import QUALITY_VERSION, BALANCED_FIELDS, CLASSIC_FIELDS, extra_metrics
 from .activity import tool_receipt
-from ..planning_preferences import daily_min_minutes, daily_target_minutes
+from ..planning_preferences import daily_comfort_minutes, daily_min_minutes, daily_target_minutes
 
 AGENT_ASSIGNMENT_SOURCE = "solver"
 
@@ -51,12 +51,18 @@ DAY_ONLY_TOOL_NAMES = {
     "suggest_balance_moves",
     "apply_proposal",
     "get_search_history",
+    "get_plan_tasks",
     "repair_neighborhood",
     "analyze_bottlenecks",
     "explain_unfilled",
 }
 
 TOOL_SPECS_RAW = [
+    {
+        "name": "get_plan_tasks",
+        "description": "Current revision-bound worklist: required checks, coverage gaps, short/long days and weekly work patterns. Fixed load is context, never a reassignment target. Plan changes invalidate all old checks. Resolve coverage first, then review controllable soft wishes.",
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
     {
         "name": "repair_neighborhood",
         "description": "Search a joint rearrangement of at most three days around dateISO, preserving fixed entries and outside-week/rest context. Use after simple same-day rescue fails. Returns checked proposal IDs, search limits and status. Never interpret no proposal as proof of infeasibility. This is a bounded coverage-repair experiment.",
@@ -707,6 +713,7 @@ class PlanToolExecutor:
         new_hard = [v for v in hard if self._is_new_hard(v)]
         return {
             "quality_profile": self.ctx.settings.agentQualityProfile,
+            "quality_version": QUALITY_VERSION,
             "quality_order": list(self.quality_fields),
             "plan_revision": self.workflow.revision,
             "additional_quality_metrics": extra_metrics(self, working),
@@ -740,6 +747,7 @@ class PlanToolExecutor:
             "explain_unfilled": lambda args: explain_unfilled(self, args),
             "apply_proposal": self.workflow.apply,
             "get_search_history": lambda args: self.workflow.summary(),
+            "get_plan_tasks": lambda args: self.workflow.tasks(),
             "get_plan_overview": self._tool_overview,
             "get_violations": self._tool_violations,
             "list_open_slots": self._tool_open_slots,
@@ -1025,6 +1033,7 @@ class PlanToolExecutor:
                 {"startISO": v.startISO, "endISO": v.endISO}
                 for v in clinician.vacations or []
             ],
+            "work_pattern": clinician.workPattern.model_dump(exclude_none=True) if clinician.workPattern else None,
             "planning_wishes": (
                 self.scrub_text(clinician.planningWishes)
                 if clinician.planningWishes
@@ -1294,6 +1303,11 @@ class PlanToolExecutor:
     # days exist — 12h/24h duty slots — but as SINGLE slots someone chose,
     # never as an auto-glued sequence of ordinary day work.
     MAX_CHAIN_TARGET_MINUTES = 10 * 60
+
+    def _daily_comfort_minutes(self, cid: str, date_iso: str) -> int:
+        clinician = self.clinicians_by_id.get(cid)
+        window = self.ctx.window_by_clinician_date.get((cid, date_iso))
+        return daily_comfort_minutes(clinician, window) if clinician else 540
 
     def _daily_target_minutes(self, cid: str, date_iso: str) -> int:
         """Preferred daily workload: contract/5 (an average workday), else
@@ -2010,8 +2024,8 @@ class PlanToolExecutor:
             if mins <= 0:
                 continue
             target = self._daily_target_minutes(cid, date_iso)
-            if mins > target + 60:
-                overlong.append((mins - (target + 60), cid))
+            if mins > self._daily_comfort_minutes(cid, date_iso):
+                overlong.append((mins - self._daily_comfort_minutes(cid, date_iso), cid))
             daily_min = self._daily_min_minutes(cid, date_iso)
             if (
                 daily_min is not None
@@ -2088,7 +2102,7 @@ class PlanToolExecutor:
                 # with the overshoot so the model can weigh it (a slightly
                 # long day that clears a mini-stint is often the better
                 # trade). Beyond that it would just be the next problem day.
-                r_comfort = self._daily_target_minutes(rid, date_iso) + 60
+                r_comfort = self._daily_comfort_minutes(rid, date_iso)
                 if r_after > r_comfort + 60:
                     continue
                 r_min = self._daily_min_minutes(rid, date_iso)
@@ -2234,7 +2248,7 @@ class PlanToolExecutor:
                     "clinicianId": self._alias(cid),
                     "day_hours": round(minutes[cid] / 60.0, 1),
                     "preferred_max_hours": round(
-                        (self._daily_target_minutes(cid, date_iso) + 60) / 60.0, 1
+                        (self._daily_comfort_minutes(cid, date_iso)) / 60.0, 1
                     ),
                 }
                 for _, cid in overlong
@@ -2362,7 +2376,7 @@ class PlanToolExecutor:
                     # the preferred span — a 6h stint on top of a 7.5h block
                     # is not "Anschlussverwendung", it is a double shift.
                     span_after = (block_end - block_start) + (inst.end - inst.start)
-                    if existing + span_after > target + 60:
+                    if existing + span_after > min(self._daily_comfort_minutes(cid, date_iso), self.MAX_CHAIN_TARGET_MINUTES + 60):
                         continue
                     # Preferred-time position: once the day meets its
                     # minimum, stop growing past the preference window edge

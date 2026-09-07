@@ -83,7 +83,7 @@ def main():
     parser.add_argument("--days", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=1200)
     parser.add_argument("--model", default="VnimanieAI/Qwen3.8-Flash-Next-W4A16")
-    parser.add_argument("--scenario", choices=["base", "vacation-wave", "understaffed", "crunch", "oncall", "pinned", "daynight"], default="base")
+    parser.add_argument("--scenario", choices=["base", "vacation-wave", "understaffed", "crunch", "oncall", "pinned", "daynight", "fixed-patterns"], default="base")
     parser.add_argument("--strategy", choices=["day_by_day", "repair"], default="day_by_day")
     parser.add_argument("--variant", choices=["baseline", "focused"], default="baseline")
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default=None)
@@ -198,6 +198,8 @@ def main():
     executor = executors[-1] if executors else None
     stats = plan_stats(executor.ctx, executor.best_assignments).model_dump() if executor else None
     report = {"variant": args.variant, "start": args.start, "days": args.days,
+              "quality_version": agent.get("quality_version"), "completion": agent.get("completion"),
+              "final_audit": agent.get("final_audit"),
               "quality_profile": args.quality_profile, "neighborhood": args.neighborhood,
               "scenario": args.scenario, "model": config.model, "duration_seconds": round(time.monotonic() - started, 1),
               "stop_reason": agent.get("stopReason"), "days_planned": agent.get("daysPlanned"),

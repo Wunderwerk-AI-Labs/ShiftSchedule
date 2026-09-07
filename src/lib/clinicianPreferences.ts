@@ -7,17 +7,18 @@ import type {
 
 export const normalizeWorkPattern = (raw?: WorkPattern | null): WorkPattern | undefined => {
   if (!raw || typeof raw !== "object") return undefined;
-  const bounded = (value: unknown, max: number) =>
-    typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= max
+  const bounded = (value: unknown, max: number, min = 1) =>
+    typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
       ? value : undefined;
   const daysPerWeek = bounded(raw.daysPerWeek, 7);
   const dailyHours = bounded(raw.dailyHours, 24);
+  const dailyHoursTolerance = bounded(raw.dailyHoursTolerance, 24, 0);
   const preferredDaysOff = Array.isArray(raw.preferredDaysOff)
     ? [...new Set(raw.preferredDaysOff.filter(day =>
         ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(day)))]
     : [];
-  return daysPerWeek || dailyHours || preferredDaysOff.length
-    ? { daysPerWeek, dailyHours, preferredDaysOff } : undefined;
+  return daysPerWeek || dailyHours || dailyHoursTolerance !== undefined || preferredDaysOff.length
+    ? { daysPerWeek, dailyHours, ...(dailyHoursTolerance !== undefined ? { dailyHoursTolerance } : {}), preferredDaysOff } : undefined;
 };
 
 const DEFAULT_START = "07:00";

@@ -7,6 +7,7 @@ import json
 from fastapi import HTTPException
 
 from . import solver_runs
+from .assignment_policy import is_protected_assignment
 from .db import _get_connection, _utcnow_iso
 from .models import AppState, Assignment
 from .snapshots import _write_auto_backup
@@ -28,7 +29,7 @@ def _candidate(state, run):
     vacations = {c.id: c.vacations for c in state.clinicians}
     kept = [a for a in state.assignments if (
         a.rowId.startswith("pool-") or not start <= a.dateISO <= end
-        or a.source != "solver"
+        or is_protected_assignment(a)
         or any(v.startISO <= a.dateISO <= v.endISO for v in vacations.get(a.clinicianId, []))
     )]
     identity = lambda a: (a.rowId, a.dateISO, a.clinicianId)
@@ -70,7 +71,9 @@ def _new_violations(state, baseline, combined, only_required):
 def result_safety(run):
     result = run.get("result") or {}
     agent = (result.get("debugInfo") or {}).get("agent") or {}
-    dates = sorted(set(agent.get("daysSkipped", []) + agent.get("daysIncomplete", [])
+    pending_checks = [t["dateISO"] for t in (agent.get("tasks") or {}).get("tasks", [])
+                      if t.get("kind") == "required_check" and t.get("status") != "complete" and t.get("dateISO")]
+    dates = sorted(set(pending_checks + agent.get("daysSkipped", []) + agent.get("daysIncomplete", [])
                        + [g["dateISO"] for g in agent.get("unsolved", {}).get("open_slots", [])]))
     empty_abort = run["status"] == "aborted" and not any(
         run["start_iso"] <= a.get("dateISO", "") <= run["end_iso"]

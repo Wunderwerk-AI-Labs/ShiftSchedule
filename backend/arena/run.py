@@ -54,6 +54,25 @@ def apply_scenario(state: AppState, scenario: str, start_iso: str, end_iso: str)
     # Stable clinician order so the scenario is reproducible.
     ids = [c.id for c in state.clinicians]
 
+    if scenario == "fixed-patterns":
+        # Same saved duties, now explicitly fixed despite solver provenance.
+        # No real user's preferences or calendar are changed by arena fixtures.
+        from ..models import WorkPattern
+        on_call = state.solverSettings.get("onCallRestClassId")
+        blocks = {b.id for b in state.weeklyTemplate.blocks if b.sectionId == on_call}
+        slots = {s.id for loc in state.weeklyTemplate.locations for s in loc.slots if s.blockId in blocks}
+        count = 0
+        for a in state.assignments:
+            if a.rowId in slots:
+                a.source, a.locked = "solver", True
+                count += 1
+        for c in state.clinicians:
+            hours = c.workingHoursPerWeek
+            if hours and hours > 0:
+                days = 2.5 if hours <= 24 else 5
+                c.workPattern = WorkPattern(daysPerWeek=days, dailyHours=hours/days, dailyHoursTolerance=1)
+        return f"{count} existing duties explicitly fixed; synthetic fractional/full-time work-pattern preferences"
+
     if scenario == "vacation-wave":
         # Five clinicians (every 4th) on vacation across the whole range:
         # forces the agent to re-cover their slots with a thinner roster.
@@ -247,7 +266,7 @@ def main() -> None:
         "--scenario", default="base",
         choices=[
             "base", "vacation-wave", "understaffed", "crunch", "oncall",
-            "pinned", "daynight",
+            "pinned", "daynight", "fixed-patterns",
         ],
         help="transform the fixture into a harder case",
     )
