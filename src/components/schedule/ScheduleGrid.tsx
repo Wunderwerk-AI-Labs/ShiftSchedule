@@ -1,3 +1,4 @@
+import type { AssignmentIdentity } from "../../lib/assignmentPolicy";
 import type { DayType } from "../../api/client";
 import type { RenderedAssignment, TimeRange } from "../../lib/schedule";
 import { cx } from "../../lib/classNames";
@@ -78,7 +79,7 @@ type ScheduleGridProps = {
   getHasTimeConflict?: (clinicianId: string, dateISO: string, rowId: string) => boolean;
   enforceSameLocationPerDay?: boolean;
   onAddAssignment?: (args: { rowId: string; dateISO: string; clinicianId: string }) => void;
-  onToggleAssignmentLock?: (assignmentId: string) => void;
+  onToggleAssignmentLock?: (assignment: AssignmentIdentity) => void;
   onRemoveAssignment?: (args: { rowId: string; dateISO: string; assignmentId: string; clinicianId: string }) => void;
 };
 
@@ -677,7 +678,7 @@ function RowSection({
     assignmentId: string;
     clinicianId: string;
   }) => void;
-  onToggleAssignmentLock?: (assignmentId: string) => void;
+  onToggleAssignmentLock?: (assignment: AssignmentIdentity) => void;
   onRemoveAssignment?: (args: {
     rowId: string;
     dateISO: string;
@@ -1007,7 +1008,7 @@ function RowSection({
                             isManual={row.kind === "class" && assignment.source !== "solver"}
                             isLocked={assignment.locked}
                             onToggleLock={!readOnly && row.kind === "class" && assignment.source === "solver" && onToggleAssignmentLock
-                              ? () => onToggleAssignmentLock(assignment.id) : undefined}
+                              ? () => onToggleAssignmentLock(assignment) : undefined}
                             isViolation={violatingAssignmentKeys?.has(violationKey)}
                             isDragging={isDraggingAssignment}
                             isDragFocus={isDragFocus || isDraggingAssignment}
@@ -1377,7 +1378,7 @@ function RowSection({
                             isManual={row.kind === "class" && assignment.source !== "solver"}
                             isLocked={assignment.locked}
                             onToggleLock={!readOnly && row.kind === "class" && assignment.source === "solver" && onToggleAssignmentLock
-                              ? () => onToggleAssignmentLock(assignment.id) : undefined}
+                              ? () => onToggleAssignmentLock(assignment) : undefined}
                             isHighlighted={highlightedSplitShiftKeys?.has(violationKey)}
                             isViolation={highlightedAssignmentKeys?.has(violationKey)}
                             isDragging={isDraggingAssignment}

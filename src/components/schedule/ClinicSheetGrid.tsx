@@ -1,3 +1,4 @@
+import type { AssignmentIdentity } from "../../lib/assignmentPolicy";
 import AssignmentLockButton from "./AssignmentLockButton";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
@@ -115,7 +116,7 @@ type ClinicSheetGridProps = {
   getHasTimeConflict?: (clinicianId: string, dateISO: string, rowId: string) => boolean;
   enforceSameLocationPerDay?: boolean;
   onAddAssignment?: (args: { rowId: string; dateISO: string; clinicianId: string }) => void;
-  onToggleAssignmentLock?: (assignmentId: string) => void;
+  onToggleAssignmentLock?: (assignment: AssignmentIdentity) => void;
   onRemoveAssignment?: (args: {
     rowId: string;
     dateISO: string;
@@ -352,7 +353,7 @@ export default function ClinicSheetGrid({
         <span className="min-w-0 truncate">{displayName}</span>
         {!isPoolCell && assignment.source === "solver" && !readOnly && onToggleAssignmentLock && (
           <AssignmentLockButton name={name} locked={assignment.locked ?? false}
-            onToggle={() => onToggleAssignmentLock(assignment.id)} />
+            onToggle={() => onToggleAssignmentLock(assignment)} />
         )}
       </span>
     );

@@ -2,12 +2,13 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import type { AppState } from '../src/api/client';
 
-async function calendar(page: Page, sheet = false) {
+async function calendar(page: Page, sheet = false, repeatedId = false) {
   let state = JSON.parse(readFileSync(new URL('../backend/default_state.json', import.meta.url), 'utf8')) as AppState;
   state.revision = 'r0';
   state.solverSettings = { ...state.solverSettings, scheduleLayout: sheet ? 'clinicSheet' : 'classic' };
   const slot = state.weeklyTemplate!.locations[0].slots[0];
   state.assignments = [{ id: 'fixed-test', rowId: slot.id, dateISO: '2026-01-05', clinicianId: state.clinicians[0].id, source: 'solver' }];
+  if (repeatedId) state.assignments.push({ ...state.assignments[0], dateISO: '2026-01-12' });
   let revision = 0;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -32,11 +33,12 @@ async function calendar(page: Page, sheet = false) {
 }
 
 for (const reset of ['Reset Solver Only', 'Reset Unfixed']) {
-  test(`fixed planner assignment survives ${reset} and can be unfixed`, async ({ page }) => {
+  test(`fixed planner assignment survives ${reset} and can be unfixed`, async ({ page }, testInfo) => {
     const api = await calendar(page);
     await page.getByRole('button', { name: /^Fix assignment for/ }).first().click();
     await expect.poll(() => api.state().assignments[0]?.locked).toBe(true);
     await expect(page.getByRole('button', { name: /^Unfix assignment for/ }).first()).toHaveAttribute('aria-pressed', 'true');
+    await page.screenshot({ path: testInfo.outputPath('fixed-calendar.png'), animations: 'disabled' });
     await page.getByRole('button', { name: 'Reset', exact: true }).click();
     await page.getByRole('button', { name: new RegExp(reset) }).click();
     await expect(page.getByRole('button', { name: /^Unfix assignment for/ }).first()).toBeVisible();
@@ -49,13 +51,23 @@ for (const reset of ['Reset Solver Only', 'Reset Unfixed']) {
   });
 }
 
-test('monthly sheet can fix an assignment with the keyboard and retain it after reload', async ({ page }) => {
+test('monthly sheet can fix an assignment with the keyboard and retain it after reload', async ({ page }, testInfo) => {
   const api = await calendar(page, true);
   const fix = page.getByRole('button', { name: /^Fix assignment for/ }).first();
-  await fix.focus();
-  await page.keyboard.press('Enter');
+  await expect.poll(() => api.state().revision).not.toBe('r0');
+  await fix.press('Enter');
   await expect.poll(() => api.state().assignments[0]?.locked).toBe(true);
   await page.reload();
   await expect(page.getByRole('button', { name: /^Unfix assignment for/ }).first()).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /^Unfix assignment for/ }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('fixed-month.png'), animations: 'disabled' });
   expect(api.errors).toEqual([]);
+});
+
+
+test('fixing an imported entry does not affect another date with the same imported id', async ({ page }) => {
+  const api = await calendar(page, false, true);
+  await page.getByRole('button', { name: /^Fix assignment for/ }).first().click();
+  await expect.poll(() => api.state().assignments.find(a => a.dateISO === '2026-01-05')?.locked).toBe(true);
+  expect(api.state().assignments.find(a => a.dateISO === '2026-01-12')?.locked).not.toBe(true);
 });

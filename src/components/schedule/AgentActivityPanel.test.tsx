@@ -83,3 +83,15 @@ it("distinguishes temporary working changes from a better saved plan", () => {
   expect(within(feed).getByText(/earlier best kept/)).toBeTruthy();
   expect(within(feed).queryByText(/Better plan saved/)).toBeNull();
 });
+
+it('shows only checks for the current plan after a revision invalidates previous reviews', () => {
+  const { rerender } = render(<AgentActivityPanel events={[ev({
+    kind: 'phase', checks_progress: { revision: 4, total: 7, complete: 3 },
+  })]} />);
+  expect(screen.getByText(/Current plan: 3\/7 day checks complete/)).toBeVisible();
+  rerender(<AgentActivityPanel events={[ev({
+    kind: 'moves_applied', checks_progress: { revision: 5, total: 7, complete: 0 },
+  })]} />);
+  expect(screen.getByText(/Current plan: 0\/7 day checks complete/)).toBeVisible();
+  expect(screen.queryByText(/Current plan: 3\/7/)).toBeNull();
+});

@@ -1,4 +1,4 @@
-import { isProtectedAssignment } from "../lib/assignmentPolicy";
+import { isProtectedAssignment, type AssignmentIdentity } from "../lib/assignmentPolicy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { appendAgentEvent } from "../lib/agentActivity";
@@ -1652,9 +1652,9 @@ export default function WeeklySchedulePage({
   };
 
   // Reset only solver-generated assignments (keep manual ones)
-  const handleToggleAssignmentLock = useCallback((assignmentId: string) => {
+  const handleToggleAssignmentLock = useCallback((assignment: AssignmentIdentity) => {
     setAssignmentMap(prev => new Map([...prev].map(([key, list]) => [key,
-      list.map(item => item.id === assignmentId && item.source === "solver"
+      list.map(item => item.id === assignment.id && item.rowId === assignment.rowId && item.dateISO === assignment.dateISO && item.source === "solver"
         ? { ...item, locked: !item.locked } : item),
     ])));
   }, []);
