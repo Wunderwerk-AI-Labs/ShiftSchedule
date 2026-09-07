@@ -1508,7 +1508,9 @@ Database Inspector
   convention over Mon–Fri (all seven days when the target exceeds five), with
   overlapping absences counted once. This is not a legal workday definition.
 - Optional `dailyHoursTolerance` expresses a soft ± range, including zero.
-  Leaving it blank preserves existing daily thresholds. Fixed duty burden is
+  Leaving it blank preserves existing daily thresholds. A soft clock-time window
+  does not shorten an explicitly configured workday; mandatory windows still
+  cap it. Fixed duty burden is
   reported separately from incremental burden; no fixed service is redistributed.
   Classic remains the default; explicit work-pattern preferences are opt-in.
 - `get_plan_tasks` reports current coverage, day shape, weekly patterns and required
@@ -1516,7 +1518,8 @@ Database Inspector
   an edit. Live progress counts checks for the current revision only.
 - Final verification starts from the retained best and may apply at most four
   freshly revalidated strict improvements within 60 seconds and the run deadline.
-  Every repair restarts the complete audit. Abort disables repair. Remaining
+  Ten percent of an explicit time budget (at most 60 seconds) is reserved
+  for the final audit. Every repair restarts the complete audit. Abort disables repair. Remaining
   opportunities/budget limits stay explicit. Failed model days are retained as
   `modelDaysSkipped`, even if deterministic final repair recovers them.
 - Completion separates finished execution, completed bounded checks, required

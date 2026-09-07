@@ -217,11 +217,16 @@ def agent_solve_range(
     # math (day shares, per-call timeouts, tool guards) is inf-safe; the
     # per-LLM-call cap keeps single hung requests bounded either way.
     timeout = payload.timeout_seconds
-    deadline = start_time + timeout if timeout else float("inf")
+    run_deadline = start_time + timeout if timeout else float("inf")
+    # Required verification needs usable search time after model planning.
+    # Reserve 10% (at most a minute); the original caller limit still bounds
+    # everything, and unlimited interactive runs remain unlimited.
+    audit_reserve = min(60.0, timeout * 0.1) if timeout else 0.0
+    deadline = run_deadline - audit_reserve
 
     # Replan semantics: assignments a previous SOLVER run left inside the
-    # solve range are replaceable, not fixed — only manual ones are
-    # untouchable (the UI deletes in-range solver assignments when applying
+    # solve range are replaceable unless explicitly locked; manual ones
+    # are also protected (the UI deletes in-range solver assignments when applying
     # a new plan anyway). Leaving them in `state` made the seed heuristic
     # double-book fully pre-planned days (observed on real practice data:
     # 29 duplicate drafts, 30 hard violations on a single day) and welded
@@ -673,6 +678,7 @@ def agent_solve_range(
             executor.workflow.changed()
         agent_phase("Verify the final plan and remaining gaps")
         run_meta["model_days_skipped"] = sorted(set(run_meta["days_skipped"]))
+        executor.wall_deadline = run_deadline
         audit = executor.workflow.final_audit(ctx.target_day_isos, cancel_event)
         run_meta["final_audit"] = audit
         run_meta["final_day_checks"] = audit["checks"]

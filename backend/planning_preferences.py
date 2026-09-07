@@ -13,7 +13,12 @@ def daily_target_minutes(clinician, window=None):
             target = min(target, 600)  # preserve the legacy default
     else:
         target = 480
-    if window is not None:
+    explicit_pattern = pattern and (pattern.dailyHours is not None or pattern.daysPerWeek is not None
+                                    or pattern.dailyHoursTolerance is not None)
+    # A preferred clock-time window is a separate wish, not a request to
+    # shorten an explicitly configured working day. Preserve legacy targets
+    # when no explicit duration/workday pattern was configured.
+    if window is not None and (window[0] == "mandatory" or not explicit_pattern):
         target = min(target, max(60, window[2]-window[1]))
     return max(60, target)
 

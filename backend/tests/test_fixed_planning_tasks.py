@@ -209,3 +209,42 @@ def test_apply_safety_uses_pending_revision_tasks_even_with_old_completion_label
                   }}}}
     empty, incomplete = result_safety(run_record)
     assert not empty and incomplete == [MON]
+
+
+def test_explicit_day_length_is_independent_of_a_soft_clock_time_window():
+    from backend.planning_preferences import daily_target_minutes
+    c = make_clinician(working_hours_per_week=40)
+    c.workPattern = WorkPattern(dailyHours=8, dailyHoursTolerance=1)
+    preferred = ('preference', 420, 450)
+    assert daily_target_minutes(c, preferred) == 480
+    assert daily_min_minutes(c, preferred) == 420
+    assert daily_comfort_minutes(c, preferred) == 540
+    # A mandatory availability window still caps the achievable daily target.
+    assert daily_target_minutes(c, ('mandatory', 480, 840)) == 360
+    c.workPattern = None
+    assert daily_target_minutes(c, preferred) == 60  # unchanged legacy default
+
+
+def test_final_audit_gets_reserved_time_without_extending_caller_limit(monkeypatch):
+    from backend.agent.workflow import PlanningWorkflow
+    from backend.agent.tools import PlanToolExecutor
+    observed_model, observed_audit = [], []
+    actual_execute = PlanToolExecutor.execute
+    actual_audit = PlanningWorkflow.final_audit
+    def execute(ex, *args, **kwargs):
+        if not observed_model:
+            observed_model.append(ex.wall_deadline)
+        return actual_execute(ex, *args, **kwargs)
+    def audit(workflow, *args, **kwargs):
+        observed_audit.append(workflow.executor.wall_deadline)
+        return actual_audit(workflow, *args, **kwargs)
+    monkeypatch.setattr(PlanToolExecutor, 'execute', execute)
+    monkeypatch.setattr(PlanningWorkflow, 'final_audit', audit)
+    started = time.time()
+    result = agent_solve_range(_payload(timeout_seconds=600), make_app_state(), MockCancelEvent(),
+                              ProgressRecorder(), started, provider=MockProvider([
+                                  {'tool_calls': [{'name': 'get_plan_overview', 'arguments': {}}]}, {'text': 'Done.'}
+                              ]), config=_config())
+    assert observed_model == [started + 540]
+    assert observed_audit == [started + 600]
+    assert result['debugInfo']['agent']['completion']['required_checks_complete']
