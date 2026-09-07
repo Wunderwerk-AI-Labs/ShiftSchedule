@@ -136,6 +136,7 @@ def test_complete_maps_tool_calls_even_on_finish_stop():
     )
     assert response.stop_reason == "tool_use"
     assert response.tool_calls[0].name == "list_open_slots"
+    assert response.output_truncated is False
     assert response.tool_calls[0].arguments == {"limit": 5}
     assert response.usage["input_tokens"] == 100
     assert response.usage["output_tokens"] == 20
@@ -159,6 +160,7 @@ def test_complete_maps_length_and_broken_arguments():
     # tool calls still win over the finish_reason.
     assert response.tool_calls[0].arguments == {}
     assert response.stop_reason == "tool_use"
+    assert response.output_truncated is True
     # Plain chat calls (tools=[]) omit the parameter — some servers reject
     # an empty tools array.
     assert "tools" not in provider._client.last_kwargs
@@ -170,6 +172,7 @@ def test_complete_maps_length_and_broken_arguments():
     )
     assert response2.stop_reason == "max_tokens"
     assert response2.text == "done"
+    assert response2.output_truncated is True
 
 
 def test_reasoning_content_surfaces_when_no_answer_text():

@@ -175,6 +175,7 @@ class AnthropicProvider(LLMProvider):
             # verbatim); replay_text is the fallback for consistency.
             replay_text=text,
             raw_content=raw_content,
+            output_truncated=stop_reason == "max_tokens",
         )
 
     @staticmethod

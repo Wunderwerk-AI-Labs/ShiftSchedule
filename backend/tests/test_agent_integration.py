@@ -107,6 +107,22 @@ def test_agent_mode_without_script_uses_default_mock_behaviour(solve_client):
     assert len(body["assignments"]) == 1
 
 
+def test_full_model_response_survives_subprocess_storage_and_reload(solve_client, tmp_path, monkeypatch):
+    _seeded_state()
+    text = "START Äé🩺\n" + "Every received line is retained.\n" * 2000 + "FINAL CHARACTER Ω"
+    script_path = tmp_path / "long-model-response.json"
+    script_path.write_text(json.dumps([{"text": text}]))
+    monkeypatch.setenv("AGENT_MOCK_SCRIPT", str(script_path))
+    run = solve_via_endpoint(solve_client, {
+        "startISO": MON, "endISO": MON, "only_fill_required": True,
+        "solver_mode": "agent", "agent_strategy": "repair", "timeout_seconds": 60,
+    })
+    assert run["status"] == "finished"
+    reloaded = solve_client.get(f"/v1/solve/runs/{run['id']}")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["result"]["debugInfo"]["agent"]["thoughts"] == [f"[iteration 1] {text}"]
+
+
 def test_agent_mode_defaults_to_day_by_day(solve_client):
     """Since v1.38 a solve WITHOUT agent_strategy runs the day-by-day
     planner (the mock's inspection-only default applies no moves, so the

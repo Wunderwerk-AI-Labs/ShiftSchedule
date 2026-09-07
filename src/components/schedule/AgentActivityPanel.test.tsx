@@ -4,9 +4,9 @@ import AgentActivityPanel from "./AgentActivityPanel";
 import type { AgentActivityData } from "../../api/client";
 
 // Distinct start/end markers so we can prove the WHOLE text is shown, not a
-// clamped preview. ~1700 chars, well past THOUGHT_PREVIEW_CHARS (220).
+// clamped preview. Also exceed the former 24,000-character server limit.
 const LONG =
-  "START-MARKER " + "reasoning detail ".repeat(100) + "END-MARKER";
+  "START-MARKER " + "reasoning detail ".repeat(3000) + "END-MARKER";
 
 function ev(data: Partial<AgentActivityData>): AgentActivityData {
   return {
@@ -61,6 +61,21 @@ describe("AgentActivityPanel full-text dialog", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Include model text" }));
     expect(screen.getByText("Filling Monday gaps.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /show full text/i })).toBeNull();
+  });
+
+  it("distinguishes a provider limit from the preview and retains an open response as activity advances", () => {
+    const events = [ev({ text: LONG, output_truncated: true })];
+    const { rerender } = render(<AgentActivityPanel events={events} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include model text" }));
+    expect(screen.getByText(/characters received/)).toBeVisible();
+    expect(screen.getByText("Model response limit reached.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show full text" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/response may end mid-sentence/)).toBeVisible();
+    rerender(<AgentActivityPanel events={[ev({ kind: "iteration", iteration: 200 })]} />);
+    expect(dialog.querySelector("pre")?.textContent).toBe(LONG);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

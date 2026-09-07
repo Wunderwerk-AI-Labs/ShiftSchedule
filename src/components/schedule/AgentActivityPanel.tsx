@@ -92,15 +92,19 @@ function StageStepper({ stage }: { stage: AgentStage }) {
 // inline toggle inside the small scroll area could never show them whole).
 const THOUGHT_PREVIEW_CHARS = 220;
 
-export type ThoughtDetails = { text: string; reasoning: boolean };
+export type ThoughtDetails = { text: string; reasoning: boolean; outputTruncated?: boolean };
+
+const RESPONSE_LIMIT_NOTICE = "The model reached its response limit. All received text is shown, but the response may end mid-sentence.";
 
 function ThoughtRow({
   text,
   reasoning,
+  outputTruncated,
   onShowFull,
 }: {
   text: string;
   reasoning: boolean;
+  outputTruncated?: boolean;
   onShowFull: (details: ThoughtDetails) => void;
 }) {
   const long = text.length > THOUGHT_PREVIEW_CHARS;
@@ -125,12 +129,14 @@ function ThoughtRow({
         {long && (
           <button
             type="button"
-            onClick={() => onShowFull({ text, reasoning })}
-            className="mt-0.5 block text-[11px] font-medium text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300"
+            onClick={() => onShowFull({ text, reasoning, outputTruncated })}
+            className={`${buttonSmall.base} mt-1 block`}
           >
             Show full text
           </button>
         )}
+        {long && <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Preview · {text.length.toLocaleString()} characters received</p>}
+        {outputTruncated && <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Model response limit reached.</p>}
       </div>
     </div>
   );
@@ -190,7 +196,7 @@ function ThoughtDialog({
         className="absolute inset-0 cursor-default bg-slate-900/50 backdrop-blur-[1px]"
       />
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={details.reasoning ? "Model reasoning (full text)" : "Model output (full text)"} tabIndex={-1} className="relative flex max-h-full w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
           <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
             {details.reasoning ? "Model reasoning (full text)" : "Model output (full text)"}
           </div>
@@ -198,20 +204,21 @@ function ThoughtDialog({
             <button
               type="button"
               onClick={() => void copy()}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              className={buttonSmall.base}
             >
               {copied ? "Copied ✓" : "Copy"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              className={buttonSmall.base}
             >
               Close
             </button>
           </div>
         </div>
-        <div className="overflow-y-auto px-4 py-3">
+        {details.outputTruncated && <p className="shrink-0 border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">{RESPONSE_LIMIT_NOTICE}</p>}
+        <div className="min-h-0 overflow-y-auto px-4 py-3">
           <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-slate-700 dark:text-slate-200">
             {details.text}
           </pre>
@@ -267,6 +274,7 @@ function FeedRow({
       <ThoughtRow
         text={entry.text}
         reasoning={entry.reasoning}
+        outputTruncated={entry.outputTruncated}
         onShowFull={onShowFullThought}
       />
     );

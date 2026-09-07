@@ -7,7 +7,7 @@ export type AgentStage = "seed" | "improve" | "finalize";
 
 export type AgentFeedEntry =
   | { type: "move"; key: string; timeMs: number; move: AgentMoveItem; improved: boolean; retainedBest?: boolean }
-  | { type: "thought"; key: string; timeMs: number; text: string; reasoning: boolean }
+  | { type: "thought"; key: string; timeMs: number; text: string; reasoning: boolean; outputTruncated?: boolean }
   | { type: "rejected"; key: string; timeMs: number; count: number; reason: string }
   | { type: "tools"; key: string; timeMs: number; label: string; summary?: string; outcome?: string; durationMs?: number }
   | { type: "notice"; key: string; timeMs: number; label: string; warning?: boolean };
@@ -154,6 +154,7 @@ export function deriveAgentStatus(events: AgentActivityData[]): AgentStatus {
         timeMs: event.time_ms,
         text: event.text,
         reasoning: event.reasoning === true,
+        outputTruncated: event.output_truncated === true,
       });
     } else if (event.kind === "moves_rejected") {
       feed.push({

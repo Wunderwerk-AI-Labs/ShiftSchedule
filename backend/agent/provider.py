@@ -103,6 +103,9 @@ class ProviderResponse:
     # harness around ``complete``. Summed over successful calls to report the
     # endpoint's average generation speed (output tokens / generation time).
     generation_seconds: float = 0.0
+    # Provider ended generation at its output limit, including tool-call turns.
+    # Independent of stop_reason so reporting does not change tool execution.
+    output_truncated: bool = False
 
 
 class LLMProvider(ABC):
