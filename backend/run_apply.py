@@ -7,6 +7,7 @@ import json
 from fastapi import HTTPException
 
 from . import solver_runs
+from .assignment_policy import is_protected_assignment
 from .db import _get_connection, _utcnow_iso
 from .models import AppState, Assignment
 from .snapshots import _write_auto_backup
@@ -28,7 +29,7 @@ def _candidate(state, run):
     vacations = {c.id: c.vacations for c in state.clinicians}
     kept = [a for a in state.assignments if (
         a.rowId.startswith("pool-") or not start <= a.dateISO <= end
-        or a.source != "solver"
+        or is_protected_assignment(a)
         or any(v.startISO <= a.dateISO <= v.endISO for v in vacations.get(a.clinicianId, []))
     )]
     identity = lambda a: (a.rowId, a.dateISO, a.clinicianId)

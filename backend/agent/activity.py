@@ -15,6 +15,10 @@ def tool_receipt(name: str, result: dict, *, failed: bool = False) -> dict:
             text = "Changes not applied; the working draft was kept."
         return {"summary": text, "outcome": "ok" if result.get("applied") or result.get("valid") or result.get("already_applied") else "warning"}
 
+    if name == "get_plan_tasks":
+        pending = sum(t.get("kind") == "required_check" and t.get("status") != "complete" for t in result.get("tasks", []))
+        return {"summary": f"Required checks still open: {pending}. Coverage {'complete' if result.get('coverage_complete') else 'has gaps'}.",
+                "outcome": "warning" if pending else "ok"}
     parts = []
     for field in ("candidates", "rescues", "offers", "proposals"):
         if isinstance(result.get(field), list):

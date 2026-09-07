@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { WorkPattern } from "../../api/client";
 import { normalizeWorkPattern } from "../../lib/clinicianPreferences";
@@ -28,4 +28,19 @@ describe("personal work patterns", () => {
       .toEqual({ daysPerWeek: undefined, dailyHours: 8, preferredDaysOff: ["mon"] });
     expect(normalizeWorkPattern({ daysPerWeek: 9, dailyHours: -1 })).toBeUndefined();
   });
+});
+
+it('keeps an explicit zero tolerance during save and import', () => {
+  expect(normalizeWorkPattern({ dailyHours: 8, dailyHoursTolerance: 0 }))
+    .toEqual({ daysPerWeek: undefined, dailyHours: 8, dailyHoursTolerance: 0, preferredDaysOff: [] });
+  expect(normalizeWorkPattern({ dailyHoursTolerance: -1 })).toBeUndefined();
+  const changed = vi.fn();
+  render(<WorkPatternEditor value={{ dailyHours: 8 }} onChange={changed} />);
+  fireEvent.change(screen.getByLabelText('Daily hours tolerance (±)'), { target: { value: '0' } });
+  expect(changed.mock.calls[0][0].dailyHoursTolerance).toBe(0);
+});
+
+it('explains inconsistent weekly and daily wishes without imposing an availability rule', () => {
+  render(<WorkPatternEditor value={{ dailyHours: 8, daysPerWeek: 2.5 }} contractHours={40} onChange={() => {}} />);
+  expect(screen.getByText(/This pattern totals 20 h\/week/)).toBeVisible();
 });

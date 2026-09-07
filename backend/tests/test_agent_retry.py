@@ -243,10 +243,14 @@ def test_persistent_day_failure_skips_day_and_continues():
     assert result["debugInfo"]["solver_status"] == "AGENT_COMPLETE"
     assert {(a["rowId"], a["dateISO"]) for a in result["assignments"]} == {
         ("slot-mon", MON),
+        ("slot-tue", TUE),
         ("slot-wed", WED),
     }
-    assert agent["daysSkipped"] == [TUE]
-    assert agent["daysPlanned"] == 2
+    assert agent["modelDaysSkipped"] == [TUE]
+    assert agent["daysSkipped"] == []
+    assert agent["daysPlanned"] == 3
+    assert agent["final_audit"]["repairs"] == 1
+    assert agent["completion"]["required_checks_complete"]
     assert agent["stopReason"] == "partial"
     assert any("day skipped" in n for n in result["notes"])
     # A lone failed day is no abort: the final range review still ran.
@@ -268,16 +272,18 @@ def test_k_consecutive_failures_abort_remaining_days():
     agent = result["debugInfo"]["agent"]
     # Day 4 and the review never contacted the provider.
     assert provider.turn == 4
-    assert agent["daysSkipped"] == [TUE, WED, THU]
-    assert agent["daysPlanned"] == 1
+    assert agent["modelDaysSkipped"] == [TUE, WED, THU]
+    assert agent["daysSkipped"] == []
+    assert agent["daysPlanned"] == 4
+    assert agent["final_audit"]["repairs"] == 3
+    assert agent["completion"]["required_checks_complete"]
     assert agent["stopReason"] == "provider_error"
     assert any("consecutive day(s) failed" in n for n in result["notes"])
     assert not any(n.startswith("Final range review:") for n in result["notes"])
-    # Best plan so far (day 1) is returned, not a fallback.
+    # Code can repair checked placements without another provider call.
+    # The provider failure remains explicit even when the returned plan is complete.
     assert result["debugInfo"]["solver_status"] == "AGENT_COMPLETE"
-    assert [(a["rowId"], a["dateISO"]) for a in result["assignments"]] == [
-        ("slot-mon", MON)
-    ]
+    assert {a["dateISO"] for a in result["assignments"]} == {MON, TUE, WED, THU}
 
 
 def test_duty_pre_pass_error_does_not_abort_days():

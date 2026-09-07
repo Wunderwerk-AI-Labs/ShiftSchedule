@@ -33,6 +33,7 @@ export type Assignment = {
   rowId: string;
   dateISO: string; // YYYY-MM-DD
   clinicianId: string;
+  locked?: boolean;
   source?: AssignmentSource; // "manual" (default) or "solver" - tracks how assignment was created
 };
 

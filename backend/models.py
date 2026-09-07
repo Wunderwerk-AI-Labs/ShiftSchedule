@@ -81,6 +81,7 @@ class WorkPattern(BaseModel):
     """Explicit soft work preferences; never overrides availability or caps."""
     daysPerWeek: Optional[float] = Field(default=None, ge=1, le=7, allow_inf_nan=False)
     dailyHours: Optional[float] = Field(default=None, ge=1, le=24, allow_inf_nan=False)
+    dailyHoursTolerance: Optional[float] = Field(default=None, ge=0, le=24, allow_inf_nan=False)
     preferredDaysOff: List[Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]] = Field(default_factory=list)
 
 
@@ -114,7 +115,8 @@ class Assignment(BaseModel):
     rowId: str
     dateISO: str
     clinicianId: str
-    source: Optional[Literal["manual", "solver"]] = None  # tracks how assignment was created
+    source: Optional[Literal["manual", "solver"]] = None
+    locked: bool = False  # explicit fixation, independent of provenance
 
 
 class MinSlots(BaseModel):

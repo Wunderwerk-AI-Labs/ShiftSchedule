@@ -13,6 +13,7 @@ export type AgentFeedEntry =
   | { type: "notice"; key: string; timeMs: number; label: string; warning?: boolean };
 
 const ACTIVE_TOOL_LABELS: Record<string, string> = {
+  get_plan_tasks: "Checking remaining planning tasks",
   get_plan_overview: "Reviewing coverage and plan quality",
   get_violations: "Checking scheduling rules",
   list_open_slots: "Finding open positions",
@@ -56,6 +57,7 @@ export function formatActivityTime(ms: number): string {
 
 /** Human wording for inspection tool calls shown in the live feed. */
 const TOOL_LABELS: Record<string, string> = {
+  get_plan_tasks: "reviewed remaining planning tasks",
   get_plan_overview: "reviewed the plan status",
   get_violations: "checked rule violations",
   list_open_slots: "scanned for open slots",
@@ -96,6 +98,7 @@ export type AgentStatus = {
   dayIndex: number | null;
   totalDays: number | null;
   planningDate: string | null;
+  checksProgress?: AgentActivityData["checks_progress"];
   currentAction: string;
   actionStartedMs: number;
   lastResult: string | null;
@@ -203,6 +206,7 @@ export function deriveAgentStatus(events: AgentActivityData[]): AgentStatus {
     dayIndex: context?.day_index ?? null,
     totalDays: context?.total_days ?? null,
     planningDate: context?.planning_date ?? null,
+    checksProgress: last?.checks_progress,
     currentAction,
     actionStartedMs: activeTool?.time_ms ?? last?.time_ms ?? 0,
     lastResult,

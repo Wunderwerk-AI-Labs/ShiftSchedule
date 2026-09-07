@@ -1,3 +1,4 @@
+import { isProtectedAssignment } from "../lib/assignmentPolicy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { appendAgentEvent } from "../lib/agentActivity";
@@ -928,7 +929,7 @@ export default function WeeklySchedulePage({
     for (const list of assignmentMap.values()) {
       for (const a of list) {
         // Only include manual assignments (source !== "solver") within the solve range
-        if (a.source !== "solver" && a.dateISO >= startISO && a.dateISO <= endISO) {
+        if (isProtectedAssignment(a) && a.dateISO >= startISO && a.dateISO <= endISO) {
           out.push(a);
         }
       }
@@ -1568,7 +1569,7 @@ export default function WeeklySchedulePage({
     const capturedExistingAssignments: Assignment[] = [];
     for (const list of assignmentMap.values()) {
       for (const a of list) {
-        if (a.source !== "solver" && a.dateISO >= args.startISO && a.dateISO <= args.endISO) {
+        if (isProtectedAssignment(a) && a.dateISO >= args.startISO && a.dateISO <= args.endISO) {
           capturedExistingAssignments.push(a);
         }
       }
@@ -1651,6 +1652,13 @@ export default function WeeklySchedulePage({
   };
 
   // Reset only solver-generated assignments (keep manual ones)
+  const handleToggleAssignmentLock = useCallback((assignmentId: string) => {
+    setAssignmentMap(prev => new Map([...prev].map(([key, list]) => [key,
+      list.map(item => item.id === assignmentId && item.source === "solver"
+        ? { ...item, locked: !item.locked } : item),
+    ])));
+  }, []);
+
   const handleResetSolver = (args: { startISO: string; endISO: string }) => {
     setAutoPlanError(null);
     setAssignmentMap((prev) => {
@@ -1663,7 +1671,7 @@ export default function WeeklySchedulePage({
         // Keep manual assignments (source === "manual" or undefined/missing) and vacation assignments
         // Assignments without a source field are treated as manual (legacy data)
         const filtered = list.filter(
-          (item) => item.source !== "solver" || isOnVacation(item.clinicianId, keyDate)
+          (item) => isProtectedAssignment(item) || isOnVacation(item.clinicianId, keyDate)
         );
         if (filtered.length === 0) next.delete(key);
         else next.set(key, filtered);
@@ -1681,7 +1689,7 @@ export default function WeeklySchedulePage({
         const { rowId, dateISO: keyDate } = splitAssignmentKey(key);
         if (!rowId || !keyDate) continue;
         if (keyDate < args.startISO || keyDate > args.endISO) continue;
-        const filtered = list.filter((item) => isOnVacation(item.clinicianId, keyDate));
+        const filtered = list.filter((item) => item.locked || isOnVacation(item.clinicianId, keyDate));
         if (filtered.length === 0) next.delete(key);
         else next.set(key, filtered);
       }
@@ -3721,6 +3729,7 @@ export default function WeeklySchedulePage({
               onClinicianClick={(clinicianId) => openClinicianEditor(clinicianId)}
               onAddAssignment={handleAddAssignment}
               onRemoveAssignment={handleRemoveAssignment}
+              onToggleAssignmentLock={handleToggleAssignmentLock}
               onMoveWithinDay={handleMoveWithinDay}
             />
           ) : (
@@ -3798,6 +3807,7 @@ export default function WeeklySchedulePage({
             onClinicianClick={(clinicianId) => openClinicianEditor(clinicianId)}
             onAddAssignment={handleAddAssignment}
             onRemoveAssignment={handleRemoveAssignment}
+              onToggleAssignmentLock={handleToggleAssignmentLock}
             onMoveWithinDay={handleMoveWithinDay}
             onCellClick={() => {}}
           />

@@ -91,7 +91,7 @@ describe("PublicWeekPage", () => {
       expect(screen.getByText("Bergmann")).toBeTruthy();
     });
     // Sheet markers: plain-text surname, no classic pill wrapper, German weekday header.
-    expect(screen.getByText("Bergmann").getAttribute("data-sheet-name")).toBe("true");
+    expect(screen.getByText("Bergmann").closest("[data-sheet-name]")?.getAttribute("data-sheet-name")).toBe("true");
     expect(document.querySelector('[data-assignment-pill="true"]')).toBeNull();
     expect(screen.getAllByText("Montag").length).toBeGreaterThan(0);
   });

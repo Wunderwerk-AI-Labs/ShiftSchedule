@@ -20,6 +20,8 @@ def daily_target_minutes(clinician, window=None):
 
 def daily_min_minutes(clinician, window=None):
     pattern = clinician.workPattern
+    if pattern and pattern.dailyHoursTolerance is not None:
+        return max(1, daily_target_minutes(clinician, window) - round(pattern.dailyHoursTolerance * 60))
     if pattern and (pattern.dailyHours is not None or pattern.daysPerWeek is not None):
         return max(1, daily_target_minutes(clinician, window)//2)
     if window is not None:
@@ -28,3 +30,9 @@ def daily_min_minutes(clinician, window=None):
     if contract is not None and contract > 0:
         return max(1, round(contract*60/5)//2)
     return None
+
+
+def daily_comfort_minutes(clinician, window=None):
+    pattern = clinician.workPattern
+    tolerance = pattern.dailyHoursTolerance if pattern and pattern.dailyHoursTolerance is not None else 1
+    return daily_target_minutes(clinician, window) + round(tolerance * 60)

@@ -114,3 +114,10 @@ export const pillLabel = {
     "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
   ),
 } as const;
+
+/** Compact, keyboard-accessible control for assignment fixation. */
+export const buttonAssignmentLock = cx(
+  "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500",
+  "hover:bg-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-600",
+  "dark:text-slate-300 dark:hover:bg-slate-700", disabledBase,
+);

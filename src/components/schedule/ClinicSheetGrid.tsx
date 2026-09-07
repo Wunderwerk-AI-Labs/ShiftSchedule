@@ -1,3 +1,4 @@
+import AssignmentLockButton from "./AssignmentLockButton";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { DragEvent as ReactDragEvent, ReactNode } from "react";
 import { cx } from "../../lib/classNames";
@@ -114,6 +115,7 @@ type ClinicSheetGridProps = {
   getHasTimeConflict?: (clinicianId: string, dateISO: string, rowId: string) => boolean;
   enforceSameLocationPerDay?: boolean;
   onAddAssignment?: (args: { rowId: string; dateISO: string; clinicianId: string }) => void;
+  onToggleAssignmentLock?: (assignmentId: string) => void;
   onRemoveAssignment?: (args: {
     rowId: string;
     dateISO: string;
@@ -144,6 +146,7 @@ export default function ClinicSheetGrid({
   enforceSameLocationPerDay = true,
   onAddAssignment,
   onRemoveAssignment,
+  onToggleAssignmentLock,
   onMoveWithinDay,
   onClinicianClick,
 }: ClinicSheetGridProps) {
@@ -339,14 +342,18 @@ export default function ClinicSheetGrid({
               }
         }
         className={cx(
-          "block truncate px-0.5 text-[11px] leading-[20px]",
+          "flex min-w-0 items-center px-0.5 text-[11px] leading-[24px]",
           textClass,
           isUnqualified && "underline decoration-amber-500 decoration-wavy",
           !readOnly && "cursor-grab active:cursor-grabbing hover:bg-black/5",
           isBeingDragged && "opacity-40",
         )}
       >
-        {displayName}
+        <span className="min-w-0 truncate">{displayName}</span>
+        {!isPoolCell && assignment.source === "solver" && !readOnly && onToggleAssignmentLock && (
+          <AssignmentLockButton name={name} locked={assignment.locked ?? false}
+            onToggle={() => onToggleAssignmentLock(assignment.id)} />
+        )}
       </span>
     );
   };
@@ -396,7 +403,7 @@ export default function ClinicSheetGrid({
         onKeyDown={
           canEdit
             ? (e) => {
-                if (e.key !== "Enter" && e.key !== " ") return;
+                if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
                 e.preventDefault();
                 (e.currentTarget as HTMLElement).click();
               }

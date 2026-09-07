@@ -183,7 +183,7 @@ def test_control_assignment_change_is_detected(client):
     assert response.json()["detail"]["code"] == "calendar_changed"
 
 
-def test_premature_day_end_is_reported_as_incomplete(client):
+def test_premature_day_end_is_repaired_and_verified_before_reporting_completion(client):
     state = make_app_state(slots=[
         make_template_slot("slot-a__mon", col_band_id="col-mon-1"),
         make_template_slot("slot-a__tue", col_band_id="col-tue-1"),
@@ -202,13 +202,14 @@ def test_premature_day_end_is_reported_as_incomplete(client):
         state, threading.Event(), lambda *args: None, time.time(),
         provider=provider, config=AgentConfig(provider="mock"),
     )
-    assert {a["dateISO"] for a in result["assignments"]} == {TUE}
+    assert {a["dateISO"] for a in result["assignments"]} == {MON, TUE}
     meta = result["debugInfo"]["agent"]
-    assert meta["daysPlanned"] == 1
-    assert meta["daysSkipped"] == []
-    assert meta["stopReason"] == "partial"
-    assert meta["daysIncomplete"] == [MON]
-    assert any(gap["dateISO"] == MON for gap in meta["unsolved"]["open_slots"])
+    assert meta["daysPlanned"] == 2
+    assert meta["daysSkipped"] == meta["daysIncomplete"] == []
+    assert meta["stopReason"] == "completed"
+    assert meta["final_audit"]["repairs"] == 1
+    assert meta["completion"]["required_checks_complete"] and meta["completion"]["coverage_complete"]
+    assert not meta["unsolved"]["open_slots"]
 
 
 def test_equal_quality_latest_plan_is_streamed_for_abort_recovery(client):
@@ -344,3 +345,20 @@ def test_stagnation_guard_allows_exploration_but_bounds_cycles():
     assert guard.observe("b") == "continue"
     assert guard.observe("a") == "stop"
     assert guard.observe("c") == "continue"
+
+
+def test_assignment_fixed_after_run_start_survives_forced_apply(client):
+    a = draft()
+    seed_run(make_app_state(assignments=[a]), [])
+    state = _load_state(USER)
+    state.assignments[0].locked = True
+    _save_state(state, USER)
+    response = client.post('/v1/solve/runs/review-run/apply')
+    assert response.status_code == 409
+    assert response.json()['detail']['code'] == 'calendar_changed'
+    revision = _load_state(USER).revision
+    response = client.post('/v1/solve/runs/review-run/apply', params={'force': 'true', 'expected_revision': revision})
+    assert response.status_code == 200, response.text
+    saved = _load_state(USER)
+    assert len(saved.assignments) == 1
+    assert saved.assignments[0].locked and saved.assignments[0].source == 'solver'

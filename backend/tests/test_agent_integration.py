@@ -412,10 +412,14 @@ def test_day_by_day_failed_day_is_skipped_through_endpoint(
     assert body["debugInfo"]["solver_status"] == "AGENT_COMPLETE"
     assert {(a["rowId"], a["dateISO"]) for a in body["assignments"]} == {
         ("slot-mon", MON),
+        ("slot-tue", TUE),
         ("slot-wed", WED),
     }
     agent = body["debugInfo"]["agent"]
-    assert agent["daysSkipped"] == [TUE]
-    assert agent["daysPlanned"] == 2
+    assert agent["modelDaysSkipped"] == [TUE]
+    assert agent["daysSkipped"] == []
+    assert agent["daysPlanned"] == 3
+    assert agent["final_audit"]["repairs"] == 1
+    assert agent["completion"]["required_checks_complete"]
     assert agent["stopReason"] == "partial"
     assert any("day skipped" in n for n in body["notes"])

@@ -6,6 +6,7 @@ already checked moves, never a second mutable copy of the calendar.
 from collections import OrderedDict, deque
 from copy import deepcopy
 import json
+import time
 
 
 SEARCH_TOOLS = {
@@ -28,6 +29,7 @@ class PlanningWorkflow:
         self.proposal_counter = 0
         self.search_counter = 0
         self.searches = deque(maxlen=80)
+        self.day_checks = {}
         self.cache = OrderedDict()
         self.cache_budgets = {}
         self.direct_checks = OrderedDict()
@@ -161,6 +163,11 @@ class PlanningWorkflow:
                 "note": "Only current=true results describe this plan. No bounded search proves global infeasibility."}
 
     def review_day(self, day):
+        result = {**self._review_day(day), "plan_revision": self.revision}
+        self.day_checks[day] = result
+        return result
+
+    def _review_day(self, day):
         """Run required checks in code before accepting a model's end-turn."""
         ex = self.executor
         if ex._tool_seconds_left() <= 5:
@@ -195,3 +202,95 @@ class PlanningWorkflow:
                     return {"complete": False, "reason": f"{name} was not fully checked", "proposals": []}
                 break
         return {"complete": True, "reason": "Required bounded checks completed", "proposals": []}
+
+    def tasks(self):
+        """Generate the worklist from current assignments, never from model claims."""
+        from .quality import extra_metrics
+        ex = self.executor
+        working = ex._working_list()
+        counts = ex._counts_by_instance(working)
+        rows = []
+        for day in ex.ctx.target_day_isos:
+            check = self.day_checks.get(day, {})
+            current = check.get("plan_revision") == self.revision
+            rows.append({"id": f"review:{day}", "kind": "required_check", "dateISO": day,
+                         "status": "complete" if current and check.get("complete") else "pending",
+                         "reason": check.get("reason", "Not checked") if current else "Plan changed or not checked",
+                         "proposal_ids": check.get("proposals", []) if current else []})
+        for inst in ex.ctx.instances.values():
+            missing = max(0, inst.target - counts.get(inst.slot_key, 0))
+            if missing:
+                rows.append({"id": f"coverage:{inst.slot_key}", "kind": "coverage", "dateISO": inst.date_iso,
+                             "slot_key": ex._alias_slot_key(inst.slot_key), "status": "open", "missing": missing})
+        metrics = extra_metrics(ex, working)
+        for detail in metrics["day_shape_details"]:
+            rows.append({"id": f"day-shape:{detail['clinicianId']}:{detail['dateISO']}",
+                         "kind": "day_shape", **detail, "status": "fixed" if detail["fixed_excess_minutes"] and detail["fixed_minutes"] == detail["minutes"] else "review"})
+        for detail in metrics["workday_patterns"]:
+            if detail["deviation_days"] or detail["assessment"] != "complete_week":
+                rows.append({"id": f"workdays:{detail['clinicianId']}:{detail['weekStartISO']}",
+                             "kind": "workday_pattern", **detail,
+                             "status": "fixed" if detail["fixed_excess_days"] >= detail["deviation_days"] > 0 else "review"})
+        for detail in metrics["workday_averages"]:
+            if detail["additional_deviation_days"]:
+                rows.append({"id": f"workday-average:{detail['clinicianId']}", "kind": "workday_average",
+                             **detail, "status": "review"})
+        return {"plan_revision": self.revision,
+                "required_checks_complete": all(r["status"] == "complete" for r in rows if r["kind"] == "required_check"),
+                "coverage_complete": not any(r["kind"] == "coverage" for r in rows),
+                "tasks": [dict(row, plan_revision=self.revision) for row in rows],
+                "note": "Fixed load stays in the plan. Review tasks are soft wishes, not permission to move fixed duties. A complete bounded check does not prove optimality."}
+
+    def final_audit(self, days, cancel_event, *, max_repairs=4, max_seconds=60):
+        """Audit the returned best; repair only fresh, strictly better checked offers.
+
+        Any mutation restarts the full audit. Both repairs and elapsed time are
+        bounded, including runs with no user time limit. Never repair after abort.
+        """
+        ex = self.executor
+        old_deadline = ex.wall_deadline
+        ex.wall_deadline = min(old_deadline or float("inf"), time.time() + max_seconds)
+        repairs = 0
+        try:
+            while True:
+                changed = False
+                checks = {}
+                for day in days:
+                    if cancel_event.is_set() or ex._tool_seconds_left() <= 5:
+                        result = {"complete": False, "reason": "Cancelled or final check budget exhausted", "proposals": []}
+                    else:
+                        pending = ex.next_fillable_slot(day)
+                        if pending:
+                            result = {"complete": False, "reason": "Direct placements remain or inspection incomplete", "proposals": []}
+                            if not pending.get("check_incomplete"):
+                                reply = ex.execute("suggest_day_blocks", {"slot_key": pending["slot_key"]}, "final-placement-check")
+                                data = json.loads(reply.content)
+                                result["proposals"] = [p["proposal_id"] for p in data.get("candidates", [])
+                                                       if p.get("proposal_id") and p.get("improves_best")][:3]
+                        else:
+                            result = self.review_day(day)
+                    result = {**result, "plan_revision": self.revision}
+                    checks[day] = self.day_checks[day] = result
+                    for pid in result.get("proposals", []):
+                        if repairs >= max_repairs or cancel_event.is_set() or ex._tool_seconds_left() <= 5:
+                            break
+                        proposal = self.proposals.get(pid)
+                        if not proposal or proposal["revision"] != self.revision or proposal["applied"]:
+                            continue
+                        preview = ex._tool_apply_moves({"moves": proposal["moves"], "dry_run": True})
+                        if cancel_event.is_set() or ex._tool_seconds_left() <= 5 or not preview.get("valid") or not preview.get("improves_best"):
+                            continue
+                        reply = ex.execute("apply_moves", {"moves": proposal["moves"]}, "final-checked-repair")
+                        applied = json.loads(reply.content)
+                        if applied.get("applied"):
+                            proposal["applied"] = True
+                            repairs += 1
+                            changed = True
+                            break
+                    if changed:
+                        break  # every earlier check is stale after this mutation
+                if not changed:
+                    return {"checks": checks, "repairs": repairs, "plan_revision": self.revision,
+                            "repair_limit": max_repairs, "time_limit_seconds": max_seconds}
+        finally:
+            ex.wall_deadline = old_deadline
